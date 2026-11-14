@@ -1,0 +1,42 @@
+# PINK+ CTF 2026: a past event, kept as a profile fixture. Facts from the PINK+ source repo (read-only):
+# CTFd, run with the CSCTF tooling; flag format PINK{...} (confirmed by accepted flags; it was unknown
+# at the open, see events/pink/legacy-agent-config/pink_wave_prompt.md); never request a hint; flags
+# must not be shared. Dates approximate (workspace activity 2026-11-05..09). Host is a placeholder.
+slug = "pink"
+name = "PINK+ CTF 2026"
+categories = ["Reversing", "OSINT", "Crypto", "Misc", "Steganography", "Minecraft"]
+sectors = []
+dates = { start = 2026-11-05, end = 2026-11-09 }
+
+[platform]
+kind = "ctfd"
+base_url = "https://pink.ctf.example"
+
+[flag]
+prefixes = ["PINK"]
+body = "[^{}\\n]{1,256}"
+case = "exact"
+
+[rules]
+submit_mode = "auto"
+wrong_answer_stop = 3
+guess_budget = 0
+hints_allowed = false
+flag_sharing = "forbidden"
+ai_on_platform = "allowed"
+live_service_scope = ["*.pink.ctf.example"]
+web_state_changing = false
+
+[writeups]
+redact_flags = true
+
+[budget]
+per_point = 0.5
+floor = 25.0
+ceiling = 250.0
+# B-130 overthink cap: Pink 29 ("White Noise", 50 pts, 71 solves) burned ~1.96B tokens unsolved. A
+# low-point row that many teams already solved is easy, not worth a deep spend: clamp it to $15 and
+# steer agents to the cheap named-tool / catalog lanes (e.g. the WAV-stego catalog) first.
+overthink_usd = 15.0
+overthink_max_points = 50.0
+overthink_min_solves = 25

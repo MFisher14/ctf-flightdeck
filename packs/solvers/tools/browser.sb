@@ -1,0 +1,20 @@
+(version 1)
+; Seatbelt profile for the pinned isolated browser harness (ctf/web_browser.py, B-150).
+;
+; Process posture: the harness and the browser it drives run with everything allowed EXCEPT
+; outbound network, which is denied to everything but loopback. That is a fail-closed default:
+; out of the box the harness can reach only a service on 127.0.0.1 (a local challenge instance or a
+; scoping HTTP proxy), never the open internet, so a bug or a hostile page cannot exfiltrate.
+;
+; Reaching a REMOTE scoped challenge host is a deliberate operator step, not a default: run the
+; harness in the docker sandbox mode (CTF_BROWSER_SANDBOX=docker) with a network scoped to the
+; target, or front the target with a loopback proxy. Either way the in-process guard
+; ctf.scope.check_url still refuses any URL outside the event's rules.live_service_scope BEFORE the
+; harness is told to navigate -- this profile is the second wall, not the only one.
+;
+; This mirrors tools/suite.sb (loopback-only egress); it is intentionally not a full file-system
+; jail -- a browser needs its own caches and profile dir. Tighten the file rules per deployment.
+(allow default)
+(deny network-outbound)
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-outbound (remote unix-socket))

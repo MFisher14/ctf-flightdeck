@@ -1,0 +1,17 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-135.
+id = "toolkits.ransom_keystream"
+lane = "toolkits"
+entry = "solvers.toolkits.ransom_keystream:solve"
+capabilities = ["executes", "ransomware", "keystream", "prng", "seed", "xorshift", "glibc-rand", "forensics"]
+inputs = ["ext:.enc", "ext:.encrypted", "ext:.locked", "ext:.crypt", "ext:.crypted", "ext:.crypto", "ext:.ransom", "ext:.lck"]
+needs_tools = ["py:numpy"]
+cost_class = "medium"                 # default CPU budget 120 s: not a run-on-every-pull engine
+status = "active"
+
+[[routes]]  # B-135: a toy ransomware's encrypted files, keyed by a PRNG seeded from time and PID
+keywords = ["ransomware", "encryptor", "ransom note", "encrypted files", "keystream", "srand", "seeded with the time"]
+priority = 62
+
+[[routes]]  # B-135: ransom-suffixed files in the handout, whatever the category
+files = ["ext:.enc", "ext:.encrypted", "ext:.locked", "ext:.crypt", "ext:.crypted", "ext:.crypto", "ext:.ransom", "ext:.lck"]
+priority = 28

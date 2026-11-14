@@ -639,9 +639,9 @@ def test_plain_http_to_another_machine_warns_that_the_token_would_travel_in_clea
 
 def test_keys_for_the_other_platform_are_reported_as_unused(tmp_path):
     problems = check(manual(tmp_path, url="https://ctf.example.org"), policies(), max_lanes=4, environ={})
-    assert problems == [Problem(False, 'event.url is only for platform "ctfd", so this manual profile does not use it')]
+    assert problems == [Problem(False, 'event.url is only for platform "ctfd" or "gamemaster", so this manual profile does not use it')]
     problems = check(profile(board=tmp_path), policies(), max_lanes=4, environ=TOKEN_SET)
-    assert problems == [Problem(False, 'event.board is only for platform "manual", so this ctfd profile does not use it')]
+    assert problems == [Problem(False, 'event.board is only for platform "manual" or "gamemaster", so this ctfd profile does not use it')]
 
 
 def test_a_missing_flag_format_is_a_warning():
@@ -690,8 +690,8 @@ def test_an_unknown_key_is_an_error_naming_it(tmp_path, table, key, named):
 
 
 BAD_VALUES = [
-    ("event", "platform", '"ctfe"', 'event.platform must be "ctfd" or "manual" (got a string)'),
-    ("event", "platform", "1", 'event.platform must be "ctfd" or "manual" (got 1)'),
+    ("event", "platform", '"ctfe"', 'event.platform must be "ctfd", "manual" or "gamemaster" (got a string)'),
+    ("event", "platform", "1", 'event.platform must be "ctfd", "manual" or "gamemaster" (got 1)'),
     ("rules", "live_targets", '"maybe"', 'rules.live_targets must be "allowed", "confirm" or "off"'),
     ("policies", "submit", '"sometimes"', 'policies.submit must be "auto", "confirm", "manual" or "off" (got a string)'),
     ("policies", "pull", "true", 'policies.pull must be "auto", "confirm", "manual" or "off" (got true)'),

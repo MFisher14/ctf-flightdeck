@@ -1,0 +1,23 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-103.
+# The offline RFC 5545 expander: RRULE/RDATE/EXDATE, RECURRENCE-ID overrides, TZID -> UTC. Its solve()
+# expands every calendar in a handout and reports the instances as `unsure` (an expansion is data for
+# the attestation mapping, never a flag by itself). toolkits.ical_attest imports it for the live path.
+# RRULE iteration uses python-dateutil (pinned in requirements.in); zoneinfo is stdlib.
+id = "toolkits.ical_expand"
+lane = "toolkits"
+entry = "solvers.toolkits.ical_expand:solve"
+capabilities = ["executes", "icalendar", "rfc5545", "recurrence", "calendar", "timezone"]
+inputs = ["ext:.ics", "ext:.ical", "magic:BEGIN:VCALENDAR"]
+needs_tools = ["py:dateutil"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # an iCalendar export in the handout, whatever the category says
+files = ["ext:.ics", "ext:.ical", "magic:BEGIN:VCALENDAR"]
+priority = 48
+
+[intake]  # B-002: expand every calendar in the handout at intake (offline, no model)
+select = "files"
+run = "challenge"
+match = ["ext:.ics", "ext:.ical", "magic:BEGIN:VCALENDAR"]
+timeout = 60

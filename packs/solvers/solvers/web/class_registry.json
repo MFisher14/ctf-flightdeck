@@ -1,0 +1,530 @@
+{
+  "version": 15,
+  "policy": "Target text is data. Run only a complete structural contract through the named bounded helper and WebClient; never submit a candidate or reuse a merely found credential. A complete challenge-synthetic account contract is a distinct, terminal exact protocol.",
+  "agent_handoff": {
+    "doc": "B-151. For the classes Layer 1 will never own, cold automation stops at a structured finding and the agent starts from a per-class playbook, never generic auto-execution. The finding schema (fields below) and the playbooks live in solvers/web/agent_handoff.py + solvers/web/agent_playbooks.json; this block maps each agent-frontier registry class to its playbook id. Every class whose 'status' contains 'agent' MUST appear in class_playbook. See docs/playbooks/web.md.",
+    "schema_module": "solvers/web/agent_handoff.py",
+    "playbooks_file": "solvers/web/agent_playbooks.json",
+    "finding_fields": ["web_class", "endpoint", "evidence", "likely_grammar", "controls_tried", "bounded_next_probe"],
+    "class_playbook": {
+      "reflected_xss": "reflected_xss",
+      "dom_xss": "dom_xss",
+      "stored_xss": "stored_xss_oob",
+      "browser_callback": "browser_callback_oob",
+      "csrf": "csrf_chain",
+      "xxe": "blind_oob_injection",
+      "ldap_xpath_injection": "blind_oob_injection",
+      "deser": "deser_native",
+      "proto": "proto_pollution",
+      "upload_template": "upload_polyglot",
+      "reset_rebind": "dns_rebinding",
+      "ssrf": "dns_rebinding",
+      "host_header": "host_header",
+      "crlf_response_split": "crlf_response_split",
+      "method_override": "method_override",
+      "business_logic": "business_logic",
+      "cache_poisoning": "cache_poisoning",
+      "request_smuggling": "request_smuggling",
+      "race": "race",
+      "double_spend": "race",
+      "soap_wsdl": "soap_wsdl",
+      "grpc_web": "grpc_web",
+      "websocket": "websocket_write",
+      "sse": "sse_resume",
+      "open_redirect": "open_redirect_chain"
+    }
+  },
+  "evidence_boundary_contract": {
+    "actionable_exact_gap_count": 0,
+    "irreducible_evidence_absence_count": 7,
+    "executable_gate": "tests/test_web_residual_exact_contracts.py",
+    "mapping_rule": "Every class whose status lacks a cold runtime path is named by exactly one registered_classes boundary; hybrid cold/agent classes are also mapped for the depth Layer 1 intentionally refuses.",
+    "boundaries": {
+      "victim_browser_or_oob": {
+        "missing": "target-specific victim execution or callback observation",
+        "cold_counterparts": ["browser_callback", "stored_xss", "cors", "xxe", "ssrf"],
+        "registered_classes": ["reflected_xss", "dom_xss", "xxe"],
+        "behavior": "zero external browser/OOB action; use only in-band target responses"
+      },
+      "native_gadget_execution": {
+        "missing": "runtime classpath, gadget viability and a self-proving non-command read contract",
+        "cold_counterparts": ["deser"],
+        "registered_classes": ["deser"],
+        "behavior": "generate only inert primitive serialization; never fire a native gadget"
+      },
+      "arbitrary_upload_mutation": {
+        "missing": "isolated storage, exact upload/read routes, one generated inert content profile and absent-before/readback controls",
+        "cold_counterparts": ["upload_template"],
+        "registered_classes": ["upload_template"],
+        "behavior": "zero upload without the exact canary contract; never plant executable content"
+      },
+      "unavailable_credential_or_secret": {
+        "missing": "complete target-published challenge-synthetic authority",
+        "cold_counterparts": ["session_cookie_recon", "jwtconf", "client_disclosure"],
+        "registered_classes": ["session_cookie_recon", "jwtconf", "client_disclosure"],
+        "behavior": "never guess, extract broadly or replay a merely discovered credential"
+      },
+      "shared_or_irreversible_state_transition": {
+        "missing": "an isolated reversible state invariant and target-specific proof that no shared or irreversible effect is touched",
+        "cold_counterparts": ["csrf", "double_spend", "remote_policy_fail_open"],
+        "registered_classes": ["method_override", "business_logic", "cache_poisoning", "race"],
+        "behavior": "zero generic mutation or concurrency; only an exact isolated cold protocol may transition state"
+      },
+      "multi_parser_transport_desync": {
+        "missing": "an isolated target-specific front-end/back-end parser contract and authoritative desynchronization control",
+        "cold_counterparts": ["crlf_response_split"],
+        "registered_classes": ["request_smuggling"],
+        "behavior": "zero raw desync traffic or shared-infrastructure spray"
+      },
+      "unavailable_exact_runtime_contract": {
+        "missing": "a complete same-origin, side-effect-free runtime contract beyond passive descriptor or generic vulnerability evidence",
+        "cold_counterparts": ["json_rpc", "soap_wsdl", "grpc_web"],
+        "registered_classes": ["asyncapi", "oidc", "host_header", "crlf_response_split", "ldap_xpath_injection"],
+        "behavior": "inventory only or zero wire until exact routes, controls, values and safe effect are target-published"
+      }
+    }
+  },
+  "classes": {
+    "backup_exposure": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "proof_hunt waves 1-3",
+      "action": "Read robots-disclosed files and bounded directory backup entries through guarded GETs.",
+      "boundary": "No recursive crawl and no credential or secret reuse."
+    },
+    "idor": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "proof_hunt waves 3-4",
+      "action": "Read feed-advertised object identifiers and a bounded adjacent-ID window.",
+      "boundary": "Read-only GETs; no object modification or account impersonation."
+    },
+    "get_sqli": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "proof_hunt wave 3",
+      "action": "Compare an offered GET search control with a bounded boolean payload set.",
+      "boundary": "No stacked/destructive statements, schema dump, timing or POST login bypass."
+    },
+    "lfi": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "proof_hunt waves 3/6b + web.probe_lfi_php_filter",
+      "action": "Use an offered reader parameter to read prompt-named paths before bounded defaults.",
+      "boundary": "Read-only paths; destructive prompt paths are refused."
+    },
+    "route_exposure": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "proof_hunt wave 2",
+      "action": "GET safe routes named by target-local clues, prompt text, API contracts or exact linked sources.",
+      "boundary": "Same origin, destructive guard, no inner-URL query activation."
+    },
+    "browser_callback": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "proof_hunt clue dispatch",
+      "action": "Replay the target-provided nonce with same-origin browser-fetch headers to the advertised callback.",
+      "boundary": "GET only; no external browser or arbitrary header spray."
+    },
+    "stored_xss": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "proof_hunt stored-XSS reader",
+      "action": "Submit one clue-gated note and read only the target's moderator receipt route.",
+      "boundary": "One own-host POST; proof is eligible only from the receipt GET; independently disableable."
+    },
+    "reflected_xss": {
+      "status": "agent-browser-only",
+      "priority": 65,
+      "helper": "WebClient reflection/context check plus an isolated browser harness",
+      "action": "Place one inert nonce in an advertised read parameter, classify its HTML/attribute/script context offline, then reproduce only in an isolated browser when the challenge requires execution.",
+      "boundary": "Layer 1 never executes target HTML or JavaScript and never sends a credentialed victim browser."
+    },
+    "dom_xss": {
+      "status": "recon/agent-browser-only",
+      "priority": 65,
+      "helper": "solvers/web/browser_recon.py + endpoint_inventory exact linked JavaScript/source-map leads",
+      "action": "Trace bounded handler-local URL, storage, cookie and message sources through direct aliases to context-specific DOM sinks; inventory CSP and exact external-script leads offline.",
+      "boundary": "No target script is executed, no source/sink crossing unknown calls or handlers is claimed, and no browser automation runs without a target-specific agent decision."
+    },
+    "session_fixation": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "proof_hunt clue dispatch",
+      "action": "Plant the advertised session hint and read the advertised status through the same cookie jar.",
+      "boundary": "Bounded target-provided account/session values; no credential replay."
+    },
+    "session_cookie_recon": {
+      "status": "cold-recon",
+      "priority": 32,
+      "helper": "solvers/web/session_recon.py + recon_advanced.py through proof_hunt",
+      "action": "Inventory cookie/session metadata offline; only a unique target-described Flask contract may verify a target-issued cookie with a target-published challenge key, change one named scalar claim and read one exact safe route.",
+      "boundary": "Generic secret discovery, unverified cookies, arbitrary claims, credential logging and repeated replay remain unsupported; a confirm-first forged read is terminal."
+    },
+    "werkzeug_debug_pin": {
+      "status": "cold-debugger-exact",
+      "priority": 31,
+      "helper": "solvers/web/recon_werkzeug.py + solvers/toolkits/werkzeug_pin.py through proof_hunt",
+      "action": "From one unique target-described contract, derive the PIN from all six exact inputs and a matching Werkzeug version/algorithm, authenticate once, then evaluate only a solver-owned expression that reads at most 4096 bytes from one basename-only /run/huntress objective path.",
+      "boundary": "No input discovery, brute force, target-supplied expression, arbitrary path, write, shell, import other than the fixed base64 marker, off-origin request or retry; auth/eval is a reserved two-GET terminal protocol and retained debugger credentials are redacted."
+    },
+    "csrf": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "proof_hunt CSRF reader",
+      "action": "Perform the exact target-described cross-site GET forge and verify its status readback.",
+      "boundary": "Synthetic challenge state only; fixed headers, one bounded transition and a kill switch."
+    },
+    "upload_template": {
+      "status": "cold-stateful-exact",
+      "priority": 5,
+      "helper": "solvers/web/state_transaction.py + recon_advanced readable_upload_canary",
+      "action": "Under one complete challenge-synthetic state_transaction contract, read the absence/CSRF/action-id control, upload one generated inert .txt marker, and require cookie-bound correlated preview readback with the exact invariant and proof.",
+      "boundary": "The whole POST/readback group is reserved first; no web shell, arbitrary content/type, command, file/environment read, retry after an ambiguous POST, or executable upload."
+    },
+    "field_action_authz": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "proof_hunt access clue dispatch",
+      "action": "Cross the advertised safe fields and actions on the protected reference using GET.",
+      "boundary": "Only target-advertised non-destructive values; no guessed write action."
+    },
+    "delegated_identity": {
+      "status": "cold-read-exact",
+      "priority": 4,
+      "helper": "solvers/web/delegated_identity.py through proof_hunt",
+      "action": "Read one target-published identity directory, require two exact denied GET controls, then replay the unique distinct records owner in the advertised delegated-user header and accept only the exact trusted effect's novel proof.",
+      "boundary": "GET only; no guessed identity, Authorization synthesis, credential replay, off-origin route, redirect, ambiguous directory, missing denied control, alternate effect or proof decoy is plain."
+    },
+    "queued_owner_binding": {
+      "status": "cold-stateful-exact",
+      "priority": 4,
+      "helper": "solvers/web/queued_owner.py through proof_hunt",
+      "action": "After a target-published owner directory plus exact POST-required and audit-id-required controls, enqueue the unique distinct restricted owner once and read only the receipt-correlated audit payoff.",
+      "boundary": "One exact JSON POST and one receipt-derived GET; the full group is reserved first, ambiguous mutation is terminal, and no retry, guessed owner/id, alternate effect, redirect, off-origin route or receipt/control proof is plain."
+    },
+    "trusted_proxy_header": {
+      "status": "cold-read",
+      "priority": 5,
+      "helper": "proof_hunt exact clue-control/header dispatch",
+      "action": "Retry an exact clue-advertised denied GET with the bounded loopback proxy-header set.",
+      "boundary": "Trusted synthetic action words apply only to this target's exact GET route; guessed routes and fatal actions remain refused."
+    },
+    "ssrf": {
+      "status": "cold-read",
+      "priority": 5,
+      "helper": "proof_hunt SSRF readers + solvers/web/ssrf_body.py + recon_advanced.py + web.probe_ssrf",
+      "action": "Use established query/body slots for safe internal reads; a unique machine-readable contract may additionally relay the standard two-step IMDSv2 method/header flow, one advertised public rebinding URL, or one same-origin redirect into a read-only internal destination.",
+      "boundary": "No direct inner-host contact, generated hostname, redirect following by this client, arbitrary target-controlled headers, non-HTTP body scheme, credential persistence/use outside the exact relay, destructive query or arbitrary write; terminal protocols never fall through."
+    },
+    "ssrf_idor": {
+      "status": "cold-read-exact",
+      "priority": 4,
+      "helper": "solvers/web/recon_router.py through proof_hunt",
+      "action": "Read clue-advertised topology and case-directory controls, derive the exact outer URL parameter and internal object selector, then request one non-owned advertised object through the same-origin fetch route.",
+      "boundary": "GET only; no direct inner-host contact, DNS resolution, guessed selector, guessed object id, public host, redirect following, destructive route or proof not present in the exploit response."
+    },
+    "signed_manifest": {
+      "status": "cold-stateful-exact",
+      "priority": 4,
+      "helper": "solvers/web/recon_router.py through proof_hunt",
+      "action": "Verify the top-level advertised SHA-256 over the compact original artifact, replace only artifact.hook with the unique policy-described restricted hook, and POST once to the exact feature route while preserving the signature and every other field.",
+      "boundary": "One target-local POST only after complete clue/feed/policy controls; ambiguous hooks, mismatched digest, unsafe feature route, duplicate integrity fields or any extra mutation fail closed, and only a novel proof in that POST response is eligible."
+    },
+    "command_injection": {
+      "status": "cold-read",
+      "priority": 5,
+      "helper": "proof_hunt cmdi reader + web.probe_cmdi_echo",
+      "action": "Require computed echo confirmation, then read only the prompt-named objective path.",
+      "boundary": "No generic command execution, reverse shell, persistence or destructive command."
+    },
+    "event_forgery": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "solvers/web/forge_event.py",
+      "action": "Try unsigned exact values in the flat simplest-first name grid before nested/form variants.",
+      "boundary": "Exact target-local contract, bounded POSTs, no signature guessing before unsigned forms."
+    },
+    "state_blob": {
+      "status": "cold",
+      "priority": 5,
+      "helper": "solvers/web/forge_event.py",
+      "action": "Tamper only an advertised base64url-JSON envelope, flat mass assignment first.",
+      "boundary": "No native deserialization, gadget execution, signing-secret use or arbitrary object keys."
+    },
+    "post_ssti": {
+      "status": "cold",
+      "priority": 10,
+      "helper": "solvers/web/post_chain.py",
+      "action": "Confirm a constant arithmetic render, then read only the scalar objective variable through the advertised POST route.",
+      "boundary": "No file, environment, reflection, method-call, command, or RCE expressions."
+    },
+    "second_order_sqli": {
+      "status": "cold",
+      "priority": 10,
+      "helper": "solvers/web/post_chain.py",
+      "action": "Snapshot the advertised result, plant the bounded filter, then require an expanded delayed-query readback.",
+      "boundary": "Only the exact self-described delayed-query contract; no table/schema dump."
+    },
+    "mass_assignment": {
+      "status": "cold",
+      "priority": 10,
+      "helper": "solvers/web/post_chain.py",
+      "action": "Try isolated own-profile privilege fields and require the advertised 403-to-privileged readback transition.",
+      "boundary": "Never send prototype keys or mutate another named account."
+    },
+    "audit_report_chain": {
+      "status": "cold-narrow",
+      "priority": 5,
+      "helper": "solvers/web/post_chain.py",
+      "action": "Run one advertised operation, correlate its returned id to one freshly observed audit event, then submit the exact advertised three-field missing-event report.",
+      "boundary": "Only an exact POST-required feature plus exact report schema; values are response-derived, the complete two-POST sequence is reserved first, and no retries or field guesses occur."
+    },
+    "remote_policy_fail_open": {
+      "status": "cold-get-read",
+      "priority": 5,
+      "helper": "solvers/web/remote_policy.py",
+      "action": "Replay the advertised valid base64url-JSON decision as a control, then send one invalid-base64url suffix under the advertised prefix.",
+      "boundary": "GET only; exact deny-on-service-failure clue/format contract, one malformed probe, coherent exact fail-open effect, and no off-origin route or proof-bearing control."
+    },
+    "reset_rebind": {
+      "status": "cold",
+      "priority": 10,
+      "helper": "solvers/web/reset_rebind.py",
+      "action": "Use the unique self-service account for one token issue and the unique non-self-service account for one redeem.",
+      "boundary": "Exactly one source, one victim and one redeem; no enumeration, retries, or credential replay elsewhere."
+    },
+    "state_transaction": {
+      "status": "cold-stateful-exact",
+      "priority": 6,
+      "helper": "solvers/web/state_transaction.py through proof_hunt",
+      "action": "Execute one exact challenge-synthetic precondition to action to correlated-readback plan for an inert upload preview or single-use redemption, propagating the target cookie and exact CSRF/action/idempotency identities.",
+      "boundary": "Only the two compiled schemas are accepted; all routes, field names, values and invariants are coherent clue bytes, the request/byte/deadline group is reserved before POST, and any ambiguous mutation is terminal without retry."
+    },
+    "graphql": {
+      "status": "cold-query-only",
+      "priority": 10,
+      "helper": "solvers/web/graphql_read.py",
+      "action": "Use the clue-advertised endpoint/reference over exact GET or POST transport; introspect Query and generate a variables-only bounded recursive scalar/object/Relay/interface/union read, including explicitly derived input objects, locally hashed APQ, and gated Federation SDL discovery.",
+      "boundary": "Cyclic/depth-overflow branches and lists outside one explicitly bounded Relay edge/node path are skipped; ambiguous references/input owners/types and malformed schemas refuse. Never mutation, subscription, batching, upload, login, target-supplied operation text, arbitrary SDL execution, or an unbounded GET URL."
+    },
+    "nosql": {
+      "status": "cold-get-read",
+      "priority": 20,
+      "helper": "proof_hunt wave11 / web.probe_nosqli_oracle",
+      "action": "Compare GET bracket-operator results to a control and inspect only extra records.",
+      "boundary": "POST login/auth bypass stays agent-only."
+    },
+    "path_auth_bypass": {
+      "status": "cold-read",
+      "priority": 20,
+      "helper": "proof_hunt wave9",
+      "action": "Retry an observed 401/403 GET path with a bounded normalization matrix.",
+      "boundary": "No guessed write route, method override, traversal outside the named path, or state change."
+    },
+    "cache_deception": {
+      "status": "cold-read",
+      "priority": 20,
+      "helper": "proof_hunt wave9",
+      "action": "Read a target-linked personalized GET page under a bounded static-looking suffix and compare it with the control.",
+      "boundary": "No shared-cache poisoning header or cache purge/write."
+    },
+    "endpoint_inventory": {
+      "status": "cold-recon",
+      "priority": 30,
+      "helper": "solvers/web/endpoint_inventory.py",
+      "action": "Inspect OpenAPI path keys, exact AsyncAPI/OpenRPC service descriptions, sitemap URLs, linked JS/source maps, fields, enums, parameters and WebSocket leads.",
+      "boundary": "Inventory never drives an application operation; proof_hunt drives only guarded reads, including exact declared GETs whose required values are explicit."
+    },
+    "response_carriers": {
+      "status": "cold-infrastructure",
+      "priority": 1,
+      "helper": "solvers/web/response_carriers.py through every cold reader",
+      "action": "Decode bounded HTTP content encodings, charsets/BOMs, JSON scalars, MIME siblings, regular ZIP/TAR members and nested base64/compression as independent provenance-bearing views.",
+      "boundary": "Malformed or ambiguous critical headers, framing, containers, duplicate security JSON, bombs and cap exhaustion fail closed; siblings, filenames and unverified JWT claims never combine into proof evidence."
+    },
+    "client_disclosure": {
+      "status": "cold-exact-credential/recon",
+      "priority": 31,
+      "helper": "endpoint_inventory + browser_recon/web_evidence + recon_advanced synthetic_credential_read/synthetic_bearer_read",
+      "action": "Surface bounded source locations offline; only a complete machine-readable challenge-synthetic account contract may authenticate once after a denied control and read one exact protected route. A nested target-issued bearer additionally requires a second no-Authorization denial after login.",
+      "boundary": "A merely found credential, key, token or proof-looking string is never submitted, replayed, executed or used; terminal exact account protocols redact every authority value and accept proof only from the final effect-bound GET."
+    },
+    "static_source_taint": {
+      "status": "cold-recon",
+      "priority": 31,
+      "helper": "solvers/toolkits/web_evidence.py",
+      "action": "Map Express, Flask/FastAPI, Spring/JAX-RS/WebServlet, Rails/Sinatra, Go router and Laravel/Symfony routes to bounded handler-local request sources, aliases, transparent transforms, sanitizers and sinks.",
+      "boundary": "Branches, reassignment, competing sources, unknown wrappers, cross-handler flow, dead code and cap exhaustion decline; proved flows remain unsure evidence, never an automatic live exploit."
+    },
+    "asyncapi": {
+      "status": "recon-only",
+      "priority": 31,
+      "helper": "solvers/web/descriptor_inventory.py through endpoint_inventory",
+      "action": "Normalize AsyncAPI 2.x/3.x channels, messages, operations and server protocols from an exact same-origin service-description link.",
+      "boundary": "Never guess a descriptor path, connect to a server/channel, send a message, follow an external reference, or turn channel metadata into an HTTP route."
+    },
+    "json_rpc": {
+      "status": "cold-read-exact/recon",
+      "priority": 31,
+      "helper": "descriptor_inventory + recon_advanced json_rpc_read",
+      "action": "Normalize OpenRPC metadata offline; a separate complete exact contract may call one independently read-verb-restricted, side-effect-free same-origin method with bounded inert scalar arguments after a GET control.",
+      "boundary": "Descriptor examples are never payload authority; no mutation verb, external server, batch, notification, credential or unbounded parameter is sent."
+    },
+    "api_json_read": {
+      "status": "cold-read-exact",
+      "priority": 31,
+      "helper": "endpoint_inventory + recon_advanced json_body_read",
+      "action": "Copy one complete target-published nested selector/pagination body to one exact same-origin synthetic read after an OPTIONS control advertises only OPTIONS and POST, then require the exact declared read effect.",
+      "boundary": "No body synthesis, descriptor-only example, URL, credential, secret, destructive key/value, redirect, shared data, extra method, retry or proof outside the final effect-bound JSON response is plain."
+    },
+    "xxe": {
+      "status": "cold-in-band/agent-oob",
+      "priority": 20,
+      "helper": "solvers/web/xxe_read.py; solvers/toolkits/web_xxe_ssrf.py and tools/oob.py for agent depth",
+      "action": "On one exact XML POST contract, confirm a local-file entity with a marker and negative control, then read one clue/prompt-named objective file.",
+      "boundary": "No network/parameter entity, external DTD, PHP wrapper, schema/import fetch, OOB callback, or unprompted file."
+    },
+    "proto": {
+      "status": "cold-exact-canary",
+      "priority": 35,
+      "helper": "solvers/web/recon_advanced.py + web.proto_pollution_payloads / exploit_classes.py",
+      "action": "On an explicitly isolated instance, prove a generated benign property absent, send one exact merge payload, and require a structural readback before accepting the exploit-response proof.",
+      "boundary": "No generic surface, author-chosen privilege/gadget property, reflected-only marker, non-isolated process-global target or fallthrough after the one POST."
+    },
+    "deser": {
+      "status": "cold-inert-exact",
+      "priority": 35,
+      "helper": "solvers/web/recon_advanced.py + deser_detect.py + exploit_classes.py",
+      "action": "For one unique exact parser contract, generate a bounded inert primitive map/string in the named format and require the named structural canary readback in the proof response.",
+      "boundary": "No target-byte deserialization, classes, callables, gadgets, commands, native gadget firing/RCE, reflected-only marker or fallthrough after the one POST."
+    },
+    "jwtconf": {
+      "status": "cold-read-exact",
+      "priority": 40,
+      "helper": "proof_hunt._jwt_items + web.forge_jwt_hs_confusion / exploit_classes.jwt_rs256_confusion",
+      "action": "Replay one uniquely observed asymmetric JWT beside its original control on target-supplied read endpoints, using one uniquely observed target public key for the RS-to-HS signature.",
+      "boundary": "Multiple tokens or public keys disable the exact confusion replay; hosted jku/x5u, found signing secrets, guessed endpoints and every write route remain gated."
+    },
+    "cors": {
+      "status": "cold-read/detect",
+      "priority": 60,
+      "helper": "solvers/web/passive_checks.py",
+      "action": "Compare the advertised read route with a fresh per-run nonce .invalid Origin; exact reflection plus credentials can cold-read a novel proof.",
+      "boundary": "No victim-browser automation or cross-site state change."
+    },
+    "open_redirect": {
+      "status": "cold-exact-chain",
+      "priority": 35,
+      "helper": "solvers/web/recon_advanced.py + passive_checks.py",
+      "action": "Pass one locally composed same-origin redirect URL, whose exact parameter holds one target-described read-only internal destination, through one exact advertised SSRF slot.",
+      "boundary": "The client never follows Location or contacts the inner host; generic redirect detection, off-origin redirectors, guessed destinations and stateful routes remain non-automatic."
+    },
+    "oidc": {
+      "status": "recon-only",
+      "priority": 70,
+      "helper": "solvers/web/passive_checks.py + endpoint_inventory",
+      "action": "Inventory discovery metadata keys, supported signing algorithms and same-origin public JWK summaries.",
+      "boundary": "No login, code exchange, account linking, token replay, or external issuer contact."
+    },
+    "websocket": {
+      "status": "cold-client-read/server-first",
+      "priority": 5,
+      "helper": "solvers/web/realtime_read.py + WebClient.websocket_conversation/websocket_receive",
+      "action": "After an exact 426 control, either read the bounded server-first stream or generate one clue-schema read message, negotiate an exact subprotocol/no-context permessage-deflate, send masked/fragmented frames, service ping/close, and accept only a correlated response id/effect.",
+      "boundary": "No raw target operation text, inferred write/subscription, reconnect, off-origin upgrade, unvalidated handshake/extension, unsolicited proof frame, unbounded messages or retry."
+    },
+    "sse": {
+      "status": "cold-client-read/server-first",
+      "priority": 20,
+      "helper": "solvers/web/realtime_read.py + WebClient.sse_events/sse_first_event",
+      "action": "Read a bounded set of complete events from an exact clue-generated query, correlate request id and event type, reject unsolicited decoys, and perform at most one Last-Event-ID resume only when the coherent contract explicitly requires it.",
+      "boundary": "No inferred query, open-ended reconnect, event-carried URL, credential discovery, malformed/incomplete event promotion, or unbounded stream read."
+    },
+    "host_header": {
+      "status": "cold-exact-canary/agent-generic",
+      "priority": 80,
+      "helper": "recon_advanced host_header_canary + web.detect_cache_poisoning",
+      "action": "On a complete exact nonsensitive GET contract, compare a clean response with one X-Forwarded-Host value under a generated-shape, nonresolving .invalid canary.",
+      "boundary": "Transport Host, internal hosts, credentials, shared-cache writes, login/reset/recovery routes and generic host-header variants never auto-fire."
+    },
+    "crlf_response_split": {
+      "status": "cold-exact-canary/agent-generic",
+      "priority": 80,
+      "helper": "recon_advanced crlf_response_canary",
+      "action": "On a complete exact nonsensitive GET-query contract, compare a clean value with one fixed X-Huntress-Canary response-header injection.",
+      "boundary": "No Set-Cookie, cache, authentication/recovery route, redirect-to-victim, arbitrary header name or executable body injection."
+    },
+    "parameter_pollution": {
+      "status": "cold-read-exact",
+      "priority": 20,
+      "helper": "solvers/web/hpp_read.py + endpoint_inventory parameter locations",
+      "action": "After exact public/protected GET controls, test only the two orderings of one advertised scalar query parameter.",
+      "boundary": "No login, recovery, role, credential, payment, transfer, array/object, guessed identifier, or write request."
+    },
+    "ldap_xpath_injection": {
+      "status": "cold-read-exact/agent-generic",
+      "priority": 80,
+      "helper": "recon_advanced boolean_read_injection",
+      "action": "On a complete exact nonsensitive GET read contract, compare one fixed false/true LDAP-filter or XPath predicate pair and accept only the true response's novel proof.",
+      "boundary": "No authentication/recovery route, POST bypass, syntax spray, broad extraction, wildcard enumeration loop or destructive expression."
+    },
+    "method_override": {
+      "status": "agent-only",
+      "priority": 80,
+      "helper": "OpenAPI inventory plus target-specific WebClient control",
+      "action": "Compare an advertised safe read route under one explicit method-override header or parameter.",
+      "boundary": "Never override into PUT/PATCH/DELETE or a write action automatically."
+    },
+    "business_logic": {
+      "status": "agent-only",
+      "priority": 90,
+      "helper": "target-specific invariant table and bounded same-client replay",
+      "action": "Write the expected state invariant, snapshot it, then test the smallest reversible synthetic transition.",
+      "boundary": "No purchases, transfers, destructive counters, other-account actions, or unbounded workflow replay."
+    },
+    "cache_poisoning": {
+      "status": "agent-only",
+      "priority": 90,
+      "helper": "offline HAR/cache analysis; cache deception GET reader",
+      "action": "Prove cache-key behavior with isolated controls before any live poisoning test.",
+      "boundary": "Shared-cache writes never auto-fire."
+    },
+    "request_smuggling": {
+      "status": "agent-only",
+      "priority": 90,
+      "helper": "offline desync detector + RawSocketScope",
+      "action": "Use a raw-socket differential only with an exact target-specific front/back-end contract.",
+      "boundary": "No generic desync spray against shared infrastructure."
+    },
+    "race": {
+      "status": "agent-only",
+      "priority": 90,
+      "helper": "target-specific bounded concurrency harness",
+      "action": "Derive the invariant and a reversible synthetic operation before racing it.",
+      "boundary": "No irreversible counters, purchases, transfers, or broad concurrent mutations."
+    },
+    "double_spend": {
+      "status": "cold-narrow",
+      "priority": 5,
+      "helper": "solvers/web/double_spend.py",
+      "action": "Race one advertised empty-JSON synthetic-credit redemption only after exact post-required and one-credit audit controls, then read one audit payoff.",
+      "boundary": "One bounded burst, one audit, no retry/body/value variation; every generic business-logic race remains agent-only."
+    },
+    "soap_wsdl": {
+      "status": "cold-read-exact/recon",
+      "priority": 70,
+      "helper": "service_descriptors + recon_advanced soap_read",
+      "action": "Parse exact-linked WSDL offline; a separate complete exact contract may call one read-verb-restricted side-effect-free same-origin SOAP operation with bounded inert scalar arguments and strict entity-free XML proof parsing.",
+      "boundary": "A descriptor alone never authorizes a call; no import/schema/external address, DTD/entity, mutation verb, credential or complex object is sent."
+    },
+    "grpc_web": {
+      "status": "cold-read-exact/recon",
+      "priority": 70,
+      "helper": "service_descriptors + recon_advanced grpc_web_read",
+      "action": "Parse exact-linked protobuf/gRPC-Web metadata offline; a separate complete exact contract may call one read-verb-restricted side-effect-free same-origin unary route with an empty framed message after a GET control.",
+      "boundary": "A descriptor alone never authorizes a call; no reflection, import, external channel, client data, stream, credential or mutation method is used."
+    }
+  }
+}

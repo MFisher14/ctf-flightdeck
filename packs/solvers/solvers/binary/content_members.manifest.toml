@@ -1,0 +1,15 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-216 (binary lane reader generalization).
+# import-only: select is its main public callable, not a contract entry; `ctf run` refuses library engines
+id = "binary.content_members"
+lane = "binary"
+entry = "solvers.binary.content_members:select"
+capabilities = ["library", "zip"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+category = ["reverse"]
+keywords = ["renamed member", "member by content"]
+priority = 60

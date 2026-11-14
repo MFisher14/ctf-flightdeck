@@ -1,0 +1,26 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-024.
+# capabilities, inputs, needs_tools and cost_class are heuristics: correct them by hand.
+id = "binary.exec_grep"
+lane = "binary"
+entry = "solvers.binary.exec_grep:solve"
+capabilities = ["executes", "elf", "macho", "pwn", "reverse", "sandbox"]
+inputs = ["magic:0x7f454c46", "magic:0xfeedface", "magic:0xfeedfacf", "magic:0xcafebabe"]
+# Needs Docker and the csctf-pwn image to run the untrusted binary in isolation; no native fallback.
+needs_tools = ["docker"]
+cost_class = "heavy"
+status = "active"
+
+[[routes]]  # pwn: run the check binary and read its output
+category = ["pwn"]
+priority = 39
+
+[[routes]]  # reverse crackmes that print the flag when run
+category = ["reverse"]
+priority = 37
+
+[intake]  # B-002/B-011 input adapter: run every handout native executable in the sandbox, grep for the flag
+select = "files"
+run = "challenge"
+match = ["magic:0x7f454c46", "magic:0xfeedface", "magic:0xfeedfacf", "magic:0xcafebabe"]
+timeout = 120
+spawns = true

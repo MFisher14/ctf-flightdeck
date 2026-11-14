@@ -237,7 +237,20 @@ def test_false_disables_a_cap_and_an_absent_cap_keeps_its_default(tmp_path):
 
 def test_counted_tries_wait_for_the_player_unless_the_config_opts_in(tmp_path):
     assert load_config(write(tmp_path, LADDER)).lanes.submit_limited == "confirm"
+    assert load_config(write(tmp_path, LADDER)).lanes.wrong_stop == 3
+    from ctf_flightdeck.core.model import UNLIMITED_LANES
+
+    assert load_config(write(tmp_path, LADDER + '[lanes]\nmax_lanes = "unlimited"\n')).lanes.max_lanes == UNLIMITED_LANES
+    assert 'lanes.max_lanes must be a whole number, at least 1, or "unlimited"' in error(write(tmp_path, LADDER + '[lanes]\nmax_lanes = "lots"\n'))
+    assert load_config(write(tmp_path, LADDER + "[lanes]\nwrong_stop = 0\n")).lanes.wrong_stop == 0
+    for bad in ("-1", "1.5", '"3"', "true"):
+        assert "lanes.wrong_stop must be a whole number, 0 or more" in error(write(tmp_path, LADDER + f"[lanes]\nwrong_stop = {bad}\n"))
     assert load_config(write(tmp_path, LADDER + '[lanes]\nsubmit_limited = "auto"\n')).lanes.submit_limited == "auto"
+    assert load_config(write(tmp_path, LADDER)).lanes.variant_tries == 0  # flag variants are off unless asked for
+    assert load_config(write(tmp_path, LADDER + "[lanes]\nvariant_tries = 12\n")).lanes.variant_tries == 12
+    for bad in ("-1", "13", "1.5", '"3"', "true"):
+        assert "lanes.variant_tries must be a whole number from 0 to 12 (0: no variants)" in error(
+            write(tmp_path, LADDER + f"[lanes]\nvariant_tries = {bad}\n"))
     for bad in ("true", '"yes"', '"off"'):
         assert 'lanes.submit_limited must be "auto" or "confirm"' in error(write(tmp_path, LADDER + f"[lanes]\nsubmit_limited = {bad}\n"))
 
@@ -699,6 +712,8 @@ def test_the_l1_table_names_a_pack_and_how_many_engines_run_at_once(tmp_path):
     config = load_config(write(tmp_path, LADDER + '[l1]\npack = "~/solvers"\nconcurrency = 2\n'))
     assert config.l1 == L1Config(pack=Path("~/solvers").expanduser(), concurrency=2)
     assert load_config(write(tmp_path, LADDER)).l1 == L1Config(pack=None, concurrency=4)  # no pack: no L1 stage
+    own = load_config(write(tmp_path, LADDER + '[l1]\npack = "~/solvers"\nimage = "my-pack:1"\n'))
+    assert own.l1.image == "my-pack:1" and config.l1.image is None  # unset: engines run in the lane image
 
 
 @pytest.mark.parametrize(
@@ -707,6 +722,10 @@ def test_the_l1_table_names_a_pack_and_how_many_engines_run_at_once(tmp_path):
         ('pack = "solvers"', "l1.pack must be an absolute path or start with ~"),
         ("pack = 3", "l1.pack must be a string"),
         ("concurrency = 0", "l1.concurrency must be a whole number, at least 1"),
+        ('image = "-v /:/host"', "l1.image must be a docker image name"),
+        ('image = ""', "l1.image must not be empty"),
+        ('lane_tools = "yes"', "l1.lane_tools must be true or false"),
+        ('lane_tools = true', "l1.lane_tools needs a pack"),
         ('engines = "x"', "l1.engines"),
     ],
 )
@@ -755,17 +774,90 @@ def test_the_autopilot_table_is_read_and_is_off_with_no_budget_by_default(tmp_pa
     ("budget_tokens = 1.5", "autopilot.budget_tokens must be a whole number above 0: the whole run's budget in tokens (got 1.5)"),
     ('engage = "yes"', "autopilot.engage must be true or false (got a string)"),
     ("budget = 5", "autopilot.budget"),
+    ("second_after = -1", "autopilot.second_after must be a whole number of seconds, 0 or more (0: never) (got -1)"),
+    ("second_after = 2.5", "autopilot.second_after must be a whole number of seconds, 0 or more (0: never) (got 2.5)"),
+    ("second_after = true", "autopilot.second_after must be a whole number of seconds, 0 or more (0: never) (got true)"),
+    ('third_after = "480"', "autopilot.third_after must be a whole number of seconds, 0 or more (0: never) (got a string)"),
+    ("second_after = 180\nthird_after = 180",
+     "autopilot.third_after must be more than second_after (180): the third lane comes after the second (got 180)"),
+    ("second_after = 180\nthird_after = 60", "autopilot.third_after must be more than second_after (180)"),
 ])
 def test_a_bad_autopilot_table_is_refused_naming_the_key(tmp_path, body, problem):
     text = filled(example_config()).replace("\n[autopilot]\n#", "\n#", 1) + f"\n[autopilot]\n{body}\n"
     assert problem in error(write(tmp_path, text))
 
 
+def test_the_second_and_third_opinion_timers_are_read_and_off_by_default(tmp_path):
+    plain = load_config(write(tmp_path, filled(example_config())))
+    assert (plain.autopilot.second_after, plain.autopilot.third_after) == (0, 0)  # nothing changes for who did not ask
+
+    def timers(body: str) -> tuple[int, int]:
+        text = filled(example_config()).replace("\n[autopilot]\n#", "\n#", 1) + f"\n[autopilot]\n{body}\n"
+        pilot = load_config(write(tmp_path, text)).autopilot
+        return pilot.second_after, pilot.third_after
+
+    assert timers("second_after = 180\nthird_after = 480") == (180, 480)
+    assert timers("second_after = 180") == (180, 0)
+    assert timers("third_after = 60") == (0, 60)  # the third alone: nothing to be later than
+    assert timers("second_after = 0\nthird_after = 0") == (0, 0)
+
+
 def test_the_example_shows_the_autopilot_table():
     text = example_config()
     assert "\n[autopilot]\n" in text
-    for key in ("engage", "budget_dollars", "budget_tokens"):
+    for key in ("engage", "budget_dollars", "budget_tokens", "second_after", "third_after"):
         assert re.search(rf"^# {key} = ", text, flags=re.M), key
     said = " ".join(line.lstrip("# ") for line in text.splitlines())
     assert "never spends a challenge's last try, and reroutes no request a model declined" in said
     assert "It needs the Docker runtime and a run budget" in said
+
+
+# ---------------------------------------------------------------------- [governor]
+
+
+def test_the_governor_table_is_read_and_is_on_with_its_defaults_when_there_is_none(tmp_path):
+    from ctf_flightdeck.config import GovernorConfig
+
+    plain = load_config(write(tmp_path, filled(example_config())))  # the example's table is all comments
+    assert plain.governor == GovernorConfig(enabled=True, max_load_per_cpu=3.0, min_free_ram_mb=2048, min_free_disk_mb=10240)
+    assert load_config(write(tmp_path, LADDER)).governor == GovernorConfig()  # no table at all
+    body = "enabled = false\nmax_load_per_cpu = 2\nmin_free_ram_mb = 4096\nmin_free_disk_mb = 0\n"
+    text = filled(example_config()).replace("\n[governor]\n#", "\n#", 1) + f"\n[governor]\n{body}"
+    assert load_config(write(tmp_path, text)).governor == GovernorConfig(
+        enabled=False, max_load_per_cpu=2.0, min_free_ram_mb=4096, min_free_disk_mb=0)
+    one = load_config(write(tmp_path, LADDER + "[governor]\nmax_load_per_cpu = 1.5\n")).governor  # the rest keep their defaults
+    assert one == GovernorConfig(max_load_per_cpu=1.5)
+
+
+@pytest.mark.parametrize(("body", "problem"), [
+    ('enabled = "no"', "governor.enabled must be true or false (got a string)"),
+    ("enabled = 0", "governor.enabled must be true or false (got 0)"),
+    ("max_load_per_cpu = -1", "governor.max_load_per_cpu must be a number from 0 to 1000: the load average per CPU above which no "
+                              "new lane starts (0: no limit) (got -1)"),
+    ("max_load_per_cpu = nan", "governor.max_load_per_cpu must be a number from 0 to 1000"),
+    ("max_load_per_cpu = inf", "governor.max_load_per_cpu must be a number from 0 to 1000"),
+    ("max_load_per_cpu = true", "governor.max_load_per_cpu must be a number from 0 to 1000"),
+    ("min_free_ram_mb = 1.5", "governor.min_free_ram_mb must be a whole number of MiB from 0 to 1073741824: the RAM available below "
+                              "which no new lane starts (0: no limit) (got 1.5)"),
+    ("min_free_ram_mb = -1", "governor.min_free_ram_mb must be a whole number of MiB"),
+    ('min_free_disk_mb = "10 GB"', "governor.min_free_disk_mb must be a whole number of MiB from 0 to 1073741824: the free disk at "
+                                   "the run folder below which no new lane starts (0: no limit) (got a string)"),
+    ("min_free_disk_mb = 9999999999999", "governor.min_free_disk_mb must be a whole number of MiB"),
+    ("max_load = 3", "governor.max_load"),
+])
+def test_a_bad_governor_table_is_refused_naming_the_key(tmp_path, body, problem):
+    assert problem in error(write(tmp_path, LADDER + f"[governor]\n{body}\n"))
+
+
+def test_the_example_shows_the_governor_table_with_the_defaults_it_has():
+    from ctf_flightdeck.config import GovernorConfig
+
+    text = example_config()
+    assert "\n[governor]\n" in text
+    defaults = GovernorConfig()
+    for key in ("enabled", "max_load_per_cpu", "min_free_ram_mb", "min_free_disk_mb"):
+        shown = re.search(rf"^# {key} = (\S+) ", text, flags=re.M)
+        assert shown, key
+        assert tomllib.loads(f"value = {shown.group(1)}")["value"] == getattr(defaults, key), key  # the example shows the default
+    said = " ".join(line.lstrip("# ") for line in text.splitlines())
+    assert "no NEW lane starts" in said and "it never stops or pauses one" in said and "one lane always starts" in said

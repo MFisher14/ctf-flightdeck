@@ -106,7 +106,7 @@ import httpx
 from .. import __version__
 from ..flagformat import check as check_flag_format
 from ..text import MARK, untrusted
-from .manual import BOARD_FILE, CHALLENGE_FILE, MAX_JSON_BYTES, Board, BoardError, load_board, tcp_service
+from .manual import BOARD_FILE, CHALLENGE_FILE, MAX_JSON_BYTES, TYPE, Board, BoardError, load_board, tcp_service
 from .manual import _origin as _board_origin  # the board's own rule for an origin, so what a pull writes loads
 from .manual import _settings as _board_json  # board.json's event and flag format, read as the board loader reads them
 
@@ -1329,6 +1329,7 @@ class _Spec:
     max_attempts: int = 0  # the tries CTFd allows at the flag; 0: any number
     tries_left: int | None = None  # the tries left now, as the details say (_tries_left_at); None: not counted or not said
     tries_problem: str = ""  # why the tries left are not known, when CTFd's count of those used is not one
+    kind: str = ""  # CTFd's type of the challenge ("standard", "dynamic", a plugin's "container"), when it is a plain name
 
 
 async def _pull_one(
@@ -1369,6 +1370,7 @@ async def _pull_one(
                 "urls": list(spec.urls),
                 "id": slug,
                 **({"max_attempts": spec.max_attempts} if spec.max_attempts else {}),
+                **({"type": spec.kind} if spec.kind else {}),
             },
         )
         try:
@@ -1476,7 +1478,9 @@ def _spec(number: int, item: dict, detail: dict, ctfd: httpx.URL) -> _Spec:
             "then checks no more."
         )
     left, problem = _tries_left_at(detail, tries)
-    return _Spec(name, category, points, solves, description, tuple(extra), urls, tuple(files), tries, left, problem)
+    kind = field("type")  # an event's [instances] types says which types have an instance to start
+    kind = kind if isinstance(kind, str) and TYPE.fullmatch(kind) and kind != "standard" else ""
+    return _Spec(name, category, points, solves, description, tuple(extra), urls, tuple(files), tries, left, problem, kind)
 
 
 def _description(spec: _Spec, stage: Path) -> tuple[str, str | None]:

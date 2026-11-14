@@ -1,0 +1,28 @@
+{
+ "mcpServers": {
+  "files": {
+   "command": "npx",
+   "args": [
+    "-y",
+    "@modelcontextprotocol/server-filesystem",
+    "/srv/share"
+   ]
+  },
+  "calc": {
+   "command": "uvx",
+   "args": [
+    "quick-calc-mcp",
+    "--stdio"
+   ],
+   "env": {
+    "CALC_LICENSE": "trial"
+   }
+  },
+  "mail": {
+   "url": "https://mcp.mailhub.example/sse",
+   "headers": {
+    "Authorization": "Bearer ${MAIL_TOKEN}"
+   }
+  }
+ }
+}

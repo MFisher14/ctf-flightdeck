@@ -18,20 +18,46 @@ flightdeck doctor             # checks your setup and says how to fix each probl
 flightdeck practice           # 14 small practice challenges: spends tokens on your model API
 ```
 
-`flightdeck` on its own says what to do next on your machine. `flightdeck doctor` checks Python,
+`init` shows a numbered list of model APIs: answer with a number or a name. Lanes use one API;
+"anthropic, openrouter" together makes OpenRouter the fallback for when Anthropic keeps failing.
+A coding-agent CLI (Claude Code, Codex) is not chosen there: `flightdeck play --agent claude`
+uses it. For an event, the next command is `flightdeck start` ([Events and teams](#events-and-teams)).
+
+`flightdeck` on its own, at a terminal, opens the home screen: resume an event (the ones you
+set up or played, most recent first; Enter takes the first), start a new CTF, the practice set,
+a demo, or install the solver pack when you have none. Arrow keys move, Enter chooses, `q` quits.
+"Start a new CTF" is a form on that screen with the questions `flightdeck start` asks; `ctrl+s`
+sets the event up and opens its console. What would stop that (a folder that cannot be made, a
+VPN file that is not there, a token that cannot be kept) is said in the form, with your answers
+still in it, and under the flag format the form says what it made of what you typed. Steps that need your password (connecting a VPN,
+installing its tool or the solver pack) are asked in the plain terminal before the console
+opens. With no config yet the home screen offers "Get started", which asks about your model API
+in the terminal and then your first event. In a script or a pipe it asks nothing and prints the commands
+instead. The first console you open, and the mock, start on a welcome screen: what the board,
+the lanes and the command bar are, and the keys you need; Enter goes on (on an empty board, to
+adding your first challenge). `flightdeck doctor` checks Python,
 the config, the key variables, a local model server and its models, the light model, Docker, the
 lane image and your terminal's size. Before the console opens, `play` and `practice` ask the model
 API whether it takes your key and serves every model in your ladder, and stop with what to fix if
 not. `ctfdeck` and `ctf-flightdeck` are other names for the `flightdeck` command.
 
-### Install with Homebrew or apt
-
-Not yet: 0.2.0 is on PyPI only. Both arrive with the first release after 0.2.0, and until then
-the commands below find nothing.
+### Upgrade
 
 ```sh
-brew install mfisher14/tap/ctf-flightdeck        # macOS or Linux, from flightdeck's own tap
+uv tool upgrade ctf-flightdeck     # or: pipx upgrade ctf-flightdeck
+flightdeck --version               # which release you have now
+```
 
+Your config, keys file, event folders and run folders are not touched. From a clone, pull and
+install it over the old one: `git pull`, then `uv tool install --force .`. If you use the solver
+pack, run `flightdeck pack install` again after an upgrade so the pack matches the release.
+
+### Install with Homebrew or apt
+
+**apt:** from 0.3.0 on, each release's page has a `.deb` for amd64 and for arm64, with a
+`SHA256SUMS` file to check it against.
+
+```sh
 # Debian or Ubuntu: the .deb for your machine (amd64 or arm64) from the release's page,
 # https://github.com/MFisher14/ctf-flightdeck/releases
 sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb
@@ -40,7 +66,11 @@ sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb
 The `.deb` brings a Python of its own under `/opt/ctf-flightdeck` (Debian 12 has 3.11, and
 flightdeck needs 3.12), so it needs no Python from your system and changes none. There is no apt
 repository yet, so `apt upgrade` does not find a new release: install the next `.deb` over the
-old one. Neither way installs Docker.
+old one. It does not install Docker.
+
+**Homebrew:** not yet. flightdeck's tap does not exist yet, so
+`brew install mfisher14/tap/ctf-flightdeck` finds nothing: on macOS, install with `pipx` or `uv`
+as above.
 
 ## What a run costs
 
@@ -296,21 +326,62 @@ Lanes start on the lowest-point challenges first (most solves first among equals
 queue. Every lane is a model conversation, capped per lane by `[lanes] token_cap` and
 `dollar_cap` (400,000 tokens and $2 by default; an alert at 80%, your approval at 100%).
 
+A challenge is often worked by more than one lane in a run: a fork, a fresh lane after a kill, the
+next model up the ladder. A lane that starts on a challenge other lanes worked or still work reads,
+after its brief, what each of them tried: its plan, the programs it ran, its last steps, what
+became of its flags, the alerts on it and how it ended. flightdeck writes that record itself from
+what the lanes did (no model is asked to), it is handed over as data like the challenge's own
+text, and it is kept short (3,000 characters). The same record is in the run folder as
+`shared.json` when the run ends.
+
+Challenges whose names share a start are a series ("Harbor Lab: Read the Certificate", "Harbor
+Lab: Fingerprint the Certificate"; [Boards](BOARDS.md#a-series-of-challenges) has the rule). A lane
+on one of them is told of its siblings: which are solved, what the lane that worked a sibling
+found, and where that lane's files are, to read and not to change: the folder itself on the host
+runtime, `/series/<challenge id>` in Docker (mounted read-only). A lane that still runs shares no
+files. A sibling's flag is never in the brief. A lane's log says what its brief was given.
+
 A flag a lane finds waits for you: `a` or `1` submits it, `d` or `0` declines. On a folder board
 flightdeck checks a flag against the board's `answers.sha256.json` when it has one. Without one
 it cannot check: submit the flag on the platform yourself, then press `a` if it was accepted or
 `d` if not. With `--event`, `a` sends it to CTFd (when the event's submit stage is `manual` or
 `off`, you submit it and answer `a` or `d`).
 
+To turn auto approve on while a run is going, type `/config submit auto` in the console
+(`/config submit confirm` turns it off, and `/config` alone shows the run's settings). To start
+with it on, pass `--submit auto` or set `submit = "auto"` under `[lanes]` in your config.
+`/config lanes 8` changes how many lanes run at once, and `/config lanes unlimited` lifts the
+limit (`max_lanes = "unlimited"` in the config does the same from the start).
+
 Under auto submit (`submit = "auto"`, or `play --submit auto`) a flag the model submits goes at
 once, unless it is written in the challenge's own description or handout files (often a decoy):
 that one still waits for you. A flag found wrong is never asked about again.
+Once the platform has called three flags wrong at one challenge, that challenge's next flags wait
+for you as well (`wrong_stop = 3` under `[lanes]`; 0 turns it off): a lane that is guessing does
+not get to spray the platform. A flag CTFd rate-limited without checking it is sent again by
+flightdeck after the wait CTFd asks for, up to three more times, before it comes back to you.
+
+A right solve can lose its spelling on the way: a cipher with one letter case gives the flag in
+capitals, a decoder wraps a wrapped flag twice. With `variant_tries = 2` under `[lanes]` (0, the
+default, turns it off; 12 is the most), when the platform calls a flag wrong flightdeck proposes
+its other spellings on the same lane, best first: the lost case, the doubled wrapper, leet and
+letters, accents, spaces and underscores, the prefix as the event's flag format spells it. One
+at a time, the next only after the platform called the one before wrong, and at most that many
+per challenge in a run. A variant is a flag like any other: under `submit = "confirm"` it waits
+for you, and under auto submit it goes out only where a flag the lane claims would (never past
+`wrong_stop`, never on a challenge whose tries are counted, never when its first spelling went
+out on your yes), so a wrong one is a wrong try at the platform. The approval and the lane's
+transcript say which flag it is a variant of and what changed.
 
 Some platforms limit the tries at a challenge's flag (CTFd's "max attempts"). Every flag for such
 a challenge waits for your approval, under auto submit too, and the approval says how many tries
 are left. To let auto submit spend those tries without you, the last one included, set
 `submit_limited = "auto"` under `[lanes]`; a wrong flag can then use up the tries for your whole
 team. flightdeck says so when a run starts.
+
+Some challenges hand out a flag that rotates every few minutes. Say so in the challenge's
+`challenge.json` (`"rotates": 300`) and flightdeck sends such a flag only in the window it was
+found in, telling the lane to fetch a fresh one otherwise: [Rotating flags](BOARDS.md#rotating-flags).
 
 Every run writes a run folder with an append-only `events.jsonl`, each lane's transcript and a
 `status.json` that says how the run stands ([the status file](#the-status-file)); a
@@ -488,7 +559,121 @@ machine, as you.
 
 ## Events and teams
 
-Write down what the event's rules allow, check it, and play by it:
+One command sets an event up and plays it:
+
+```sh
+flightdeck start
+```
+
+It asks, in order: the event's name; a folder for it (`~/ctf/<name>` unless you say otherwise,
+made for you); whether the rules allow AI tools (flightdeck does not play an event that forbids
+them); how the challenges arrive (**ctfd**: the site runs CTFd, and flightdeck pulls the board
+and submits flags; **by hand**: any other site); the site's address; what a flag looks like
+(`PP` for `PP{...}`); whether a flag waits for you or goes at once; and your CTFd access token
+(on the site: Settings, Access Tokens, Generate). The token goes into your keys file under a
+variable of this event's own, never into the event's folder, and is never shown. Then it says
+whether the solver pack is installed (and offers to install it), and launches.
+
+For the flag format you can also paste an example flag from the rules: `CTF{s0me_t3xt}` is read
+as `CTF{...}` (any text between the braces), and start says what it understood. Anything with a
+backslash, a bracket or a quantifier in it is kept as your own regular expression.
+
+A token belongs to a site. The variable is named after the event (`CTFD_TOKEN_EXAMPLE_CTF`), and
+a token already there is used again only when an event you set up before, at the same address,
+names it. An event of the same name at another address (this year's edition on a new site, or a
+site that only looks like last year's) gets a variable of its own (`CTFD_TOKEN_EXAMPLE_CTF_2`)
+and is asked for its token, and start says why; so is an event whose variable is set while none
+of your events says which site it is for. One site's token is never sent to another's address.
+
+What it leaves:
+
+```
+~/ctf/example-ctf/
+  event.toml   the event's rules, from your answers: edit it any time
+  board/       the challenges: pulled from CTFd as you play, or put there by you
+```
+
+`flightdeck play ~/ctf/example-ctf` plays that event again, with no option to remember: a folder
+with an `event.toml` in it is played by that file. `flightdeck start ~/ctf/example-ctf` does the
+same for a folder already set up (answers given as options are then not used, and it says so).
+Every question has an option (`flightdeck start --help`), for a script. The token is the
+exception: no option takes it, because a command line stays in your shell's history and shows in
+the process list. `--token-env NAME` reads it from the environment variable you name, and
+`--token-stdin` from a pipe; either way start keeps it in your keys file. Options are checked
+before anything is written: a `--vpn` file that is not there, a folder that cannot be made or a
+token that cannot be kept stops start with no folder made and no token kept.
+
+By hand (a site that is not CTFd): the board starts empty and the console opens on it. Type
+`/new` to hand a challenge over. The form asks for its name and has a box for its description:
+paste it as the site shows it, and put the instance's address (`https://...` or `nc host port`)
+on a line of its own. The description is kept exactly as you give it: a path in it is only
+text, and never attaches a file. Attach its files and screenshots by dragging them onto the
+terminal, or with `ctrl+o`. `ctrl+s` adds it: flightdeck makes the challenge's folder under
+`board/`, copies the files in, and a lane starts on it at once. Big files are copied in the
+background: the form says so, and the console goes on. A challenge that cannot be added leaves
+the form open with everything you typed, and says why. Category and points are optional. From
+another terminal, `flightdeck add ~/ctf/example-ctf --name "Crab Walk" --text - --file
+postcard.txt` does the same (only `--file` attaches a file, and each one attached is printed
+with its size), and a run that is playing picks it up within seconds; so does a challenge
+folder you make yourself. flightdeck shows each flag; you submit it on the site and press `a`
+if it was accepted or `d` if not.
+
+`ctrl+o` in the form opens your system's file window (Finder's on macOS) to choose the
+challenge's files, for a terminal where a drop does not arrive; `/attach <challenge>` with no
+file opens the same window. Files dropped on the console are taken wherever the focus is: into
+the form when it is open, otherwise onto the command bar as an `/attach` that names the selected
+challenge, to finish with Enter. A drop is a paste that is nothing but the paths of files that
+exist; any other paste is text, and text you typed on the command bar is never replaced. In the
+form, the line under the box says what is attached (each file's name and size) and the target
+it found, so you see a drop land before you add the challenge; `ctrl+r` takes the last file off
+again. A file or a folder can be attached. A device, your home folder itself, and anything that
+holds flightdeck's config folder or keys file are refused, with the reason. `ctrl+v` pastes a
+screenshot from the clipboard (macOS: take it with cmd+ctrl+shift+4); text pastes the
+terminal's own way (cmd+v).
+flightdeck's lanes read text, so when a challenge has images the run asks your lanes' model
+once for each image's text and puts it in the description; the image is in the handout too. A
+model that takes no images is said, and the challenge is added without that text.
+
+A challenge added with no file and no target says so, and its lane is told to say what is
+missing and stop instead of waiting. To add a file afterwards: type `/attach`, a space, the
+challenge's name, and drag the file onto the command bar. Its lane starts afresh with the file.
+
+**A VPN for live targets.** `flightdeck start` asks for the event's VPN file (a WireGuard
+`.conf` or an OpenVPN `.ovpn`: drag it in) and keeps a copy in the event's folder, readable by
+you only. `flightdeck play` says whether it looks connected and offers to connect it; it shows
+the `sudo` command first, and sudo asks for your password itself. When the file's tool is not on
+this machine (`wg-quick` for WireGuard, `openvpn` for OpenVPN), flightdeck shows the command
+that installs it with your package manager (Homebrew, apt, dnf or pacman) and runs it on your
+yes. By hand:
+
+```sh
+flightdeck vpn add ~/ctf/example-ctf ~/Downloads/team.conf   # for an event already set up
+flightdeck vpn up ~/ctf/example-ctf                          # connect (installs wg-quick or openvpn if missing)
+flightdeck vpn status ~/ctf/example-ctf
+flightdeck vpn down ~/ctf/example-ctf
+```
+
+A VPN file can run programs as root (WireGuard's `PreUp`, `PostUp`, `PreDown` and `PostDown`
+lines; OpenVPN's `up` and `down` scripts, `plugin`, `script-security 2` and their kin), so
+flightdeck is careful with one:
+
+- It connects only a file you added: with `flightdeck vpn add`, or as the VPN answer of
+  `flightdeck start` or the home screen's form. A `vpn.conf` or `vpn.ovpn` that is merely in a
+  folder you play (a board somebody shared), or that changed since you added it, is
+  unverified: `play` says so and connects nothing, and `vpn up` refuses. Read the file, then
+  `flightdeck vpn add FOLDER FILE` adds it (again).
+- Before it connects, it shows every line of the file that runs a program as root, as written,
+  and asks, with no as the answer if you only press Enter. `--yes` does not answer that
+  question, and with no terminal to ask at (a script, `--headless`) the file is not connected.
+- `vpn down` stops an OpenVPN only when it is the one flightdeck started for that file (it
+  checks the process with `ps`). A `vpn.pid` left from before a reboot, or naming some other
+  program, is removed and reported as not connected; nothing is stopped.
+
+The VPN is this machine's. Lanes on the host runtime use it as any program does. A Docker
+lane reaches a target through flightdeck's fence, which leaves by this machine's routes; if a
+target you can reach from your shell is not reached from a Docker lane, play with `--host`.
+
+To write the event file yourself instead, from the event's rules:
 
 ```sh
 flightdeck preflight --example > event.toml      # then edit it from the event's rules
@@ -497,7 +682,7 @@ export CTFD_TOKEN=...                             # the variable event.toml name
 flightdeck play ~/ctf/event-board --event event.toml
 ```
 
-flightdeck talks to CTFd. For any other platform, make a folder board (`platform = "manual"` in
+flightdeck talks to CTFd and to a Game Master. For any other platform, make a folder board (`platform = "manual"` in
 `event.toml`) and submit flags by hand.
 
 With a CTFd event, flightdeck pulls the board into that folder (and, with `pull = "auto"`, adds
@@ -507,6 +692,17 @@ solves. A slow CTFd never holds up the console: lanes carry on while their flags
 `auto` too, and each approval says how many tries are left. `flightdeck ctfd pull URL FOLDER`
 pulls a CTFd board without playing it; it exits with status 1 when some challenges could not be
 pulled.
+
+A Game Master event (`platform = "gamemaster"`) is played from a board you pull first:
+`flightdeck gm pull URL FOLDER` writes the attempts that are started, one challenge per answer,
+and names what it left unstarted; `--start` starts the ones that run no clock, and flightdeck
+never starts a clocked one. A lane submits an answer as `answer{...}`, and what is inside goes to
+the Game Master. Its replies: `CORRECT` and `accepted` (that answer is banked, others of the
+attempt remain) solve the challenge, `incorrect` is a wrong answer, and anything else (the
+attempt not started or expired, a refused request, a rate limit that outlasts three more sends,
+a word flightdeck does not know) is no verdict: the answer comes back to you to submit by hand,
+never recorded as wrong. A challenge the Game Master lists as solved is closed. The run starts
+no attempt and pulls nothing. More in [BOARDS.md](BOARDS.md#a-board-from-a-game-master).
 
 Each stage (pull, L1, agents, submit, live instance) has a policy in the event profile: `auto`,
 `confirm` (you say yes first; for agents and L1, starting play is that yes), `manual` or `off`,
@@ -559,6 +755,12 @@ as quitting does. Under the pull policy `auto`, new waves are pulled on the usua
 | A lane's effort is out of proportion to the challenge | kills it and parks the challenge for the next round |
 | A lane asks for more budget (its own cap) | approves it while the run budget has room: the lane's caps go up a step and it carries on (a lane whose spend has no price waits for you) |
 | The queue is dry and no lane runs | queues each unsolved challenge a lane gave up on, on the next model up, lowest points first, once per rung |
+| A challenge's only lane has run `second_after` seconds unsolved, or the platform called a flag of it wrong (only when you set `second_after`) | forks a second lane on another model of your ladder, once per challenge |
+| The first of a challenge's two lanes has run `third_after` seconds (only when you set `third_after`) | forks a third lane on a model neither runs, once per challenge |
+
+The last two are off until you set them, in seconds, under `[autopilot]`: `second_after = 180` and
+`third_after = 480` are a second opinion after three minutes and a third after eight. They need a
+ladder with two and three models, and each fork spends from the run budget like any lane.
 
 Under `submit = "auto"` a flag a lane claims is submitted, as without autopilot. A lane that is
 paused or taken over, or that waits for your answer, is left alone.
@@ -683,6 +885,26 @@ into `FOLDER/.flightdeck/generated/`.
 
 To remove flightdeck: `pipx uninstall ctf-flightdeck` (or `uv tool uninstall ctf-flightdeck`),
 `docker image rm ctf-flightdeck-lane:1`, and delete those folders.
+
+### The host governor
+
+A run that starts lanes faster than your machine can carry them loses all of them. So before a
+queued lane starts, flightdeck looks at three readings, and while one is past its limit no new
+lane starts:
+
+| Reading | Limit in `[governor]` | Default |
+| --- | --- | --- |
+| The 1-minute load average divided by the CPUs | `max_load_per_cpu` | 3.0 |
+| The RAM available without swapping, in MiB | `min_free_ram_mb` | 2048 |
+| The free disk where the run folder is, in MiB | `min_free_disk_mb` | 10240 |
+
+The lanes at work carry on: the governor never stops or pauses one, and the queue keeps its
+order. One warning says when starts begin to be held and which limit it is, with the reading,
+and one says when they start again; that happens by itself (the machine is read every 15
+seconds), with nothing for you to lift, and autopilot stays engaged. With no lane at work, one
+lane always starts. A limit of 0 is off, and `enabled = false` turns the governor off. A reading
+flightdeck cannot take (it reads macOS and Linux) holds nothing back, and the run says so before
+it starts. `flightdeck doctor` shows the readings in its `host` line.
 
 ## Optional extras
 

@@ -76,15 +76,16 @@ class World:
     """A deck with an autopilot attached (off until a test engages it)."""
 
     def __init__(self, *, budget=Budget(dollars=10.0), submit="confirm", submit_limited="confirm", containerized=True,
-                 platform=False, max_lanes=4, models=LADDER) -> None:
+                 platform=False, max_lanes=4, models=LADDER, verify=lambda cid, flag: None, **rules) -> None:
         self.driver = RecordingDriver()
         self.sent: list[tuple[str, str, str]] = []  # what the deck handed to the platform's submitter
         self.refusals: list[bool] = []
         config = DeckConfig(event="test", max_lanes=max_lanes, flag_format=FLAG_FORMAT, models=models, submit=submit,
                             submit_limited=submit_limited, containerized=containerized)
         submitter = (lambda lane, cid, flag: self.sent.append((lane, cid, flag))) if platform else None
-        self.deck = Deck(config, self.driver, ManualClock(0.0), lambda cid, flag: None, submitter=submitter)
-        self.pilot = Autopilot(self.deck, budget, refusals=self.refusals.append)
+        self.clock = ManualClock(0.0)
+        self.deck = Deck(config, self.driver, self.clock, verify, submitter=submitter)
+        self.pilot = Autopilot(self.deck, budget, refusals=self.refusals.append, **rules)  # second_after, third_after
         self.pilot.attach()
 
     def release(self, *challenges: Challenge, model="small", **caps) -> None:

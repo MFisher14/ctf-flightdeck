@@ -1,6 +1,6 @@
 [project]
 name = "ctf-flightdeck"
-version = "0.3.0"
+version = "0.4.0"
 description = "A terminal harness for playing CTFs with AI agents, where the player runs the loop."
 readme = "README.md"
 license = "MIT"
@@ -60,3 +60,8 @@ addopts = "-ra"
 dev = [
     "pytest>=9.2.0",
 ]
+
+[tool.uv]
+# An install from a clone (`uv tool install .`) is rebuilt when the source changes, not only
+# when this file does: without this, uv reuses its cached build while the version stays the same.
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**" }]

@@ -1,0 +1,22 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-243.
+# Regeneration never overwrites this file.
+# evm_rpc is the read-only EVM JSON-RPC reader: a deployed contract's code and storage slots (Solidity
+# strings followed), searched for the flag format. Off unless the event profile says
+# rules.chain_rpc = "allowed", and only for a node URL rules.live_service_scope admits
+# (ctf.scope.check_url). Read methods only (READ_METHODS); nothing is signed or sent as a transaction.
+id = "toolkits.evm_rpc"
+lane = "toolkits"
+entry = "solvers.toolkits.evm_rpc:solve"
+capabilities = ["executes", "evm", "rpc", "network", "blockchain"]
+inputs = []
+# Pure Python (stdlib http.client). It contacts only the node an operator names with --opt url=...;
+# there is no [intake] table, so intake never runs it.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a challenge that hands out a chain node and asks for on-chain state
+# Every keyword names Ethereum/EVM state: a bare "rpc endpoint" also matches gRPC and web JSON-RPC briefs.
+keywords = ["eth_getstorageat", "ethereum rpc", "evm rpc", "rpc url of the chain", "on-chain storage",
+            "storage slot of the deployed", "read the contract storage"]
+priority = 61

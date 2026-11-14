@@ -1,0 +1,97 @@
+# Static-RE swarm: {{CHALLENGE}}
+
+Scaffolded {{CREATED}} for {{AGENTS}} racer(s) by `ctf re-workbench scaffold`, from the checkout at
+`{{REPO}}`.
+
+This folder is the shared workspace for a parallel static reverse-engineering effort. The kit removes
+the setup work every racer used to rebuild; an agent still does the reversing. Nothing in this flow
+runs the challenge binary natively or in Docker; checks run over the agent's own reimplementation of
+its logic, and the only emulation is the bounded, fail-closed harness in step 6.
+
+Run Python here with `{{REPO}}/tools/ctfpy <script.py>` (or `{{REPO}}/tools/ctfpy -c '...'`): it puts
+every kit module on `sys.path` (`import re_workbench, vm_lifter, shared_findings, pe_emu`).
+
+## The ladder (simplest first)
+
+1. **Triage the artifact.** Format (`lief` / `file`), arch, packer, obvious strings. Record what it is.
+2. **Static readiness.** `ctf re-workbench check` -- confirm capstone / unicorn / lief / pefile import.
+3. **Map and find the compares.** For a PE: `pe_emu.map_pe(data)` (bounded mapper: sections, imports,
+   relocations) and `pe_emu.find_compare_sites(pe)` (the CMP/TEST sites a validator hinges on).
+4. **Name the hashes.** If the loader resolves APIs by hash, use `re_workbench.ApiHashNamer` to turn
+   the constants back into names (ror13 / djb2 / sdbm / fnv1a32 / crc32; uppercase / NUL / seed
+   tunable). `pe_emu.resolve_api_hash` is the quick 32-bit lookup over the same catalog. Feed a
+   specific DLL's exports with `re_workbench.pe_export_names`.
+5. **Defeat the stalls.** A time-lock (`x^(2^t) mod n`)? `re_workbench.timelock_fastforward` with the
+   modulus factorisation jumps to the answer. An environment check? `re_workbench.force_environment`
+   turns the checks into the environment that passes them.
+6. **Bounded emulation, when static reading stalls.** `pe_emu.SafeUnicorn` runs a code region inside
+   Unicorn only: every imported API is a denying stub, syscalls / interrupts / faults stop the run,
+   and instruction and wall budgets cap it. Use it to prove one function's output, only where the
+   event's rules allow emulation. Full Windows process emulation is B-148 (not built yet).
+7. **Custom VM?** Define a `vm_lifter.VMSpec` (opcode table + operand widths); `vmspec.example.py`
+   is a worked one. `disassemble` + `lift` give a listing; fill in `handlers` and `interpret` to prove
+   each opcode's semantics against the challenge's observed I/O.
+8. **Find the accepted input.** Reimplement the validator, then `re_workbench.AcceptedInputSearch`
+   (`solve_per_position` for per-byte checks, `hillclimb` for a separable score), always passing
+   `check=` your full validator: `verified` is True only then.
+9. **Accept, then submit.** A candidate is accepted only when it passes the board's pinned gate
+   (below); a gate-passed candidate goes through `ctf submit` (the event's submit_mode and SubmitGate
+   decide what happens next).
+
+## The shared findings file
+
+`findings.jsonl` is the single source of truth. Every racer appends to it under an exclusive OS lock,
+so a dozen writers never corrupt a line. Record as you go so nobody reproves a fact:
+
+```python
+# run with {{REPO}}/tools/ctfpy, or first: import sys; sys.path.insert(0, "{{REPO}}/tools")
+from shared_findings import FindingsBoard, Finding
+
+board = FindingsBoard("findings.jsonl")
+board.record(Finding(key="op-0x1a", agent="agent-3", kind="hypothesis",
+                     summary="0x1a = xor top-of-stack with next imm8",
+                     evidence=["handler at 0x401abc xors [rsp] with the byte operand"]))
+```
+
+- `kind`: `hypothesis` (a claim to verify), `note` (a fact), `candidate` (a proposed flag).
+- `board.latest()` reduces the log by `key` (last wins; a later note never hides an accepted row).
+- `board.accepted()` lists the accepted rows that re-verify against the pinned gate right now.
+
+## The acceptance gate
+
+Pinned gate: **{{GATE}}**
+
+No flag is "accepted" on an agent's say-so. The gate is pinned to the board, write-once, in two
+places: `findings.gate.json` and a `gate_pin` anchor row at the top of `findings.jsonl`. `accept()`
+runs the pinned gate, a board opened with a different gate is refused, deleting the gate file does
+not unpin it, a gate file that no longer matches the anchor flags the whole board, and every reader
+re-runs the gate over every accepted row, so a row forged by hand or accepted under another gate is
+flagged, never listed. Open the board with no gate to use the pinned one:
+
+```python
+from shared_findings import FindingsBoard, Finding
+board = FindingsBoard("findings.jsonl")          # runs the pinned gate on accept
+board.accept(Finding(key="flag", agent="agent-5", summary="preimage of the stored digest",
+                     candidate="FLAG{...}"))
+# raises AcceptanceRejected if the candidate fails the pinned gate; nothing is written
+```
+
+If the scaffold was run with `--gate-later`, the first board opened with a gate pins it (first
+come): `FindingsBoard("findings.jsonl", gate=digest_gate("sha1", "<stored-hex-digest>"))`. Gates:
+`digest_gate(algo, hex)` (hash of the candidate), `regex_gate(pattern)` (the candidate must fully
+match; a pattern that matches the empty string or any text is refused), `flagfmt_gate()` (the
+active event's flag format, from `ctf.flagfmt`), `predicate_gate(check, name=...)` (your
+reimplemented validator; its name and code digest are pinned, so another function under that name
+is refused, and other readers see those rows as unverifiable unless they open the board with the
+same predicate).
+
+`ctf re-workbench findings findings.jsonl --accepted` shows the re-verified rows and flags the rest
+(exit 1 when any row is flagged). Submit a gate-passed candidate with `ctf submit <id> <flag>`.
+
+## Files here
+
+- `findings.jsonl` -- the shared, append-only findings log (owner-only; starts with the gate_pin row)
+- `findings.gate.json` -- the pinned acceptance gate (present when one is pinned)
+- `vmspec.example.py` -- a worked `VMSpec` to copy when the challenge ships a custom VM
+- `agent-task.md` -- the brief to hand each racer
+- `readiness.txt` -- the static-RE import check captured at scaffold time

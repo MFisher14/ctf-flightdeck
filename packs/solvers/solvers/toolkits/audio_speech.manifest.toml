@@ -1,0 +1,25 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-087.
+id = "toolkits.audio_speech"
+lane = "toolkits"
+entry = "solvers.toolkits.audio_speech:solve"
+capabilities = ["executes", "audio", "speech", "whisper", "transcription", "wav", "ogg", "flac", "mp3", "dtmf", "stego"]
+inputs = ["magic:RIFF", "magic:OggS", "magic:fLaC", "magic:ID3", "ext:.wav", "ext:.ogg", "ext:.flac", "ext:.mp3", "ext:.m4a", "ext:.aiff"]
+needs_tools = ["py:numpy", "py:scipy", "py:soundfile"]   # the Whisper backend and its model are found at run time: a missing one is `blocked`, named
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # B-087: any recorded audio, whatever the category (after the readers that look at the sound: render_ocr_sweep 31)
+files = ["magic:RIFF", "ext:.wav", "magic:OggS", "ext:.ogg", "ext:.oga", "ext:.opus", "magic:fLaC", "ext:.flac", "magic:ID3", "ext:.mp3", "ext:.m4a", "ext:.aiff", "ext:.aif"]
+priority = 27
+
+[[routes]]  # B-087: a brief about something SAID, AND an audio file in the delivery. Speech words only: listen, recording and song head most audio briefs, stego ones too, and must not lift this lane over the specialists
+keywords = ["spoken", "speech", "voicemail", "voice memo", "voice message", "transcribe", "transcript", "read aloud", "podcast"]
+files = ["magic:RIFF", "ext:.wav", "magic:OggS", "ext:.ogg", "ext:.oga", "ext:.opus", "magic:fLaC", "ext:.flac", "magic:ID3", "ext:.mp3", "ext:.m4a", "ext:.aiff", "ext:.aif"]
+priority = 64
+
+[intake]  # B-087: at intake on any audio file, under `ctf intake --max-cost medium` (transcription is not cheap)
+select = "files"
+run = "challenge"
+match = ["magic:RIFF", "ext:.wav", "magic:OggS", "ext:.ogg", "ext:.oga", "ext:.opus", "magic:fLaC", "ext:.flac", "magic:ID3", "ext:.mp3", "ext:.m4a", "ext:.aiff", "ext:.aif"]
+timeout = 300
+spawns = true

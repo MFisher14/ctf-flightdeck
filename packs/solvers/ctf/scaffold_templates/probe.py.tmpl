@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""@@NAME@@: probe scaffold (python -m ctf scaffold probe). Add probes to PROBES, then run:
+
+    .venv/bin/python -I @@NAME@@.py FILE...                         size, sha256, format, entropy, PROBES
+    .venv/bin/python -I @@NAME@@.py FILE --find HCFG --find hex:7f454c46
+    .venv/bin/python -I @@NAME@@.py FILE --at 0x40 --len 64          hexdump (a negative offset counts from the end)
+    .venv/bin/python -I @@NAME@@.py FILE --strings 6 --grep flag
+
+Files are read as bytes only; nothing here runs them.
+"""
+import struct  # noqa: F401  (handy in a probe)
+import sys
+
+sys.path.insert(0, "@@REPO@@")
+from ctf import scaffold as S  # noqa: E402
+
+
+def tail_u32(name, data):
+    """An example probe: the last four bytes as a little-endian u32. Delete or replace."""
+    return int.from_bytes(data[-4:], "little") if len(data) >= 4 else None
+
+
+PROBES = [tail_u32]   # each fn(name, data) -> value, printed on one line; a raise is shown, not fatal
+
+
+if __name__ == "__main__":
+    sys.exit(S.probe_main(PROBES))

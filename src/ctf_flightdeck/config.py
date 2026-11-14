@@ -64,7 +64,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import SplitResult, urlsplit
 
-from .core.model import SUBMIT_POLICIES
+from .core.model import SUBMIT_POLICIES, UNLIMITED_LANES
+from .flagvariants import MAX_VARIANTS
 from .pricing import RATES, Price
 from .text import untrusted
 
@@ -72,7 +73,7 @@ CONFIG_ENV = "FLIGHTDECK_CONFIG"
 RUNTIMES = ("docker", "host")
 DEFAULT_RUN_DIR = "~/.local/share/ctf-flightdeck/runs"
 
-_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light", "notify", "autopilot")
+_TABLES = ("api", "models", "prices", "lanes", "run", "l1", "agents", "fallback", "light", "notify", "autopilot", "governor")
 NOTIFY_KINDS = ("flag", "needs-you", "disengaged")  # what [notify] on may list, and its default: all three
 _API_KEYS = ("provider", "base_url", "key_env", "fast", "effort", "timeout", "max_tokens", "context")
 _FALLBACK_KEYS = ("provider", "base_url", "key_env", "ladder", "timeout", "max_tokens", "context")
@@ -82,7 +83,7 @@ PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves t
     "openai": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "anthropic": (ANTHROPIC_BASE_URL, "ANTHROPIC_API_KEY"),
 }
-_LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit", "submit_limited")
+_LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit", "submit_limited", "wrong_stop", "variant_tries")
 LIGHT_ENGINES = ("rules", "openai", "anthropic", "cactus", "decider")
 MODEL_ENGINES = ("openai", "anthropic")  # the light engines that take a model, a base_url and a key_env
 _LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price", "threshold", "thinking")
@@ -183,12 +184,16 @@ class LaneConfig:
     dollar_cap: float | None = 2.0  # None: no cap
     submit: str = "confirm"  # confirm | auto
     submit_limited: str = "confirm"  # confirm | auto: under submit auto, spend a challenge's counted tries without the player
+    wrong_stop: int = 3  # under submit auto: after this many wrong flags at a challenge its next ones wait for the player; 0: never
+    variant_tries: int = 0  # other spellings of a flag the platform rejected that flightdeck proposes per challenge (flagvariants); 0: none
 
 
 @dataclass(frozen=True)
 class L1Config:
     pack: Path | None = None  # a folder of L1 engines (manifests); None: no L1 stage
     concurrency: int = 4  # engines run at once on one challenge
+    image: str | None = None  # the docker image engines run in when lanes run in Docker; None: the lane image
+    lane_tools: bool = False  # lanes' models may call the pack's engines: the pack mounted read-only, its note in the brief
 
 
 @dataclass(frozen=True)
@@ -207,6 +212,24 @@ class AutopilotConfig:
     engage: bool = False  # true: every play engages autopilot (as --autopilot does for one run)
     budget_dollars: float | None = None  # the whole run's budget in dollars; None: none in dollars
     budget_tokens: int | None = None  # and in tokens; engaging needs at least one of the two
+    second_after: int = 0  # seconds a challenge's only lane runs before autopilot forks a second opinion on another model; 0: never
+    third_after: int = 0  # seconds its first lane runs before a third lane, on a third model; 0: never
+
+
+MAX_GOVERNOR_LOAD = 1000.0  # the largest [governor] max_load_per_cpu accepted
+MAX_GOVERNOR_MB = 1024 * 1024 * 1024  # the largest [governor] min_free_ram_mb or min_free_disk_mb accepted (1 PiB)
+
+
+@dataclass(frozen=True)
+class GovernorConfig:
+    """[governor] (governor.py): the host limits past which no new lane starts. The defaults
+    are the solver pack's governor's (packs/solvers/ctf/governor.py): its hard load limit, the
+    RAM it wants for one more heavy agent, and its disk floor of 10 GiB."""
+
+    enabled: bool = True  # false: the machine is not read and no start is held for it
+    max_load_per_cpu: float = 3.0  # the 1-minute load average per CPU above which no new lane starts; 0: no limit
+    min_free_ram_mb: int = 2048  # the RAM available, in MiB, below which no new lane starts; 0: no limit
+    min_free_disk_mb: int = 10240  # the free disk at the run folder, in MiB, below which no new lane starts; 0: no limit
 
 
 @dataclass(frozen=True)
@@ -225,6 +248,7 @@ class Config:
     light_tables: dict[str, LightConfig] = field(default_factory=dict)  # [light.<job>]: a job's own engine
     notify: NotifyConfig = NotifyConfig()  # [notify]; no webhook when the config has none
     autopilot: AutopilotConfig = AutopilotConfig()  # [autopilot]; off, with no budget, when the config has none
+    governor: GovernorConfig = GovernorConfig()  # [governor]; on, with its defaults, when the config has none
 
 
 @dataclass(frozen=True)
@@ -283,6 +307,7 @@ def _config(path: Path, doc: dict) -> Config:
         source=path,
         l1=_l1(path, _table(path, doc, "l1")),
         autopilot=_autopilot(path, _table(path, doc, "autopilot")),
+        governor=_governor(path, _table(path, doc, "governor")),
         agents=agents,
         fallback=_fallback(path, _table(path, doc, "fallback"), ladder) if "fallback" in doc else None,
         light=light,
@@ -545,7 +570,8 @@ ladder = []
 # cached_input = 0.02
 
 [lanes]
-max_lanes = 4                   # lanes at once; the rest wait in the queue
+max_lanes = 4                   # lanes at once; the rest wait in the queue. "unlimited": no limit (the [governor] still
+                                # holds new lanes back while this machine is over a limit). In the console: /config lanes N
 runtime = "docker"              # "docker": a container per lane; "host": on this machine
 image = "ctf-flightdeck-lane:1" # the lanes' docker image: `flightdeck image build` makes it (never pulled)
 token_cap = 400000              # per lane; false for no cap
@@ -554,6 +580,12 @@ submit = "confirm"              # "confirm": you approve each flag; "auto": a fl
 submit_limited = "confirm"      # a challenge whose tries the platform counts (CTFd's max attempts). "confirm": its flags
                                 # wait for you, under submit "auto" too. "auto": under submit "auto" they go without you,
                                 # the last try included: a wrong flag can use up the tries, for your whole team
+wrong_stop = 3                  # under submit "auto": once the platform called this many flags wrong at one challenge,
+                                # its next flags wait for you (a lane that guesses does not spray the platform). 0: never
+variant_tries = 0               # when the platform calls a flag wrong, flightdeck can propose its other spellings (the
+                                # letter case a cipher lost, a doubled wrapper, leet), best first, one at a time: at most
+                                # this many per challenge (0 to 12). Each is a flag like any other: it waits for you
+                                # wherever a lane's flag would, and under submit "auto" a wrong one is a wrong try. 0: none
 
 [run]
 dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log and the lanes' work
@@ -625,6 +657,22 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 # engage = false                # true: every play engages it
 # budget_dollars = 20.0         # the whole run's budget in dollars
 # budget_tokens = 20000000      # and, or instead, in tokens (needed when a model has no price)
+# second_after = 180            # a second opinion: once a challenge's only lane has run this many seconds unsolved
+#                               # (or at once when the platform calls a flag of it wrong), autopilot forks a second
+#                               # lane on another model of the ladder, once per challenge. 0, the default: never
+# third_after = 480             # and a third lane, on a model neither of the two runs, once the first of two lanes
+#                               # has run this long; more than second_after when both are set. 0, the default: never
+
+[governor]
+# The host governor: while this machine is past one of these limits no NEW lane starts. The lanes
+# at work carry on (it never stops or pauses one), the queue keeps its order, and starts resume by
+# themselves when the reading recovers; with no lane at work one lane always starts. A warning
+# says when it begins to hold starts, and which limit, and another when it stops. A reading
+# flightdeck cannot take holds nothing. `flightdeck doctor` shows the readings.
+# enabled = true                # false: the machine is not read
+# max_load_per_cpu = 3.0        # the 1-minute load average divided by the CPUs; 0: no limit
+# min_free_ram_mb = 2048        # the RAM available without swapping, in MiB; 0: no limit
+# min_free_disk_mb = 10240      # the free disk where the run folder is, in MiB; 0: no limit
 
 [l1]
 # Your no-model solvers (L1): a folder of engines, each a script with a .manifest.toml beside it
@@ -635,7 +683,11 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 # Each works in a copy of the handout. When lanes run in Docker, so do they: each in a container
 # of the lane image, your pack mounted read-only, with no network unless lanes may reach the
 # challenge's live instance at once. On the host runtime they run on this machine, as you.
+# `flightdeck pack install` fetches flightdeck's own solver pack, sets it up and writes both lines.
 # pack = "~/ctf/solvers"        # no pack: no L1 stage
+# image = "ctf-flightdeck-pack:1"  # Docker lanes: the image engines run in (a pack's own, with what its engines need); unset: the lane image
+# lane_tools = true             # the lanes' models may call the pack's engines too (a pack that says how: flightdeck's own does).
+#                               # Docker lanes then run in the image above, with the pack mounted read-only
 concurrency = 4                 # engines run at once on one challenge
 
 [notify]
@@ -1129,8 +1181,11 @@ def _lanes(path: Path, table: dict) -> LaneConfig:
     _known(path, ("lanes",), table, _LANE_KEYS)
     defaults = LaneConfig()
     max_lanes = table.get("max_lanes", defaults.max_lanes)
+    if max_lanes == "unlimited":
+        max_lanes = UNLIMITED_LANES
     if not _is_int(max_lanes) or max_lanes < 1:
-        raise _error(path, ("lanes", "max_lanes"), f"must be a whole number, at least 1{_got(max_lanes)}")
+        raise _error(path, ("lanes", "max_lanes"), f'must be a whole number, at least 1, or "unlimited"{_got(max_lanes)}')
+    max_lanes = min(max_lanes, UNLIMITED_LANES)
     image = _string(path, table, ("lanes", "image"), defaults.image)
     if image.startswith("-") or not _plain(image):
         # docker would read "-..." as one of its own options
@@ -1145,7 +1200,23 @@ def _lanes(path: Path, table: dict) -> LaneConfig:
         dollar_cap=_cap(path, table, "dollar_cap", defaults.dollar_cap, whole=False),
         submit=_choice(path, table, ("lanes", "submit"), defaults.submit, SUBMIT_POLICIES),
         submit_limited=_choice(path, table, ("lanes", "submit_limited"), defaults.submit_limited, SUBMIT_POLICIES),
+        wrong_stop=_wrong_stop(path, table, defaults.wrong_stop),
+        variant_tries=_variant_tries(path, table, defaults.variant_tries),
     )
+
+
+def _variant_tries(path: Path, table: dict, default: int) -> int:
+    value = table.get("variant_tries", default)
+    if not _is_int(value) or not 0 <= value <= MAX_VARIANTS:
+        raise _error(path, ("lanes", "variant_tries"), f"must be a whole number from 0 to {MAX_VARIANTS} (0: no variants){_got(value)}")
+    return value
+
+
+def _wrong_stop(path: Path, table: dict, default: int) -> int:
+    value = table.get("wrong_stop", default)
+    if not _is_int(value) or value < 0:
+        raise _error(path, ("lanes", "wrong_stop"), f"must be a whole number, 0 or more (0: never stop){_got(value)}")
+    return value
 
 
 AGENT_KINDS = ("claude", "codex")
@@ -1165,13 +1236,23 @@ def _agents(path: Path, table: dict) -> dict[str, tuple[str, ...]]:
 
 
 def _l1(path: Path, table: dict) -> L1Config:
-    _known(path, ("l1",), table, ("pack", "concurrency"))
+    _known(path, ("l1",), table, ("pack", "concurrency", "image", "lane_tools"))
     defaults = L1Config()
     concurrency = table.get("concurrency", defaults.concurrency)
     if not _is_int(concurrency) or concurrency < 1:
         raise _error(path, ("l1", "concurrency"), f"must be a whole number, at least 1{_got(concurrency)}")
+    image = None
+    if "image" in table:
+        image = _string(path, table, ("l1", "image"), "")
+        if not image or image.startswith("-") or not _plain(image):
+            raise _error(path, ("l1", "image"), "must be a docker image name: no spaces or control characters, and not starting with -")
+    lane_tools = table.get("lane_tools", False)
+    if not isinstance(lane_tools, bool):
+        raise _error(path, ("l1", "lane_tools"), f"must be true or false{_got(lane_tools)}")
     if "pack" not in table:
-        return L1Config(concurrency=concurrency)
+        if lane_tools:
+            raise _error(path, ("l1", "lane_tools"), "needs a pack: set [l1] pack too")
+        return L1Config(concurrency=concurrency, image=image)
     raw = _string(path, table, ("l1", "pack"), "")
     try:
         pack = Path(raw).expanduser()
@@ -1179,7 +1260,7 @@ def _l1(path: Path, table: dict) -> L1Config:
         raise _error(path, ("l1", "pack"), "starts with ~ for a home directory that cannot be found") from None
     if not raw or not pack.is_absolute():
         raise _error(path, ("l1", "pack"), "must be an absolute path or start with ~")
-    return L1Config(pack=pack, concurrency=concurrency)
+    return L1Config(pack=pack, concurrency=concurrency, image=image, lane_tools=lane_tools)
 
 
 def _notify(path: Path, table: dict) -> NotifyConfig:
@@ -1200,7 +1281,7 @@ def _notify(path: Path, table: dict) -> NotifyConfig:
 
 
 def _autopilot(path: Path, table: dict) -> AutopilotConfig:
-    _known(path, ("autopilot",), table, ("engage", "budget_dollars", "budget_tokens"))
+    _known(path, ("autopilot",), table, ("engage", "budget_dollars", "budget_tokens", "second_after", "third_after"))
     engage = table.get("engage", False)
     if not isinstance(engage, bool):
         raise _error(path, ("autopilot", "engage"), f"must be true or false{_got(engage)}")
@@ -1213,7 +1294,41 @@ def _autopilot(path: Path, table: dict) -> AutopilotConfig:
     if engage and dollars is None and tokens is None:
         raise _error(path, ("autopilot", "engage"), "is true, and autopilot needs a run budget: set budget_dollars or "
                                                     "budget_tokens beside it")
-    return AutopilotConfig(engage=engage, budget_dollars=float(dollars) if dollars is not None else None, budget_tokens=tokens)
+    second, third = (_opinion_after(path, table, key) for key in ("second_after", "third_after"))
+    if second and third and third <= second:
+        raise _error(path, ("autopilot", "third_after"), f"must be more than second_after ({second}): the third lane comes "
+                                                         f"after the second{_got(third)}")
+    return AutopilotConfig(engage=engage, budget_dollars=float(dollars) if dollars is not None else None, budget_tokens=tokens,
+                           second_after=second, third_after=third)
+
+
+def _opinion_after(path: Path, table: dict, key: str) -> int:
+    value = table.get(key, 0)
+    if not _is_int(value) or value < 0:
+        raise _error(path, ("autopilot", key), f"must be a whole number of seconds, 0 or more (0: never){_got(value)}")
+    return value
+
+
+def _governor(path: Path, table: dict) -> GovernorConfig:
+    _known(path, ("governor",), table, ("enabled", "max_load_per_cpu", "min_free_ram_mb", "min_free_disk_mb"))
+    defaults = GovernorConfig()
+    enabled = table.get("enabled", defaults.enabled)
+    if not isinstance(enabled, bool):
+        raise _error(path, ("governor", "enabled"), f"must be true or false{_got(enabled)}")
+    load = table.get("max_load_per_cpu", defaults.max_load_per_cpu)
+    if not _is_number(load) or not 0 <= load <= MAX_GOVERNOR_LOAD:
+        raise _error(path, ("governor", "max_load_per_cpu"),
+                     f"must be a number from 0 to {MAX_GOVERNOR_LOAD:g}: the load average per CPU above which no new lane "
+                     f"starts (0: no limit){_got(load)}")
+    floors = {}
+    for name, what in (("min_free_ram_mb", "the RAM available"), ("min_free_disk_mb", "the free disk at the run folder")):
+        value = table.get(name, getattr(defaults, name))
+        if not _is_int(value) or not 0 <= value <= MAX_GOVERNOR_MB:
+            raise _error(path, ("governor", name),
+                         f"must be a whole number of MiB from 0 to {MAX_GOVERNOR_MB}: {what} below which no new lane "
+                         f"starts (0: no limit){_got(value)}")
+        floors[name] = value
+    return GovernorConfig(enabled=enabled, max_load_per_cpu=float(load), **floors)
 
 
 def _run_dir(path: Path, table: dict) -> Path:

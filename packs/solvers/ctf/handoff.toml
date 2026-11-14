@@ -1,0 +1,57 @@
+# Handoff modes (B-180): which harness, model and tier a handoff runs on. Read by ctf/handoff.py.
+#
+# An event can replace or add modes in events/<slug>/handoff.toml (same shape; a mode named there
+# replaces this file's mode of that name whole). `python -m ctf handoff modes` prints the result.
+# Every key below is required unless marked optional; a missing, unknown or wrong key fails loudly.
+#
+#   harness   "codex" or "claude"
+#   model     the model the harness is started with
+#   tier      "standard" only: the fast tiers are off (B-009); a fast tier is refused by name
+#   launch    "detached" = `handoff post` starts the agent now, detached, inside the fence;
+#             "queue"    = the handoff waits on the board for a ready agent to claim it
+#   effort    codex only: model_reasoning_effort
+#   daybreak  codex only: passed explicitly as -c daybreak=<bool> on every launch (a global
+#             daybreak=true killed gpt-6-astra launches at PINK+; never inherit it)
+#   cyber_access_program   codex only, optional: e.g. "daybreak_blue" (needs daybreak = true)
+#   permission_mode        claude only, optional: e.g. "acceptEdits" (bypassPermissions is refused)
+
+[modes.fast]
+harness = "codex"
+model = "gpt-6-astra"
+effort = "medium"
+tier = "standard"
+daybreak = false
+launch = "detached"
+
+[modes.deep]
+harness = "codex"
+model = "gpt-6-astra"
+effort = "high"
+tier = "standard"
+daybreak = false
+launch = "detached"
+
+# Cyber-access runs go to the player's own ready Codex agents: the sandboxed launcher cannot start
+# them, so they queue on the board and the agent claims them (no copy-paste through chat).
+[modes.cyber]
+harness = "codex"
+model = "gpt-6-astra"
+effort = "high"
+tier = "standard"
+daybreak = true
+cyber_access_program = "daybreak_blue"
+launch = "queue"
+
+[modes.claude]
+harness = "claude"
+model = "opus"
+tier = "standard"
+permission_mode = "acceptEdits"
+launch = "detached"
+
+# A Claude task queued for an interactive Claude session (the orchestrator or a teammate) to claim.
+[modes.claude-queue]
+harness = "claude"
+model = "opus"
+tier = "standard"
+launch = "queue"

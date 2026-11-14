@@ -1,0 +1,113 @@
+{
+  "contracts": {
+    "web-exploitation-day-01-backup-exposure/mastery": "dbedee7da43e95bab4d39b03c54fa71ded896d7419cb6d66a79c626849fd3636",
+    "web-exploitation-day-01-backup-exposure/time_trial": "1a9645bdf88d8a887f69eb85726f01b10ed0e5277c4071d08427c6fd3e21caea",
+    "web-exploitation-day-02-idor/mastery": "b3109823af9ec9740cf21e52114676a6833271be8cf8ed97372a2aa7a6fa22c4",
+    "web-exploitation-day-02-idor/time_trial": "eb474daa840b8f5c9cf1895c02ae2301699ca6530ee559764ad1729fc3078927",
+    "web-exploitation-day-03-sqli/mastery": "aabafa6a48ddca8794b37570d5c55d7d427afdb9a9514491c0796e3900ee6eaa",
+    "web-exploitation-day-03-sqli/time_trial": "e0e3fee3cf0cfeb618371f35994e78568e3d0fdfdec6875dafb8f6206a74e24e",
+    "web-exploitation-day-04-lfi/mastery": "b5645b244eed97bb7283129f3b92bd5df4e61991a181fc9c4a90cc75eeda881f",
+    "web-exploitation-day-04-lfi/time_trial": "df87a4895f4ac1092a973a5ef14865a75bbd01420ed2d48ca87b34ba77995fc9",
+    "web-exploitation-day-05-administratively-speaking/mastery": "b0d3a5dee6ded57f59c30a39d97310c1add7bbf1162b101d4371da816f8b2001",
+    "web-exploitation-day-05-administratively-speaking/time_trial": "7314d63eab2a687afe81a8309ad52b00f00723a23820c4779a22d232dde0421c",
+    "web-exploitation-day-06-reflect-upon-this/mastery": "db13edd8fc77ba1935583fb2354906b80a07c51b667aa6953dacd9c45337c98f",
+    "web-exploitation-day-06-reflect-upon-this/time_trial": "5db7af36c510595749061d512ecee4e0a9f1627478323172a6f429c3940fd436",
+    "web-exploitation-day-07-stored-xss/mastery": "f7179364f1461144b2af12e2f53ad5be7e8355eecd0340e25f7aa56bb93e253d",
+    "web-exploitation-day-07-stored-xss/time_trial": "0ee3dfc34cb48b75c7ac34943ca4f5f77bb4049eba789adebf93b9ebdb1790a0",
+    "web-exploitation-day-08-session-impression/mastery": "3e70f6d6ab27efd0ffb79e6326b9648cdeec4d9babaa826f81b133454598edd1",
+    "web-exploitation-day-08-session-impression/time_trial": "3474949e1b95886efee2024b9dc02513523f04ea72ea907cd66148d49fc3766c",
+    "web-exploitation-day-09-forged-with-care/mastery": "67aa4949e09f4eb1ca3ad34bbe5b59a12da7e8ded77d075608171301cbcbfa9e",
+    "web-exploitation-day-09-forged-with-care/time_trial": "5d629914c3d8a0e777f68cc2db720d35d44967aaf705db4f7e0cbec8de56477a",
+    "web-exploitation-day-10-uploading-expectations/mastery": "77f41b66c93365b38d2fbf31df3a576b8e4fa12905a8e87eb904cd919941289e",
+    "web-exploitation-day-10-uploading-expectations/time_trial": "931e70dd2c7e78001b6af7588322b78602e46adadedccc7a1402b5da4aed468e",
+    "web-exploitation-day-11-template-temper/mastery": "18c4d297a790e8019d95f2e259a21c7f921882bf5c4169d5bc80bdcc1f8508a2",
+    "web-exploitation-day-11-template-temper/time_trial": "75cd46332eefa1853c457368fd5f648d963b8153a10f2205304384203cd4cce8",
+    "web-exploitation-day-12-ask-again-later/mastery": "0c20bed08493df9275612edb1a3beb084c8cb76c622a931ef76bc3a835e58b61",
+    "web-exploitation-day-12-ask-again-later/time_trial": "e099dfb4c3e690a6b8a6a56a66c7ec68937ff000e13c13b3bb5db5139083b6d3",
+    "web-exploitation-day-13-posted-too-much/mastery": "581ca4087ffa780cee535e8f69d35ba952bea113ecc076f43415a7d7276ea5b8",
+    "web-exploitation-day-13-posted-too-much/time_trial": "13db0dad1332ea51ef8c5ab89f3965315aaf051e21e3b68139aa5b9a2187019a",
+    "web-exploitation-day-14-the-api-has-opinions/mastery": "bf43591966652ae5ae3d65a438590cd20342d7f9f541c17906f473ef2c1a264a",
+    "web-exploitation-day-14-the-api-has-opinions/time_trial": "1297079d4da6becdfc548704aee852bb103d65777053366d95e4e3534ffe81e2",
+    "web-exploitation-day-15-fetch-quest/mastery": "87990da94162bcb1044235a1f6d4a983477acf5d6700ee9eb17e7c89e6a437b4",
+    "web-exploitation-day-15-fetch-quest/time_trial": "267281ed0f014703c739bfd4ffc1c654f03501e3abc4344cf0f22073157cfc52",
+    "web-exploitation-day-16-shell-company/mastery": "ec4771fc992905b8646c83cff14fcb520c6a52a5bb73047ad4bb12a37042235d",
+    "web-exploitation-day-16-shell-company/time_trial": "7169835379e4a81d6d03e9a2ed29f3e07583631a9155906cbf9f2135f3216418",
+    "web-exploitation-day-17-reset-expectations/mastery": "0972ef3acb77797bf39f00fe9356eb52d97f36e8ba35b90a93a7a9162686f500",
+    "web-exploitation-day-17-reset-expectations/time_trial": "cca532d68b84d027bec64ed832ad44b95a9214cd3f519e5869bf2f00760ef820",
+    "web-exploitation-day-18-resolver-revolt/mastery": "5d3d8a96b7ed798330b56552c9d9d5f7d6586359445484a022d58ccda643fbd3",
+    "web-exploitation-day-18-resolver-revolt/time_trial": "2878f7b3cc35f6fdf5e0f76c37507eaab63d99626fd532ad5a5d9495738fe43d",
+    "web-exploitation-day-19-trust-the-webhook/mastery": "cc20ff82a27414f97efd60e47c40364ee660b3f3fcb67b8f17f6a408a052d6a3",
+    "web-exploitation-day-19-trust-the-webhook/time_trial": "797ddf4da6241cf2fa7b450e5751adfc4740edfc31f59564e0fedc7d2bb533c3",
+    "web-exploitation-day-20-serialized-offender/mastery": "f7f3614d75e38b932fdbb420f8381c0e39939e1e9810e58d6794a8ca22638631",
+    "web-exploitation-day-20-serialized-offender/time_trial": "1241311c6c52d0579d59d8204835eb02081811e14b4574c9577f2099d0615031",
+    "web-exploitation-day-21-double-spent/mastery": "0a983a6262f4abaa689157f4c50a915d00688fcfe01a48a89e7a08701997b4df",
+    "web-exploitation-day-21-double-spent/time_trial": "131f8a49c165c5d32aaac212a5d5bc39b0c65957ff9680bb3634a92a33289a43",
+    "web-exploitation-day-22-socket-to-me/mastery": "2b4bc516d0bdfded90484a87e803f25b95d85d04df96097f86c5ecdd64e5e9e1",
+    "web-exploitation-day-22-socket-to-me/time_trial": "395c8f8a9e162f724a035099b3e6407a263a316a2d67d54d639bb7cff5bed3c9",
+    "web-exploitation-day-23-forwarded-misgivings/mastery": "f4d4a8ddf683d07d4079fade1f82ddaad80b3ae2cc98dbceb1c9afc45089249b",
+    "web-exploitation-day-23-forwarded-misgivings/time_trial": "5921642c4b06ad4ce9a950007c3dafad77b29eacbcc9d10d208e1a0f8782d84d",
+    "web-exploitation-day-24-fail-open-friday/mastery": "6696153e70ea693fbd5603aaf4cf7f4b5a03650ccfaa33324694a3a1136dd809",
+    "web-exploitation-day-24-fail-open-friday/time_trial": "1f376de68f873a05f90119b0c87e754cbfde3462e65a8ddde613a587ca57229f",
+    "web-exploitation-day-25-if-a-breach-falls-in-a-log/mastery": "d7322c3a5c6e28397375d76b29cea2ae45608669bbb325c898a882ebff738587",
+    "web-exploitation-day-25-if-a-breach-falls-in-a-log/time_trial": "0e342f9c41f4c14bfdceaaf016905d9935e2067b47064890e82a29d4c9dab7ca",
+    "web-exploitation-day-26-trust-the-build/mastery": "08dfe43ce198e3728c0f9542c8cc4f362be0ebafd9b2a054b419062cab2b0a18",
+    "web-exploitation-day-26-trust-the-build/time_trial": "08390a4f9476f80007bf28f6499a5351b974db6b028fd153a58ba74eeadcb303",
+    "web-exploitation-day-27-internal-affairs/mastery": "2c5562713ed28fd5d78cf835cfea30cf82347236d313c9f463e7a3ac17d2f7d4",
+    "web-exploitation-day-27-internal-affairs/time_trial": "82bfbd6d3cf1bc3819c9911fc2e2912ef115c987a51c238327cfed92b139551f",
+    "web-exploitation-day-28-pass-the-identity/mastery": "9618c683bb88ab506ec9db7e3f938fcad07f179258b3265e92bf7182d0c29ec1",
+    "web-exploitation-day-28-pass-the-identity/time_trial": "157de7a39d57ec438fc5a2fa8b2f1788395e5fb9fc153231cf9fa9afb5f9aa4a",
+    "web-exploitation-day-29-queue-the-confusion/mastery": "c33a87887c14b7d81ae09f32039a143c669985d035f5ca2720c26721d65cbbb0",
+    "web-exploitation-day-29-queue-the-confusion/time_trial": "d2afabf28b09df0adfbed31ede55f51dfc834e697015ffe15df5b2d0f5bd2443",
+    "web-exploitation-day-30-framework-roulette/mastery": "647fb0071a801ed4f0357cb81a20709b1899481ab6ccfb5e9a07c008fce0555b",
+    "web-exploitation-day-30-framework-roulette/time_trial": "872f01a28612c2a680929a1e25b55c8ee751954a15dddcdf51c806c925b005b0",
+    "web-exploitation-day-31-full-stack-incident/mastery": "aeb59d2580d16df3ac683f0d94b4dc7789538a471e7613360ccbd5984f818536",
+    "web-exploitation-day-31-full-stack-incident/time_trial": "30df1f118a1606cfa7c530227548ef8116120c2f39be1ae1e3d0c5a54936b803"
+  },
+  "fingerprint": "sha256(canonical prompt,questions,answer_ids,target_ids)",
+  "runtime_files": [
+    "runner.py",
+    "wire.py",
+    "common.py",
+    "web_target.py",
+    "solvers/web.py",
+    "solvers/web_d06_d16.py",
+    "solvers/web_d17_d29.py",
+    "solvers/web_d30_d31.py"
+  ],
+  "reader_files": [
+    "web_target.py",
+    "solvers/web.py",
+    "solvers/web_d06_d16.py",
+    "solvers/web_d17_d29.py",
+    "solvers/web_d30_d31.py"
+  ],
+  "runtime_fingerprint": "1ebcfac8702d01600e4f0a8bc1b9fd6d5ebf2236506f3ef87d1e32ac5233475a",
+  "reader_fingerprint": "b5016dce5ad8239cc74f9fb64ddc7713fed91529db35aa26f07b0e288e8619ea",
+  "supersedes": {
+    "web-exploitation-day-27-internal-affairs/time_trial": {
+      "903529bf-9cde-4d20-864b-87107c6b0fa9": {
+        "contract_fingerprint": "82bfbd6d3cf1bc3819c9911fc2e2912ef115c987a51c238327cfed92b139551f",
+        "failed_reader_fingerprint": "4e515d531c0833d29ace47e24081ba4b98c7cb82e54a3094be6989624bb5d18b",
+        "reader_fingerprint": "b5016dce5ad8239cc74f9fb64ddc7713fed91529db35aa26f07b0e288e8619ea",
+        "offline_evidence": "observed-production Day-27 bare-route/id regression, retained advertised-query/case_id rotation, adversarial declines, and full Web loopback suite"
+      }
+    },
+    "web-exploitation-day-30-framework-roulette/mastery": {
+      "d2e1d828-871c-441f-99dc-caf3e117af3d": {
+        "contract_fingerprint": "647fb0071a801ed4f0357cb81a20709b1899481ab6ccfb5e9a07c008fce0555b",
+        "failed_reader_fingerprint": "c89219d79501176a39a1acca41dbb5efd149ef961cb4f60f289170e7190e1b15",
+        "reader_fingerprint": "b5016dce5ad8239cc74f9fb64ddc7713fed91529db35aa26f07b0e288e8619ea",
+        "offline_evidence": "fixed-index family selection removed; every saved-production family exercised in every slot; duplicate, ambiguous, and unknown bundles decline without a batch"
+      }
+    },
+    "web-exploitation-day-31-full-stack-incident/mastery": {
+      "dac01d5f-d7f6-4aee-95b8-ee9c42e11881": {
+        "contract_fingerprint": "aeb59d2580d16df3ac683f0d94b4dc7789538a471e7613360ccbd5984f818536",
+        "failed_reader_fingerprint": "b0ac97ebe3ea8dfcbe38d139221f9fdb0f37991b447e765fa9c859d316f45afd",
+        "reader_fingerprint": "b5016dce5ad8239cc74f9fb64ddc7713fed91529db35aa26f07b0e288e8619ea",
+        "offline_evidence": "observed-production Day-30 action and Day-31 execute Django slot regressions, signed-status-before-cat incident chain, adversarial declines, and full production-shape loopback suite"
+      }
+    }
+  },
+  "schema": 3
+}

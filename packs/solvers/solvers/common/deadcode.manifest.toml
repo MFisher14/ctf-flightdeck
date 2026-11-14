@@ -1,0 +1,13 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-055.
+id = "common.deadcode"
+lane = "common"
+entry = "cli:python solvers/common/deadcode.py"
+capabilities = ["analysis", "cli", "legacy-output", "esolang", "deadcode", "bytecode"]
+inputs = ["ext:.stackasm"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-055: a rev brief about a flag hidden in code that never runs (PINK 28)
+keywords = ["dead code", "unreachable", "never executed", "never runs", "after the halt", "hidden constant"]
+priority = 60

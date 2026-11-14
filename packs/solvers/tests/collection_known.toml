@@ -1,0 +1,294 @@
+# Test files pytest collects nothing from (and, at the end, stray test files outside tests/), known when B-196 shipped the collection check
+# (python -m ctf integrity collected). Each was carried script-style: its checks run only under
+# `if __name__ == "__main__":` (or not at all), so the suite never ran them. The check fails on any
+# finding NOT listed here, and on an entry that no longer matches a finding (fix the file, then
+# delete its entry). Follow-up: convert each to test functions (docs/build-log/B-196.md).
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_GAP_PCAP_CREDS.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_b234_ssrf_idor_chain.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_binary_cache_scoping.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_day20_binary_overlay.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_day20_speed_binary.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_day24_web_deser_detect.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_day26_forensic_family.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_day26_rsa_lattice_fast.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_day26_stego_f5.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_day27_dex_float_mobile.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_day27_record_select_binary.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_day27_speed1_review_binary.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_day27_split_fold_mobile.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_day27_web_coverage.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_financial.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_ics_scada.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_jpeg_stego_survey.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_metadata_cache_scoping.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_osint_geo.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_static_re_check.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_stego_review.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_telecom.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_tk_day27_dlog.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_tk_net_auth.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_tk_net_auth_smbfiles.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_tk_net_voip.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_tls_keylog_decrypt.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_toolkit_content_identity.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_unicorn_capability_guard.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_warmups_flag.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_warmups_formats_review.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_warmups_memo.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_web_descriptor_prefetch.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_web_graphql_depth.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_web_peer_baseline_overflow.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_web_response_carriers.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_web_security_json.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_web_session_recon.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_web_ssrf_host_forms.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_web_static_taint.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_web_stream_transports.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+[[known]]
+rule = "no-tests"
+path = "tests/test_webclient_url_headers.py"
+reason = "carried script-style file: its checks are not pytest tests; convert them to test functions"
+
+# Test-shaped files outside tests/ (the stray rule, added in the B-196 round-1 fix). pytest.ini testpaths = tests,
+# so pytest never collects them, and no tests/ file runs or imports them. Carried standalone self-test scripts;
+# follow-up: move each one's checks into tests/ (or call it from a test), then delete its entry.
+
+[[known]]
+rule = "stray"
+path = "solvers/metadata-forensics/selftest.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/metadata-forensics/test_lookahead22.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/mobile-android/selftest.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/mobile-android/selftest_day9.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/mobile-android/test_lookahead_readers.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/script-analysis/test_b217_lang_table.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/script-analysis/test_census.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/script-analysis/test_day16_lookahead.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/script-analysis/test_fields_derived.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/script-analysis/test_generic.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/script-analysis/test_wavec2_nodepkg.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/script-analysis/test_wavec2_office.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/script-analysis/test_wavec_codecs.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/script-analysis/test_wavec_encoded.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"
+
+[[known]]
+rule = "stray"
+path = "solvers/script-analysis/test_wavec_langs.py"
+reason = "carried standalone self-test outside tests/: pytest never collects it; move its checks into tests/"

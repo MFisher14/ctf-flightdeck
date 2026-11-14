@@ -1,0 +1,34 @@
+{
+  "schema": "plc-opcodes-1",
+  "note": [
+    "Opcode tables for solvers/toolkits/ot_plc_code.py (B-160). THE TABLE SHIPS EMPTY ON PURPOSE.",
+    "",
+    "MC7 is a proprietary encoding. An entry is added only with an oracle: a reference pair pinned in",
+    "ot_plc_code_pairs.json beside this file (a compiled block plus its known source listing) on which the entry",
+    "decodes to exactly the listed statement. The loader refuses an entry that has no oracle citation.",
+    "tests/test_ot_plc_pairs.py refuses a citation the manifest does not pin, and proves every entry on",
+    "its pair when the corpus is present ($CTF_REALDATA/plc/<pair id>/). No pair is pinned yet, so no",
+    "entry can exist yet.",
+    "",
+    "Once this table has an entry, the suite FAILS on any machine where $CTF_REALDATA/plc/ is absent or",
+    "does not prove it (always on, never a skip), and the engine refuses this table at load when an",
+    "entry cites a pair the manifest does not pin. A pin row alone is not an oracle.",
+    "",
+    "Never add an entry from memory, a forum post or another tool's source. Cite a pair or leave it out.",
+    "",
+    "Entry: {id, match (hex, whole bytes), mask (hex, same length as match, default all ones),",
+    "length (bytes), stl (one line, {operand} placeholders), operands [{name, bit, width, format}],",
+    "oracle {pair, sample_sha256, listing_sha256}}. bit counts from the instruction's first bit, most",
+    "significant first; format is dec, hex or sdec. Every bit of the instruction must be fixed by the",
+    "mask or printed as an operand, and no two entries may match the same bytes.",
+    "This entry shape is itself unproven against real MC7: change it if the first pairs need more."
+  ],
+  "families": {
+    "mc7": {
+      "entries": []
+    }
+  },
+  "untabled": {
+    "codesys": "No table. A CODESYS application is not decoded: no reference pair (application plus known source) exists to prove a container layout or the code inside it. ot_plc_code.py reports it opaque and names the human step."
+  }
+}

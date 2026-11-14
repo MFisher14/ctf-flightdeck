@@ -1,0 +1,17 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). B-184 web contract library.
+# import-only: `route` is its main public callable, not a `ctf run` contract entry;
+# `ctf run` refuses a library engine. Callers import contract_library instead, or
+# drive it through the `web-contracts` CLI (docs/CONTRACTS.md section 8).
+id = "web.contract_library"
+lane = "web"
+entry = "solvers.web.contract_library:route"
+capabilities = ["library", "web", "router", "forge", "minimization"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-184: the fingerprint-first front door for the observed web contract classes
+category = ["web"]
+keywords = ["fingerprint-first router", "web contract library", "label-to-wire mutation", "request-minimization loop", "contract disposition matrix"]
+priority = 57

@@ -1,0 +1,37 @@
+{
+  "retrieved": "2026-11-09",
+  "sources": {
+    "claude": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "openai": "https://developers.openai.com/api/docs/pricing"
+  },
+  "unit": "USD per million tokens",
+  "claude": {
+    "claude-fable-5-1": {"input": 10, "cache_5m": 12.5, "cache_1h": 20, "cache_read": 0.25, "output": 50},
+    "claude-fable-5":   {"input": 10, "cache_5m": 12.5, "cache_1h": 20, "cache_read": 1.0,  "output": 50},
+    "claude-opus-5-5":  {"input": 4,  "cache_5m": 5,    "cache_1h": 8,  "cache_read": 0.20, "output": 20, "fast_multiplier": 2.0},
+    "claude-opus-5":    {"input": 5,  "cache_5m": 6.25, "cache_1h": 10, "cache_read": 0.50, "output": 25, "fast_multiplier": 2.0},
+    "claude-opus-4-8":  {"input": 5,  "cache_5m": 6.25, "cache_1h": 10, "cache_read": 0.50, "output": 25, "fast_multiplier": 2.0},
+    "claude-opus-4-7":  {"input": 5,  "cache_5m": 6.25, "cache_1h": 10, "cache_read": 0.50, "output": 25},
+    "claude-opus-4-6":  {"input": 5,  "cache_5m": 6.25, "cache_1h": 10, "cache_read": 0.50, "output": 25},
+    "claude-sonnet-5-5":{"input": 2,  "cache_5m": 2.5,  "cache_1h": 4,  "cache_read": 0.10, "output": 10},
+    "claude-sonnet-5":  {"input": 2,  "cache_5m": 2.5,  "cache_1h": 4,  "cache_read": 0.20, "output": 10},
+    "claude-sonnet-4-6":{"input": 3,  "cache_5m": 3.75, "cache_1h": 6,  "cache_read": 0.30, "output": 15},
+    "claude-haiku-5-5": {"input": 0.10,"cache_5m": 0.125,"cache_1h": 0.20,"cache_read": 0.01,"output": 0.50, "note": "<=100k-token prompts; >100k prompts cost 5x. Volume here is negligible."},
+    "claude-haiku-4-5": {"input": 1,  "cache_5m": 1.25, "cache_1h": 2,  "cache_read": 0.10, "output": 5}
+  },
+  "web_search_per_request": 0.01,
+  "codex": {
+    "gpt-6-astra":  {"input": 10, "cached": 1,    "output": 50, "tier_multiplier": {"default": 1, "priority": 2, "fast": 2, "ultrafast": 6}},
+    "gpt-6-luna":   {"input": 0.10, "cached": 0.01, "output": 0.50, "tier_multiplier": {"default": 1}},
+    "gpt-6.1-sol":  {"input": 2, "cached": 0.10, "output": 10, "tier_multiplier": {"default": 1}},
+    "gpt-6.1-terra":{"input": 1, "cached": 0.05, "output": 5, "tier_multiplier": {"default": 1}},
+    "gpt-daybreak-blue-latest": {"input": 4, "cached": 0.40, "output": 20, "tier_multiplier": {"default": 1, "ultrafast": 1},
+      "note": "No row on OpenAI's pricing page. Third-party listings say this alias routes to gpt-5.6-sol; priced at that row ($4/$0.40/$20, promotional until 2026-11-30). The model advertises no speed tiers, so an 'ultrafast' thread setting is not priced up."},
+    "codex-auto-review": {"input": 4, "cached": 0.40, "output": 20, "tier_multiplier": {"default": 1, "ultrafast": 1},
+      "note": "Hidden internal reviewer model with no public price. Priced at the gpt-5.6-sol row as an assumption."}
+  },
+  "scenarios": {
+    "daybreak_alt_gpt55_list": {"gpt-daybreak-blue-latest": {"input": 5, "cached": 0.50, "output": 30}},
+    "daybreak_alt_gpt6_cyber": {"gpt-daybreak-blue-latest": {"input": 20, "cached": 2, "output": 100}}
+  }
+}

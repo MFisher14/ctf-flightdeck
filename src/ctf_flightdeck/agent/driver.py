@@ -13,6 +13,12 @@ Each lane starts with a fresh context: the fixed system prompt, then the challen
 once its L1 engines have run, what they found). Escalation starts a fresh context too, on the
 stronger model, with the deck's summary; so does the refresh of a context grown too long.
 
+A lane whose challenge other lanes worked or work, or whose challenge is one of a series on the
+board, reads that after its brief (agent/sharing.py: what those lanes tried, the sibling
+challenges and where a sibling's files are, fenced as data): made once, at its first model
+call, and repeated as it was in every fresh context. A sibling's workspace is picked at the
+lane's start, before its own is prepared (a Docker lane's container mounts it read-only).
+
 With a light model for route or recon ([light] jobs), the challenge's first look (agent/facts.py)
 starts once the workspace is ready, beside the handout search and the L1 stage. Nothing waits
 for it: at the lane's first model call the brief takes what is back, in a fence of its own, and
@@ -78,7 +84,7 @@ from ..l1.runner import scan
 from ..light import Lights
 from ..pricing import Price, call_cost
 from ..text import untrusted
-from . import owntext, prompts
+from . import owntext, prompts, sharing
 from .client import RETRY_STATUSES, ChatClient, ModelError, Reply, Usage
 from .flaggate import SUBMITTED_ONLY, FlagGate, Outputs
 from .held import Secrets
@@ -230,6 +236,8 @@ class _Run:
     uncounted: tuple[str, Usage] | None = None  # a reply's call (its model, its usage) not reported yet: _count_cut
     look: Look | None = None  # the challenge's first look (agent/facts.py), until the lane's first model call takes it
     recon: str = ""  # what of the first look was back then: in the brief of every fresh context of the lane
+    shares: tuple[sharing.Share, ...] = ()  # the sibling workspaces it may read (agent/sharing.py), picked at its start
+    handover: dict | None = None  # what other lanes tried and its series, as of its first model call: after the brief in every fresh context
     opened: bool = False  # the lane's first model call is made (or about to be): nothing more goes into its brief
 
 
@@ -376,6 +384,7 @@ class AgentDriver:
             toolbox=toolbox,
             model=lane.model,
             session=self._session(lane.id, 0),
+            shares=sharing.attach(self.deck, challenge, workspace, self._root_of),
         )
         run.messages = self._fresh(run, lane.approach)
         self.runs[lane.id] = run
@@ -439,6 +448,9 @@ class AgentDriver:
             self._note(lane, "The player said no to the live instance: work from the handout only.")
         else:
             self._note(lane, f"The player declined: {prompts.one(pending.detail, 200)}.")
+
+    def rotated(self, lane: Lane, flag: str, every: int) -> None:
+        self._note(lane, prompts.rotated_out(flag, every))
 
     def stop(self, lane: Lane) -> None:
         if self.flaggate is not None:
@@ -940,22 +952,29 @@ class AgentDriver:
         """Just before the lane's first model call: its brief takes the first look as far as it
         is back (agent/facts.py), and from now on nothing more goes into it. The context's
         brief (always its second message: the lane's first context, or an escalation's made
-        before the call) is made again with it; a later one repeats it (_fresh)."""
+        before the call) is made again with it; a later one repeats it (_fresh). What other
+        lanes on its challenge tried, and its series (agent/sharing.py), is made now too, as
+        things stand, and goes after the brief in this context and every later one."""
         run.opened = True
+        lane = self._lane(run)
         look, run.look = run.look, None
-        if look is None:
-            return
-        run.recon = self.redact(self.looks.opening(look, self.deck, run.lane_id, self._flag_re()))
-        if run.recon and len(run.messages) > 1:
-            lane = self._lane(run)
-            run.messages[1] = self._fresh(run, lane.approach if lane is not None else "")[1]
+        if look is not None:
+            run.recon = self.redact(self.looks.opening(look, self.deck, run.lane_id, self._flag_re()))
+            if run.recon and len(run.messages) > 1:
+                run.messages[1] = self._fresh(run, lane.approach if lane is not None else "")[1]
+        handed = self.redact(sharing.opening(self.deck, lane, run.shares)) if lane is not None else ""
+        if handed:  # what other lanes tried, and its series: right after the brief, as _fresh puts it
+            run.handover = {"role": "user", "content": handed}
+            if len(run.messages) > 1:
+                run.messages.insert(2, dict(run.handover))
 
     def _fresh(self, run: _Run, approach: str) -> list[dict]:
         """A new context: the system prompt, the brief (with the first look the lane took at its
         first model call, if any: the same text every time, so the cached prefix holds), and
         what the L1 engines found (once they have run: an escalation or a refresh keeps it, so
-        the model never pays to redo what they did or ruled out). `approach` is the player's
-        own direction (lane.approach), never the model's plan."""
+        the model never pays to redo what they did or ruled out), after what the lane was
+        handed of other lanes' work at its first model call (run.handover), if anything.
+        `approach` is the player's own direction (lane.approach), never the model's plan."""
         challenge = run.challenge
         messages = [
             {"role": "system", "content": prompts.system_prompt()},
@@ -963,9 +982,12 @@ class AgentDriver:
                 "role": "user",
                 "content": prompts.brief(challenge, self.files.get(challenge.id, challenge.files), self.urls.get(challenge.id, ()),
                                          approach, flag_format=self.deck.config.flag_format, recon=run.recon,
-                                         instance=self.instance, shell_hosts=getattr(run.workspace, "shell_hosts", None)),
+                                         instance=self.instance, shell_hosts=getattr(run.workspace, "shell_hosts", None),
+                                         toolkit=self.l1.toolkit if self.l1 is not None else ""),
             },
         ]
+        if run.handover is not None:
+            messages.append(dict(run.handover))
         if run.l1_message is not None:
             messages.append(dict(run.l1_message))
         return messages
@@ -1002,6 +1024,11 @@ class AgentDriver:
 
     def _flag_re(self) -> re.Pattern[str]:
         return re.compile(self.deck.config.flag_format)
+
+    def _root_of(self, lane_id: str) -> Path | None:
+        """The folder of that lane's workspace on this machine, when this driver ran it."""
+        run = self.runs.get(lane_id)
+        return Path(run.workspace.root) if run is not None else None
 
     def _lane(self, run: _Run) -> Lane | None:
         return self.deck.lanes.get(run.lane_id)

@@ -1,0 +1,26 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-113.
+# osint_geolocate reports located candidates for an image-geolocation challenge from a frozen dataset
+# (sign OCR -> brand and OSM name candidates, brand -> maps, an OSM/Overpass constraint solver with
+# polygon and distance-join constraints, a DEM skyline matcher) and posts a named pin to a challenge
+# page's own map-pin checker. It reports facts and candidates; a reader names the place: `analysis`.
+# Every command ends with one SolverResult JSON line (no legacy-output tag).
+# The dataset lives at $CTF_GEO_DATASET, outside the repo; unset or missing is a `blocked` result
+# naming the variable. tesseract is needed only by `open` without --ocr-text (a named error if absent).
+id = "toolkits.osint_geolocate"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/osint_geolocate.py"
+capabilities = ["analysis", "cli", "osint", "gps", "geolocation", "osm"]
+inputs = []
+needs_tools = []
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # keyword nudge: a reverse-image / where-was-this / map-pin geolocation challenge
+category = ["osint"]
+keywords = ["geolocation", "geolocate", "geoguessr", "reverse image", "reverse-image", "where was this", "overpass", "osm constraint", "dem horizon", "skyline", "map pin"]
+priority = 61
+
+[[routes]]  # every OSINT challenge, low: a brief rarely says "geolocation" ("find the spot", "drop the
+            # pin"), and the handout lists only routed engines. Just under osint_geo and osint_geo_math.
+category = ["osint"]
+priority = 42

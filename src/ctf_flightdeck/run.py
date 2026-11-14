@@ -60,7 +60,19 @@ profile's `start` still to come, prepare_run waits for it after every check and 
 first pull; at its `end` the run stops as quitting does (Run._until_end). The run tells
 autopilot when the platform needs a human: a CTFd poll that keeps failing, a flag CTFd did
 not judge, or a web page where CTFd's API should answer (platform/ctfd.py: HumanCheck).
+
+A Game Master event (platform "gamemaster") plays the board `flightdeck gm pull` wrote: the
+run pulls nothing and starts no attempt. When its submit policy uses the platform, answers go
+to the Game Master through the deck's submitter and its solved list is read back, at the
+start and every solves_seconds (platform/gamemaster_run.py: GameMasterLink).
 While autopilot guards the run the model client sends no server-side refusal fallback.
+
+The host governor (governor.py, `[governor]` in the config): unless it is turned off, the
+machine's load per CPU, available RAM and free disk at the run folder are read before the
+board is released and again every governor_seconds, off the loop (Run._govern), and the deck
+asks it before it starts a queued lane (Deck.start_gate). While a limit binds no new lane
+starts; nothing running is stopped, and starts resume by themselves. A reading that cannot
+be taken is a note before the run starts and holds nothing.
 
 What a run starts carries its marks (leftovers.py): its containers flightdeck's labels, and
 its process groups on this machine a record in the run folder, which a note in flightdeck's
@@ -78,11 +90,12 @@ import getpass
 import json
 import math
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import time
-from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -100,17 +113,27 @@ from .config import Config, ConfigError, api_key, fallback_key, lane_refresh_at,
 from .core.deck import Deck, QueueEntry
 from .core.model import Challenge, DeckConfig, Lane, PendingKind
 from .eventlog import EventLog, new_run_dir
+from .instancerun import InstanceRunner, on_demand
+from .platform.instances import InstanceClient
+from .governor import TICK_SECONDS as GOVERNOR_SECONDS
+from .governor import Governor, Reading
 from .leftovers import RECORD, ProcessRecord, labels, sweep
 from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, HumanCheck, Pull, Solves, Verdict, check_site, load_ids, pull
-from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, load_board
+from .platform.gamemaster import GameMasterClient, GameMasterError
+from .platform.gamemaster import check_site as check_gm_site
+from .platform.gamemaster import load_ids as load_gm_ids
+from .platform.gamemaster_run import GameMasterLink, listed_solved
+from .platform.manual import AnswerVerifier, Board, BoardChallenge, BoardError, cannot_check, challenge_folders, load_board, load_challenge
 from .preflight import (
     USES_PLATFORM,
     EventProfile,
+    allowed,
     Policies,
     Policy,
     ProfileError,
     check,
     deck_submit,
+    instances_off,
     load_profile,
     looser,
     no_agents,
@@ -118,6 +141,8 @@ from .preflight import (
 )
 from .notify import Notifier, NotifyError
 from .runrecord import write_run_info, write_run_setup
+from .sharedfile import NAME as SHARED_NAME
+from .sharedfile import SharedFile
 from .status import NAME as STATUS_NAME
 from .status import StatusFile
 from .team import HANDLE_RULE, POLL_SECONDS, TeamChannel, TeamError, TeamWatcher, mirror, printable, valid_handle
@@ -156,8 +181,11 @@ class RunOptions:
     team_dir: Path | None = None  # the team folder teammates' flightdecks share (team.py)
     handle: str | None = None  # our handle in the team folder; default: the login name
     wave_seconds: float = WAVE_SECONDS
+    folder_seconds: float = 2.0  # a folder board: how often its folder is looked at for challenges added during the run
     solves_seconds: float = SOLVES_SECONDS
     team_seconds: float = POLL_SECONDS  # how often the team folder is read
+    governor_seconds: float = GOVERNOR_SECONDS  # how often the host governor reads this machine again
+    host_reading: Callable[[Path], Reading] | None = None  # how the governor reads the machine; None: governor.probe
     confirm: Callable[[str], bool] | None = None  # asks the player yes or no (the pull policy "confirm"); None: nobody to ask
     agent: str | None = None  # "claude" | "codex": lanes are that coding-agent CLI instead of flightdeck's own loop
     agent_auth: str | None = None  # the CLI's credential: claude "api-key" | "oauth-token", codex "api-key" | "login"
@@ -227,10 +255,12 @@ class Run:
     policies: Policies | None = None
     ctfd: CTFdLink | None = None
     verifier: CTFdVerifier | None = None  # what submits a CTFd board's flags, when submit uses the platform
+    gm: GameMasterLink | None = None  # a Game Master board's submitter and solved list, when submit uses the platform
     team: TeamChannel | None = None
     _notes: list[str] = field(default_factory=list, repr=False)
     _handouts: dict[str, Path] = field(default_factory=dict, repr=False)  # shared with the workspaces and the L1 stage
     _urls: dict[str, tuple[str, ...]] = field(default_factory=dict, repr=False)
+    _folders: dict[str, float] = field(default_factory=dict, repr=False)  # board folders looked at: name -> its challenge.json's mtime
     _unmirror: Callable[[], None] | None = field(default=None, repr=False)
     _watcher: TeamWatcher | None = field(default=None, repr=False)
     _team_stop: asyncio.Event | None = field(default=None, repr=False)
@@ -241,9 +271,12 @@ class Run:
     processes: ProcessRecord | None = None  # what the run started on this machine, for the next start if flightdeck is killed
     lights: object = None  # light.Lights: the light engines its jobs share (closed after the watch)
     status: StatusFile | None = None  # status.json in the run folder, for whatever is not the console
+    shared: SharedFile | None = None  # shared.json in the run folder: what each lane of each challenge tried (core/shared.py)
     notifier: Notifier | None = None  # the notification webhook, when [notify] names one
     autopilot: Autopilot | None = None  # the run's autopilot (autopilot.py): off until engaged
+    instances: InstanceRunner | None = None  # starts and stops the platform's on-demand instances (instancerun.py); None: it starts none
     engage: bool = False  # engage autopilot when the board is released (--autopilot, or [autopilot] engage)
+    governor: Governor | None = None  # the host governor (governor.py), unless [governor] turns it off: the deck's start gate
     stopper: Callable[[str], None] | None = None  # ends the run as quitting does, saying why: whoever flies the run sets it (the console: app())
 
     def notes(self) -> list[str]:
@@ -253,8 +286,9 @@ class Run:
         l1 = getattr(self.driver, "l1", None)
         if l1 is not None:
             if getattr(l1, "image", None) is not None:
+                own = getattr(l1, "engine_image", None)
                 where = (
-                    f", each in a container of the lane image {l1.image} with your pack mounted read-only, and no network "
+                    f", each in a container of {f'the pack image {own}' if own else f'the lane image {l1.image}'} with your pack mounted read-only, and no network "
                     "unless lanes may reach the challenge's live instance at once (instance auto)"
                 )
             else:
@@ -277,7 +311,8 @@ class Run:
         submits = self._submits.errors if self._submits is not None else []
         record = [self.processes.problem] if self.processes is not None and self.processes.problem else []
         status = [self.status.problem] if self.status is not None and self.status.problem else []
-        return [*self.driver.errors, *submits, *self._errors, *record, *status]
+        shared = [self.shared.problem] if self.shared is not None and self.shared.problem else []
+        return [*self.driver.errors, *submits, *self._errors, *record, *status, *shared]
 
     def entries(self, challenges: Sequence[BoardChallenge] | None = None, *, skip: Collection[str] = ()) -> list[QueueEntry]:
         """The challenges (default: the board's) in triage order: cheap first (fewest points,
@@ -307,13 +342,24 @@ class Run:
             state = self._watcher.poll()  # its marks wait until the board is on the deck
         if self._submits is not None:  # before any lane starts: it sends their flags to CTFd
             self._tasks.append(asyncio.create_task(self._submits.work(), name="flightdeck CTFd submits"))
+        if self.gm is not None:  # the Game Master's submits and its solved list
+            self._tasks += self.gm.tasks()
         if self.engage and self.autopilot is not None:  # before any lane starts: its guardrails hold from the first turn
             outcome = self.autopilot.engage()
             if not outcome.ok:  # prepare_run checked the budget and the runtime: something changed since
                 self.deck.warn(outcome.message, data={"autopilot": "not engaged"})
         if self.autopilot is not None and self.profile is not None and self.profile.end is not None:
             self._tasks.append(asyncio.create_task(self._until_end(self.profile.end), name="flightdeck event end"))
+        if self.instances is not None:  # before any lane starts: an on-demand challenge waits for its instance
+            self.instances.hold([b.challenge for b in self.board.challenges])
+            self._tasks.append(asyncio.create_task(self.instances.work(), name="flightdeck instances"))
+        if self.governor is not None:  # its first reading was taken before the deck had a lane to start
+            self._tasks.append(asyncio.create_task(self._govern(), name="flightdeck host governor"))
         self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
+        if self.watches_folder:  # a folder board takes challenges added during the run
+            for b in self.board.challenges:
+                self._folders[b.handout.name] = _mtime(b.handout)
+            self._tasks.append(asyncio.create_task(self._folder(), name="flightdeck board folder"))
         if state is not None:
             self._watcher.apply(state, before_run=True)  # what the team folder held before the run started
         if self.ctfd is not None:
@@ -322,6 +368,8 @@ class Run:
             if self.ctfd.waves:
                 self._tasks.append(asyncio.create_task(self._waves(), name="flightdeck CTFd waves"))
             self._tasks.append(asyncio.create_task(self._solves(), name="flightdeck CTFd solves"))
+        if self.gm is not None:
+            self.gm.apply_solved(before_run=True)  # what the Game Master listed as solved before the run started
         if self._watcher is not None:
             self._team_stop = asyncio.Event()
             watching = self._watcher.run(interval=self.options.team_seconds, stop=self._team_stop)
@@ -357,6 +405,11 @@ class Run:
         await self.driver.shutdown()
         if self._submits is not None:  # after the lanes, so a flag one handed over as it stopped is named too
             self._errors += self._submits.unsent()
+        if self.instances is not None:  # after the lanes: nothing works an instance any more
+            self._errors += [f"instances: {line}" for line in await self.instances.close()]
+            self.instances.client.close()
+        if self.gm is not None:
+            self._errors += self.gm.unsent()
         if self.team is not None:
             try:
                 self.team.free_boxes()  # the lanes stopped without a lane-end event, so mirror() did not see them go
@@ -370,6 +423,8 @@ class Run:
             await self.lights.aclose()  # the light models, each once
         if self.ctfd is not None:
             await self.ctfd.client.aclose()
+        if self.gm is not None:
+            await self.gm.aclose()
         if self.notifier is not None:  # last: what the shutdown itself had to say is sent too
             await self.notifier.aclose()
 
@@ -382,6 +437,8 @@ class Run:
         self.transcripts.close()
         if self.status is not None:  # before the log closes: a write that fails is a warning in it
             self.status.close()
+        if self.shared is not None:
+            self.shared.close()
         self.log.close()
         if self.processes is not None:
             self.processes.finish()
@@ -398,11 +455,16 @@ class Run:
         except ScoreError as exc:
             return f"no scorecard: {exc}\n"
 
-    def app(self, refresh_seconds: float | None = 0.5):
+    def app(self, refresh_seconds: float | None = 0.5, *, welcome: bool = False):
         from .console.app import FlightdeckApp
 
         app = FlightdeckApp(
-            self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir)
+            self.deck, refresh_seconds=refresh_seconds, on_start=self.release, on_exit=self.shutdown, run_dir=str(self.dir),
+            config_path=str(self.config.source) if self.config.source is not None else "",
+            welcome=welcome,
+            adder=self.add_challenge if self.watches_folder else None,
+            paster=self.paste_image if self.watches_folder else None,
+            attacher=self.attach_files if self.watches_folder else None,
         )
         self.stopper = app.stop_run  # the event's end under autopilot: quit as the player would, without asking
         return app
@@ -431,6 +493,8 @@ class Run:
         held = set(self.ctfd.solved_board_ids()) if self.ctfd is not None else set()
         if self.ctfd is not None:
             held |= {cid for cid, left in self.ctfd.tries.items() if left == 0}
+        if self.gm is not None:
+            held |= self.gm.held()  # solved on the Game Master
         state = self._watcher.latest if self._watcher is not None else None
         if state is not None and self.team is not None:
             held |= set(state.solves)
@@ -473,6 +537,32 @@ class Run:
                 return True
         return False
 
+    async def _govern(self) -> None:
+        """Read this machine again every governor_seconds, off the loop (a reading may run a
+        program), and have the deck ask its start gate again: lanes the governor held back
+        start by themselves once the reading recovers, and the deck says so. A reading that
+        fails outright (never governor.probe's own: an unknown reading is not a failure) is a
+        warning, once while it lasts, and holds no start: the governor has nothing to go by."""
+        governor = self.governor
+        assert governor is not None
+        failing = False
+        while True:
+            await asyncio.sleep(self.options.governor_seconds)
+            try:
+                reading = await asyncio.to_thread(governor.take)
+            except Exception as exc:  # a reader that raised: say so, hold nothing, and try again
+                governor.use(None)
+                if not failing and not self.deck.closing:
+                    self.deck.warn(
+                        f"the host governor could not read this machine ({_why(exc)}): it holds no lane back until it can",
+                        data={"source": "governor"},
+                    )
+                failing = True
+            else:
+                governor.use(reading)
+                failing = False
+            self.deck.recheck_starts()
+
     async def _waves(self) -> None:
         """Pull the board again every wave_seconds and release what is new. A failure is a
         warning on the console (once while it lasts), never the end of the task."""
@@ -508,6 +598,8 @@ class Run:
         link.ids.update(result.ids)
         if self.verifier is not None:
             self.verifier.ids.update(result.ids)
+        if self.instances is not None:
+            self.instances.client.ids.update(result.ids)
         for line in result.problems:
             if line not in link.reported:
                 link.reported.add(line)
@@ -520,10 +612,171 @@ class Run:
         new = [b for b in result.board.challenges if b.challenge.id not in self.deck.challenges]
         if new:
             self._add(new)
+            if self.profile is not None and self.profile.instances is not None:
+                on_demand([b.challenge for b in new], self.profile.instances.types)
+            if self.instances is not None:
+                self.instances.hold([b.challenge for b in new])
             link.wave += 1
             self.deck.release([b.challenge for b in new], self.entries(new, skip=self._held()), f"Wave {link.wave}")
             self._apply_solves()
         self._apply_tries(result.tries, asked=asked)
+
+    @property
+    def watches_folder(self) -> bool:
+        """Whether challenges added to the board's folder during the run are played: a folder
+        board (one flightdeck does not pull from a platform), without an answers file (a
+        practice set is whole from the start)."""
+        return self.ctfd is None and self.gm is None and self.options.board is not None and not self.board.answers \
+            and (self.profile is None or self.profile.platform == "manual")
+
+    async def _folder(self) -> None:
+        while True:
+            await asyncio.sleep(self.options.folder_seconds)
+            try:
+                self.scan_board()
+            except Exception as exc:  # a bug: say so, and keep looking
+                self.deck.warn(f"could not read the board folder for new challenges: {type(exc).__name__}: {exc}", data={"source": "board"})
+
+    def scan_board(self) -> list[str]:
+        """Release the challenges whose folders appeared on the board since the last look
+        (the console's /new, `flightdeck add`, or a folder the player made); the ids released.
+        A folder that cannot be read is a warning, once for each state of its challenge.json:
+        a corrected file is read again. One whose id the board already has is left out and said."""
+        if not self.watches_folder or self.deck.closing:
+            return []
+        new: list[BoardChallenge] = []
+        for folder in challenge_folders(self.options.board):
+            stamp = _mtime(folder)
+            if self._folders.get(folder.name) == stamp:
+                continue
+            self._folders[folder.name] = stamp
+            try:
+                item = load_challenge(folder)
+            except BoardError as exc:
+                self.deck.warn(f"board: not added: {exc}", data={"source": "board"})
+                continue
+            cid = item.challenge.id
+            if cid in self.deck.challenges or any(b.challenge.id == cid for b in new):
+                if cid != folder.name or self._handouts.get(cid) != item.handout:
+                    self.deck.warn(f"board: not added: {_show(folder)} has the id {cid}, which the board already has", data={"source": "board"})
+                continue  # the same folder, its challenge.json touched: the run keeps what it read at first
+            new.append(item)
+        if new:
+            self._add(new)
+            self.deck.release([b.challenge for b in new], self.entries(new), "Added")
+        return [b.challenge.id for b in new]
+
+    async def add_challenge(self, new) -> tuple[bool, str]:
+        """The console's /new: write the challenge's folder on the board (addchallenge.create,
+        in a thread: its files may be big, and the lanes share this loop) and release it.
+        (whether it was taken, what to tell the player). Everything the challenge can be
+        refused for is checked first (addchallenge.check), so a refusal comes back before
+        anything is read or written. A challenge with images is added once the lanes' model
+        has read them (imageread.read): their text goes into its description, and the answer
+        here says it is on its way."""
+        from .addchallenge import AddError, check
+        from .imageread import MAX_IMAGES, is_image
+
+        if not self.watches_folder:
+            return False, "this board comes from the platform: challenges are added there, not here"
+        try:
+            check(self.options.board, new)
+        except AddError as exc:
+            return False, str(exc)
+        images = [file for file in new.files if is_image(file)][:MAX_IMAGES]
+        if images and self.client is not None and not self.deck.closing:
+            task = asyncio.create_task(self._add_read(new, images), name="flightdeck screenshot reader")
+            self._tasks.append(task)
+            return True, (f"reading {len(images)} image{'' if len(images) == 1 else 's'} with {self.model} for "
+                          f"{new.name!r}, then a lane starts on it (a few seconds)")
+        return await self._add_now(new)
+
+    async def attach_files(self, challenge_id: str, files: Sequence[Path]) -> tuple[bool, str]:
+        """The console's /attach: copy files into a challenge's folder on the board (in a
+        thread), and start its lanes afresh so each works in a copy that has them (a lane's
+        workspace is a copy made when it starts). (whether they were attached, what to tell
+        the player: which lanes restarted, or, when the challenge has none to restart and the
+        deck starts none, why not)."""
+        from .addchallenge import AddError, attach
+        from .core import interventions as iv
+
+        handout = self._handouts.get(challenge_id)
+        if not self.watches_folder or handout is None:
+            return False, "files are attached to a challenge on a board you fill yourself"
+        try:
+            names = await asyncio.to_thread(attach, handout, files)
+            item = load_challenge(handout)
+        except (AddError, BoardError) as exc:
+            return False, str(exc)
+        self._folders[handout.name] = _mtime(handout)
+        self.driver.files[challenge_id] = item.challenge.files
+        self.deck.challenges[challenge_id].files = item.challenge.files
+        what = f"attached {', '.join(names)} to {challenge_id}"
+        active = [lane.id for lane in self.deck.lanes_on(challenge_id) if lane in self.deck.active_lanes()]
+        restarted, refused = [], ""
+        for lane_id in active:
+            outcome = self.deck.apply(iv.Kill(lane_id, requeue=True))
+            if outcome.ok:
+                restarted.append(lane_id)
+            else:
+                refused = outcome.message
+        if restarted:
+            return True, what + f"; {', '.join(restarted)} restarted as a fresh lane with it"
+        if active:
+            return True, what + f"; its lane was not restarted: {refused}"
+        if not self.deck.queued(challenge_id):
+            outcome = self.deck.apply(iv.Queue(challenge_id))
+            if not outcome.ok:  # solved, a teammate's, blocked, a lane that is not running: no lane will start
+                return True, what + f"; no lane was started on it: {outcome.message}"
+        return True, what + "; a lane starts on it when one is free"
+
+    def paste_image(self) -> Path:
+        """ctrl+v in the /new form: the clipboard's image as a file in the run folder
+        (imageread.clipboard_image; ImageError when there is none). It runs the clipboard
+        tool and waits for it, so the form calls it in a thread."""
+        from .imageread import clipboard_image
+
+        return clipboard_image(self.dir / "pasted")
+
+    async def _add_now(self, new) -> tuple[bool, str]:
+        from .addchallenge import AddError, create
+
+        try:
+            folder = await asyncio.to_thread(create, self.options.board, new)
+        except AddError as exc:
+            return False, str(exc)
+        # the folder watch may have released it while this waited for the loop: on the board either way
+        if folder.name not in self.scan_board() and self._handouts.get(folder.name) != folder:
+            return False, f"{_show(folder)} was written but could not be added: the warning above says why"
+        files = len(self.driver.files.get(folder.name, ()))
+        if not files and not new.urls:  # the lane has the description and nothing else: said, so it is no surprise
+            return True, (f"added {folder.name} with NO file and no target: its lane has only the description. "
+                          f"If it needs a file: /attach {folder.name}")
+        return True, (f"added {folder.name}: {files} file{'' if files == 1 else 's'}"
+                      + (f", {len(new.urls)} address{'' if len(new.urls) == 1 else 'es'}" if new.urls else "")
+                      + "; a lane starts on it when one is free")
+
+    async def _add_read(self, new, images: Sequence[Path]) -> None:
+        """Read each image's text with the lanes' model, then add the challenge with that text
+        after its description. An image that cannot be read is a warning; the challenge is
+        added all the same, the image in its handout."""
+        from .imageread import ImageError, read
+
+        description = new.description
+        for image in images:
+            try:
+                text = await read(self.client, self.model, image)
+            except ImageError as exc:
+                self.deck.warn(f"/new: {exc}; the challenge is added without that image's text (paste the text if you can)",
+                               data={"source": "board"})
+                continue
+            except Exception as exc:  # a bug: the challenge must still be added
+                self.deck.warn(f"/new: could not read {_show(image.name)}: {type(exc).__name__}: {exc}", data={"source": "board"})
+                continue
+            description = (description + "\n\n" if description else "") + f"[Text read from the image {image.name} by {self.model}:]\n{text}"
+        ok, said = await self._add_now(replace(new, description=description))
+        if not ok:
+            self.deck.warn(f"/new: {said}", data={"source": "board"})
 
     def _add(self, new: Sequence[BoardChallenge]) -> None:
         """New challenges on the board: their handouts and instances, for lanes and L1."""
@@ -609,6 +862,11 @@ class _Plan:
     def ctfd(self) -> bool:
         return self.profile is not None and self.profile.platform == "ctfd"
 
+    @property
+    def gm(self) -> bool:
+        """A Game Master event whose submit policy uses the platform."""
+        return self.profile is not None and self.profile.platform == "gamemaster" and self.platform
+
 
 def prepare_run(options: RunOptions) -> Run:
     """Everything a run needs, checked up front. Raises RunError with the reason."""
@@ -623,7 +881,11 @@ def prepare_run(options: RunOptions) -> Run:
     plan = _plan(options, config, runtime)
     options = plan.options
     engage, budget = _autopilot_asked(options, config, runtime)
-    board = None if plan.ctfd else _load_board(options)
+    # a by-hand event's board may be empty: the player adds challenges as they go (/new, `flightdeck add`)
+    board = None if plan.ctfd else _load_board(options, empty_ok=plan.profile is not None and plan.profile.platform == "manual")
+    if board is not None and not board.challenges:
+        plan.notes.append("the board is empty: in the console, /new adds a challenge (its name, then its text and files); "
+                          "`flightdeck add` does the same from another terminal")
     ladder, agent, key, spare_key = config.models, None, None, None
     if options.agent is not None:  # lanes are a coding-agent CLI: its own login, its own models
         ladder = _agent_ladder(options.agent, config, plan.notes)
@@ -678,12 +940,18 @@ def prepare_run(options: RunOptions) -> Run:
         if agent is not None:
             _check_image_has(config.lanes.image, agent.kind)
     manifests = _l1_manifests(options.pack)
+    if runtime == "docker" and manifests is not None and config.l1.image:
+        _check_l1_image(config.l1.image)
     team = _team_channel(options, plan)
     profile = plan.profile
     first = token = None
     if plan.ctfd:
         assert profile is not None
         token = _ctfd_token(profile)
+    gm_ids = gm_solved = None
+    if plan.gm:
+        assert profile is not None
+        token, gm_ids = _gm_token(profile, options.board)
     if agent is None:  # the model APIs, asked once (a coding-agent CLI uses its own)
         _check_apis(config, key, spare_key, plan.notes)
     if engage and profile is not None:  # every check is done: wait for the event's start before anything is pulled
@@ -692,6 +960,9 @@ def prepare_run(options: RunOptions) -> Run:
         assert token is not None
         first = _pull_first(options, plan, token)
         board = first.board
+    if gm_ids is not None:  # the Game Master's solved list, read once before the run starts
+        assert profile is not None and token is not None
+        gm_solved = _gm_solved(profile, token)
     assert board is not None
     runs = (options.run_dir or config.run_dir).expanduser()
     plan.notes += sweep(runs, docker=True if runtime == "docker" else None, clean=True).lines  # what killed runs left
@@ -712,7 +983,12 @@ def prepare_run(options: RunOptions) -> Run:
         max_lanes=options.max_lanes,
         submit=options.submit,
         submit_limited=config.lanes.submit_limited,
+        wrong_stop=config.lanes.wrong_stop,
+        variant_tries=config.lanes.variant_tries,
         models=ladder,
+        lanes_ceiling=profile.max_lanes if profile is not None else None,
+        # in the console the player may go as far as the event's rules do, whatever this run started with
+        submit_ceiling="auto" if profile is None or (plan.platform and allowed(profile).submit is Policy.AUTO) else "confirm",
         **({"flag_format": flag_format} if flag_format else {}),
     )
     plan.notes.append(_flag_format_note(deck_config.flag_format, profile, board, options.board))
@@ -720,13 +996,31 @@ def prepare_run(options: RunOptions) -> Run:
         plan.notes.append(SPENDS_TRIES)
     elif config.lanes.submit_limited == "auto":
         plan.notes.append(f'submit_limited = "auto" in your config does nothing in this run: submit is "{deck_config.submit}", so every flag waits for you')
+    if deck_config.variant_tries:
+        plan.notes.append(variant_tries_note(deck_config))
+    rotating = sum(1 for b in board.challenges if b.challenge.rotates)
+    if rotating and deck_config.submit == "confirm":
+        plan.notes.append(rotating_under_confirm(rotating))
     handouts = {b.challenge.id: b.handout for b in board.challenges}
     urls = {b.challenge.id: tuple(b.urls) for b in board.challenges}
     l1 = None
+    toolkit, lane_image, lane_mounts = "", config.lanes.image, ()
+    if manifests is not None and config.l1.lane_tools:
+        toolkit = _lane_toolkit(options.pack)
+        if runtime == "docker":
+            # the lane sees the pack where it is on this machine, read-only, and runs in the
+            # pack's image: the pack's own Python and tools are there, not in the lane image
+            lane_mounts = ((options.pack, str(options.pack)),)
+            lane_image = config.l1.image or config.lanes.image
+            if lane_image != config.lanes.image and agent is not None:
+                _check_image_has(lane_image, agent.kind)  # the CLI must be in the image its lane runs in
+        plan.notes.append("L1: the lanes' models may call your pack's engines (lane_tools)"
+                          + (f"; lanes run in {lane_image} with the pack mounted read-only" if runtime == "docker" else ""))
     if manifests is not None:
         l1 = L1Stage(
             manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency,
             image=config.lanes.image if runtime == "docker" else None, pack=options.pack,  # D17: engines run where lanes do
+            engine_image=config.l1.image if runtime == "docker" else None, toolkit=toolkit,
             labels=marks, record=processes, urls=urls,
         )
     write_run_setup(run_dir, _setup(  # for the flight card of `flightdeck share`
@@ -756,10 +1050,20 @@ def prepare_run(options: RunOptions) -> Run:
             link.read(first.solves)
         if plan.platform:
             verifier = CTFdVerifier(profile.url, token, first.ids)
+    gm = None
+    if gm_ids is not None:
+        assert profile is not None and profile.url is not None and token is not None and gm_solved is not None
+        gm = GameMasterLink(GameMasterClient(profile.url, token), gm_ids, solved=gm_solved, solves_seconds=options.solves_seconds)
+        plan.notes.append(
+            f"answers go to the Game Master at {_show(profile.url)}; this run pulls nothing and starts no attempt "
+            "(`flightdeck gm pull` does)"
+        )
     if verifier is not None:
         assert link is not None
         submits = _Submits(verifier, link)
         verify = _never_verify  # flags go to CTFd through the submitter, never through verify()
+    elif gm is not None:
+        verify = _never_verify  # answers go to the Game Master through its link, never through verify()
     elif plan.platform and board.answers:
         verify = AnswerVerifier(board.answers)
     else:
@@ -772,11 +1076,12 @@ def prepare_run(options: RunOptions) -> Run:
             return DockerWorkspace(
                 root,
                 handouts[challenge.id],
-                image=config.lanes.image,
+                image=lane_image,
                 name=f"flightdeck-{run_dir.name}-{lane.id.lower()}",
                 reach=reach,
                 later=later,
                 labels=marks,
+                mounts=lane_mounts,
             )
         return HostWorkspace(root, handouts[challenge.id], record=processes)
 
@@ -802,12 +1107,16 @@ def prepare_run(options: RunOptions) -> Run:
             instance=instance,
             secrets=held,
         )
-    deck = Deck(deck_config, driver, RunClock(), verify, submitter=submits)
+    deck = Deck(deck_config, driver, RunClock(), verify, submitter=submits or gm)
     if submits is not None:
         submits.deck = deck
+    if gm is not None:
+        gm.deck = deck
     log.attach(deck)
     status = StatusFile(run_dir / STATUS_NAME, deck, run=run_dir.name, held=held)  # after the log: its warning is logged
     status.attach()
+    shared = SharedFile(run_dir / SHARED_NAME, deck, run=run_dir.name, held=held)
+    shared.attach()
     notifier = None
     if webhook is not None:
         env = config.notify.webhook_env
@@ -822,33 +1131,86 @@ def prepare_run(options: RunOptions) -> Run:
         )
     transcripts = TranscriptLog(run_dir / "lanes")
     transcripts.attach(deck)
+    governor = None
+    if config.governor.enabled:  # before any lane starts (release): the deck asks it before each start after the first
+        governor = Governor(config.governor, run_dir, read=options.host_reading)
+        try:
+            reading = governor.refresh()
+        except Exception as exc:  # options.host_reading raised: governor.probe itself records what it cannot read
+            raise RunError(f"the host governor could not read this machine: {_why(exc)}") from None
+        plan.notes += [f"the host governor cannot read {line}: no lane is held back for it" for line in reading.unknown()]
+        deck.start_gate = governor.limit
     # after the logs (a warning raised inside an event is logged after it), before any lane
     # can get a live-box approval
     unmirror = mirror(team, deck) if team is not None else None
-    idle = _flagcheck_idle(deck_config.submit, submits is not None or isinstance(verify, AnswerVerifier))
+    idle = _flagcheck_idle(deck_config.submit, submits is not None or gm is not None or isinstance(verify, AnswerVerifier))
     lights = _lights(config, plan.notes, idle={"flagcheck": idle} if idle else None)
     driver.flaggate = _flaggate(config, lights, plan.notes)  # before any lane starts (release)
     driver.lights = lights  # route and recon at each lane's start (agent/facts.py); no lane has started yet
     watch = _watch(deck, config, plan.notes, lights)
     switch, has_fallback = _refusal_switch(client, ladder)
-    autopilot = Autopilot(deck, budget, refusals=switch)
+    autopilot = Autopilot(deck, budget, refusals=switch, second_after=config.autopilot.second_after,
+                          third_after=config.autopilot.third_after)
     autopilot.attach()  # after the watch: it sees the alerts the watch raised
     if engage:
         plan.notes += start_notes(
             plan.policies, submit=deck_config.submit, spends_tries=deck_config.spends_tries, instance=instance, budget=budget,
             waves=link is not None and link.waves, refusal_fallback=has_fallback, agent=options.agent,
             start=profile.start if profile is not None else None, end=profile.end if profile is not None else None,
+            second_after=config.autopilot.second_after, third_after=config.autopilot.third_after,
         )
+    instances = _instances(profile, plan.policies, board, link, token, deck, urls, driver, plan.notes)
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
-        options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, team=team,
+        shared=shared,
+        options=options, profile=profile, policies=plan.policies, ctfd=link, verifier=verifier, gm=gm, team=team,
         _notes=plan.notes, _handouts=handouts, _urls=urls, _unmirror=unmirror, _submits=submits,
         processes=processes, lights=lights, status=status, notifier=notifier, autopilot=autopilot, engage=engage,
+        instances=instances,
+        governor=governor,
     )
     if submits is not None:
         submits.solved = run._apply_solves
         submits.unjudged = run._flag_unjudged
+    if gm is not None:
+        gm.needs_human = autopilot.platform  # an answer the Game Master did not judge, or its list failing: autopilot disengages
     return run
+
+
+def _instances(profile: EventProfile | None, policies: Policies, board: Board, link: CTFdLink | None, token: str | None,
+               deck: Deck, urls: dict[str, tuple[str, ...]], driver: object, notes: list[str]) -> InstanceRunner | None:
+    """The run's instance scheduler, when the event's [instances] table and its policies let
+    flightdeck start instances on the platform; else None, with a note saying why when the
+    board has challenges that need one. Marks the board's on-demand challenges either way."""
+    challenges = [b.challenge for b in board.challenges]
+    marked = on_demand(challenges, profile.instances.types if profile is not None and profile.instances is not None else ())
+    why = instances_off(profile, policies) if profile is not None else "there is no event profile"
+    if why or link is None or token is None:
+        if marked:
+            notes.append(
+                f"instances: {len(marked)} challenge{'s' if len(marked) != 1 else ''} on this board need an instance the platform "
+                f"starts when asked, and flightdeck starts none: {why or 'this run has no link to the platform'}. Start one on the "
+                "site yourself; its lane works from the files"
+            )
+        return None
+    assert profile is not None and profile.instances is not None and profile.url is not None
+    client = InstanceClient(profile.url, token, link.ids, profile.instances)
+    notes.append(
+        f"instances: flightdeck starts a challenge's instance on the platform before a lane works it"
+        f" ({len(marked)} on the board now), keeps at most {profile.instances.max_running} running, and stops one when its "
+        "challenge is solved or nobody works it"
+    )
+    return InstanceRunner(deck, client, max_running=profile.instances.max_running, urls=[urls, driver.urls])
+
+
+def rotating_under_confirm(count: int) -> str:
+    """The start note of a run whose board has `count` challenges with a rotating flag
+    ("rotates" in challenge.json) under the confirm submit policy."""
+    which = "1 challenge on this board has a flag that rotates" if count == 1 else f"{count} challenges on this board have a flag that rotates"
+    return (f'{which} ("rotates" in its challenge.json), and submit is "confirm": such a flag will usually rotate out '
+            "while it waits for your approval, and is then not sent (its lane fetches a fresh one, which waits again). "
+            "Submit auto avoids it (--submit auto, where the event's rules allow it): the flag goes out the moment the "
+            "lane has it")
 
 
 def _autopilot_asked(options: RunOptions, config: Config, runtime: str) -> tuple[bool, Budget]:
@@ -1001,7 +1363,7 @@ def anthropic_price_notes(config: Config, cap: float | None) -> list[str]:
 
 def _check_options(options: RunOptions) -> None:
     """Options a caller set in code that the run cannot use."""
-    for name in ("wave_seconds", "solves_seconds", "team_seconds"):
+    for name in ("wave_seconds", "solves_seconds", "team_seconds", "governor_seconds"):
         value = getattr(options, name)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value > 0):
             raise RunError(f"{name} must be a positive number of seconds, not {value!r}")
@@ -1011,14 +1373,22 @@ def _check_options(options: RunOptions) -> None:
         raise RunError(f"submit must be confirm or auto, not {options.submit!r}")
 
 
-def _load_board(options: RunOptions) -> Board:
+def _mtime(folder: Path) -> float:
+    """When a challenge folder's challenge.json was last written (0.0 when it cannot be read)."""
+    try:
+        return (folder / "challenge.json").stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _load_board(options: RunOptions, *, empty_ok: bool = False) -> Board:
     if options.board is None:
         raise RunError(
             "name the board: `flightdeck play BOARD` (a folder of challenge folders), or give an event profile with "
             "--event EVENT.toml"
         )
     try:
-        return load_board(options.board, answers=options.answers)
+        return load_board(options.board, answers=options.answers, empty_ok=empty_ok)
     except BoardError as exc:
         raise RunError(str(exc)) from None
 
@@ -1078,9 +1448,16 @@ def _plan(options: RunOptions, config: Config, runtime: str) -> _Plan:
             raise RunError("--answers checks flags against a file, and a CTFd event checks them on CTFd: drop --answers")
     elif board is None:
         board = profile.board  # check() refused a manual profile without one
+        if board is None:  # a Game Master profile may leave it to the command line
+            raise RunError(
+                "a Game Master event needs the board folder `flightdeck gm pull` wrote: `flightdeck play FOLDER --event "
+                "EVENT.toml`, or board = that folder in the profile's [event]"
+            )
     elif profile.board is not None and _same_dir(board, profile.board) is False:
         notes.append(f"board: {_show(board)}, as you asked (the event profile names {_show(profile.board)})")
     submit = _event_submit(options, policies)
+    if profile.platform == "gamemaster" and submit.platform and options.answers is not None:
+        raise RunError("--answers checks flags against a file, and this event checks them on the Game Master: drop --answers")
     if not submit.platform:
         notes.append(
             f'submit is "{policies.submit}" in the event profile: flightdeck never submits a flag. It shows each one; '
@@ -1112,6 +1489,16 @@ SPENDS_TRIES = (
     'submit_limited = "auto" in your config: a flag for a challenge whose tries the platform counts goes out without you, '
     "the last try included; a wrong flag can use up the tries"
 )
+
+
+def variant_tries_note(config: DeckConfig) -> str:
+    """What the start of a run says when flag variants are on ([lanes] variant_tries)."""
+    most = config.variant_tries
+    text = (f"variant_tries = {most} in your config: when the platform calls a flag wrong, flightdeck proposes up to {most} "
+            f"other spelling{'s' if most != 1 else ''} of it per challenge, one at a time")
+    if config.submit == "auto":
+        return text + "; under submit auto each goes out as a lane's own flag would, and a wrong one is a wrong try"
+    return text + "; each waits for you, as every flag does"
 
 
 def _event_submit(options: RunOptions, policies: Policies):
@@ -1205,7 +1592,23 @@ class _Submits:
     "already solved" (by the account, so by the team) is news, not a problem: the run takes
     CTFd's word for it, as for a solve its poll finds, without waiting for the player's
     answer about this flag. A flag still on its way when the run ends is named then
-    (unsent()), as not known to have been submitted."""
+    (unsent()), as not known to have been submitted.
+
+    A rate limit that passes is waited out and the flag sent again (P33), up to RESENDS times:
+    CTFd said it did not check the flag ("ratelimited", after the verifier ruled out a
+    challenge that is out of tries), so there is no answer to count twice. The wait is what
+    CTFd asks ("Try again in N seconds", at most RESEND_MAX) or RESEND_WAIT, a little over
+    the minute CTFd's limits count in. Flags queued behind it wait too: they are the same
+    account's, and would be refused the same way. Never for a challenge whose tries are
+    counted: CTFd records a refused try against the limit, so those stay the player's (D21).
+    When the last send is refused too, the flag goes back to the player as before.
+
+    A flag of a challenge whose flag rotates is checked right before each send (rotated_out):
+    one that waited here into a later window is not sent."""
+
+    RESENDS = 3  # sends after the first, for one flag
+    RESEND_WAIT = 65.0  # seconds, when CTFd names no wait: its limits count the last minute
+    RESEND_MAX = 300.0  # the longest wait taken from CTFd's own words
 
     def __init__(self, verifier: CTFdVerifier, link: CTFdLink) -> None:
         self.verifier = verifier
@@ -1216,6 +1619,7 @@ class _Submits:
         self.queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()  # (lane, challenge, flag) to send, in order
         self.sending: tuple[str, str, str] | None = None  # the one sent now, until its answer is applied
         self.errors: list[str] = []  # bookkeeping that failed (a flightdeck bug), shown when the run ends
+        self.sleep: Callable[[float], Awaitable[None]] = asyncio.sleep  # the wait before a flag is sent again
 
     def __call__(self, lane_id: str, challenge_id: str, flag: str) -> None:
         self.queue.put_nowait((lane_id, challenge_id, flag))
@@ -1226,21 +1630,69 @@ class _Submits:
             item = await self.queue.get()
             self.sending = item
             lane_id, challenge_id, flag = item
+            sends = 0
+            while True:
+                if self.rotated_out(lane_id, challenge_id, flag):
+                    verdict = None  # not sent: the deck has told its lanes, and nothing is answered
+                    break
+                try:
+                    verdict = await asyncio.to_thread(self.verifier.submit, challenge_id, flag)
+                except Exception as exc:  # a bug in the verifier: the outcome is not known, and the worker goes on
+                    verdict = Verdict(None, error=(
+                        f"flightdeck could not submit it ({type(exc).__name__}: {exc}); it may have reached CTFd: check the "
+                        "challenge there before submitting it again"
+                    ))
+                sends += 1
+                wait = self.resend_after(challenge_id, verdict) if sends <= self.RESENDS else None
+                if wait is None:
+                    break
+                with contextlib.suppress(Exception):  # the note is a courtesy: the resend does not hang on it
+                    self.deck.note(lane_id, (
+                        f"CTFd rate-limited the submission of {_show(flag)} and did not check it; flightdeck sends it "
+                        f"again in {wait:g}s (send {sends + 1} of {self.RESENDS + 1})"
+                    ))
+                await self.sleep(wait)
             try:
-                verdict = await asyncio.to_thread(self.verifier.submit, challenge_id, flag)
-            except Exception as exc:  # a bug in the verifier: the outcome is not known, and the worker goes on
-                verdict = Verdict(None, error=(
-                    f"flightdeck could not submit it ({type(exc).__name__}: {exc}); it may have reached CTFd: check the "
-                    "challenge there before submitting it again"
-                ))
-            try:
-                self.answer(lane_id, challenge_id, flag, verdict)
+                if verdict is not None:
+                    self.answer(lane_id, challenge_id, flag, verdict)
             except Exception as exc:  # a bug: said now and at the end, and the next flag still goes
                 problem = f"CTFd: could not apply CTFd's answer to {_show(flag)}: {type(exc).__name__}: {exc}"
                 self.errors.append(problem)
                 with contextlib.suppress(Exception):
                     self.deck.warn(problem, challenge=challenge_id, data={"source": "ctfd"})
             self.sending = None
+
+    def rotated_out(self, lane_id: str, challenge_id: str, flag: str) -> bool:
+        """Whether `flag`, about to be sent (the first time, or again after a rate limit's
+        wait), has rotated out meanwhile (Deck.rotated: it stood here behind other flags, or
+        waited out a rate limit, into a later window). Then it is not sent: the deck is told
+        (platform_rotated), which tells its lanes to fetch a fresh one. A failure here is a
+        flightdeck bug: said, and the flag is sent as before."""
+        try:
+            if self.deck is None or not self.deck.rotated(challenge_id, flag):
+                return False
+            self.deck.platform_rotated(lane_id, flag)
+            return True
+        except Exception as exc:
+            problem = f"CTFd: could not check whether {_show(flag)} rotated out: {type(exc).__name__}: {exc}"
+            self.errors.append(problem)
+            with contextlib.suppress(Exception):
+                self.deck.warn(problem, challenge=challenge_id, data={"source": "ctfd"})
+            return False
+
+    def resend_after(self, challenge_id: str, verdict: Verdict) -> float | None:
+        """How long to wait before sending the flag again, or None when it is not sent again:
+        only a rate limit CTFd says passes, at a challenge whose tries nobody counts."""
+        attempt = verdict.attempt
+        if verdict.ok is not None or attempt is None or attempt.status != "ratelimited" or attempt.tries_left is not None:
+            return None
+        ch = self.deck.challenges.get(challenge_id) if self.deck is not None else None
+        if ch is None or ch.limited:
+            return None
+        said = re.search(r"\bin (\d{1,5}) seconds?\b", attempt.message or "")
+        if said is None:
+            return self.RESEND_WAIT
+        return min(float(said.group(1)) + 1.0, self.RESEND_MAX)
 
     def answer(self, lane_id: str, challenge_id: str, flag: str, verdict: Verdict) -> None:
         """CTFd's answer to a flag, on the deck's thread: the run's bookkeeping, then the deck's."""
@@ -1300,8 +1752,45 @@ class _Submits:
 
 
 def _never_verify(challenge_id: str, flag: str) -> bool | None:
-    """The deck's verify() when flags go to CTFd through its submitter: the deck never calls it."""
-    raise RuntimeError("a CTFd run's flags go to CTFd through the run's submitter, never through verify()")
+    """The deck's verify() when flags go to the platform through its submitter: the deck never calls it."""
+    raise RuntimeError("this run's flags go to the platform through the run's submitter, never through verify()")
+
+
+def _gm_token(profile: EventProfile, board: Path | None) -> tuple[str, dict]:
+    """The Game Master token, from the variable event.token_env names (never shown), and where
+    each board challenge's answer goes, from the gm.json `flightdeck gm pull` wrote into the
+    board folder: RunError unless the board was pulled from the profile's Game Master."""
+    name, url = profile.token_env, profile.url
+    assert name is not None and url is not None and board is not None  # check() refuses a Game Master profile without them
+    from .keys import KeysError, environment
+
+    try:
+        value = environment().get(name, "").strip()
+    except KeysError as exc:
+        raise RunError(str(exc)) from None
+    if not value:
+        raise RunError(
+            f"the Game Master token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
+            "keys file or export it, then start play again"
+        )
+    try:
+        check_gm_site(url, value)
+    except ValueError as exc:  # a URL that is none, or a token no header can carry; the message never shows it
+        raise RunError(f"{exc} ({name}, the variable event.token_env names)") from None
+    try:
+        return value, load_gm_ids(board, url)
+    except GameMasterError as exc:
+        raise RunError(f"{exc}. Pull the board first: `flightdeck gm pull URL FOLDER`, then play that folder") from None
+
+
+def _gm_solved(profile: EventProfile, token: str) -> set[str]:
+    """The ids the Game Master lists as solved, read once before the run starts: RunError when
+    it cannot be read (a refused token, no answer), so a run never starts blind to the platform."""
+    assert profile.url is not None
+    try:
+        return _sync(listed_solved(profile.url, token))
+    except GameMasterError as exc:
+        raise RunError(f"could not read the Game Master's list: {exc}") from None
 
 
 @dataclass(frozen=True)
@@ -1446,6 +1935,11 @@ def _reason(exc: BaseException) -> str:
     if isinstance(exc, OSError):
         return f"cannot write the board ({exc.strerror or type(exc).__name__})"
     return f"{type(exc).__name__}: {exc}"
+
+
+def _why(exc: BaseException) -> str:
+    """What an exception says, in one safe line; its type's name when it says nothing."""
+    return untrusted(str(exc) or type(exc).__name__, one_line=True)
 
 
 def _show(value: object) -> str:
@@ -1619,6 +2113,26 @@ def _check_docker(image: str) -> None:
         raise RunError(
             f"the lane image {image} is not on this machine, and flightdeck never fetches images by "
             f"itself: run {how}, or set [lanes] image in your config"
+        )
+
+
+def _lane_toolkit(pack: Path) -> str:
+    """The pack's note for the lanes' briefs ([l1] lane_tools), or RunError: the pack must say
+    how a lane calls it."""
+    from . import pack as packs
+
+    try:
+        return packs.lane_note(packs.read(pack))
+    except packs.PackError as exc:
+        raise RunError(f"[l1] lane_tools is on, but {exc}; turn lane_tools off, or use a pack that brings a lane note") from None
+
+
+def _check_l1_image(image: str) -> None:
+    docker = shutil.which("docker") or "docker"
+    if subprocess.run([docker, "image", "inspect", image], capture_output=True, text=True).returncode != 0:
+        raise RunError(
+            f"the L1 image {image} ([l1] image) is not on this machine, and flightdeck never fetches images by itself: "
+            "`flightdeck pack image` builds your pack's image, or remove [l1] image to run engines in the lane image"
         )
 
 

@@ -1,0 +1,16 @@
+# Engine manifest (docs/CONTRACTS.md section 6). B-025: the stack ROP / format-string autobuilder.
+# A PLAN engine: it recognises the strategy and leaks for one local ELF and assembles a chain; it
+# never runs the binary (status plan-only).  Hand-written, not generated.
+id = "toolkits.pwn_autobuild"
+lane = "toolkits"
+entry = "solvers.toolkits.pwn_autobuild:solve"
+capabilities = ["plan", "elf", "rop", "pwn", "ret2libc", "ret2csu", "ret2win", "format-string"]
+inputs = []
+needs_tools = ["py:elftools"]
+cost_class = "medium"
+status = "plan-only"
+
+[[routes]]
+category = ["pwn"]
+keywords = ["ret2csu", "ret2win", "leak oracle", "rop autobuilder", "stack overflow"]
+priority = 62

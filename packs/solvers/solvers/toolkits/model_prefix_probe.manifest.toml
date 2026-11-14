@@ -1,0 +1,27 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-116.
+# White-box language-model probe: greedy-completes flag prefixes (raw and with the assistant turn
+# prefilled) and reports per-token probabilities. numpy backend for the Qwen2 layout; torch +
+# transformers (not in requirements: a human step) for other architectures. Contract entry.
+# Heavy (it loads the weights: gigabytes of RAM, CPU seconds to minutes), so intake never runs it:
+#   python -m ctf run toolkits.model_prefix_probe <challenge_dir> [--opt model_path=<folder or zip>]
+id = "toolkits.model_prefix_probe"
+lane = "toolkits"
+entry = "solvers.toolkits.model_prefix_probe:solve"
+capabilities = ["executes", "ml", "llm", "white-box", "prefix-completion", "safetensors", "bpe"]
+inputs = ["name:config.json", "name:tokenizer.json", "ext:.safetensors", "ext:.zip"]
+needs_tools = ["py:numpy"]
+cost_class = "heavy"
+status = "active"
+
+[[routes]]  # an ML challenge whose brief says the model holds the secret
+category = ["ml"]
+keywords = ["white-box", "white box", "whitebox", "memorized", "memorised", "chat model", "language model", "the model knows", "fine-tuned"]
+priority = 67
+
+[[routes]]  # the same brief under a category name the router does not fold into ml
+keywords = ["white-box access", "white box access", "memorized by the model", "memorised by the model", "exact flag string memorized"]
+priority = 62
+
+[[routes]]  # a tokenizer next to the weights is a language model, whatever the brief says
+files = ["name:merges.txt", "name:tokenizer.json", "name:tokenizer_config.json"]
+priority = 29

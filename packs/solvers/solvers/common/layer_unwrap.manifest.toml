@@ -1,0 +1,22 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-133.
+# The layered-polyglot unwrapper: a signature table names each layer, the decoders the tree already
+# has read it, and the loop stops with a handoff at the first layer it cannot read or must not run.
+# No [intake] table on purpose: a real-language source file is a "program layer" to this engine, so
+# running it on every handout would hand back an unsure result for every web or pwn source tree.
+# Writes only inside the challenge folder: recon/layer_unwrap/<input>/ (NN-<decoder>.bin, unwrap.json),
+# or --opt out= when that is inside it and is not the handout folder. Single-threaded only: while an esolang interpreter runs it sets
+# the carried esolang modules' time backstops (module globals) to its own budget (docs/build-log/B-133.md).
+id = "common.layer_unwrap"
+lane = "common"
+entry = "solvers.common.layer_unwrap:solve"
+capabilities = ["executes", "encoding", "esolang", "polyglot", "layered", "aes-gcm", "brainfuck"]
+inputs = []
+needs_tools = ["py:cryptography"]
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # B-133: a flag wrapped in layers of different languages, ciphers and encodings (PINK 5 Journey)
+# Not "onion" (a Tor brief says it too) and not "unwrap" (so does an AES key-wrap brief).
+keywords = ["polyglot", "matryoshka", "russian doll", "nesting doll", "layer by layer", "each layer", "many layers",
+            "layers deep", "journey through", "many languages", "several languages", "different languages"]
+priority = 61

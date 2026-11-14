@@ -1,0 +1,29 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-251 (long-tail formats).
+# Regeneration never overwrites this file.
+id = "toolkits.lt_jxl"
+lane = "toolkits"
+entry = "solvers.toolkits.lt_jxl:solve"
+capabilities = ["executes", "jxl", "jpeg-xl", "image", "stego", "metadata", "forensics"]
+inputs = ["magic:\u0000\u0000\u0000\u000cJXL ", "ext:.jxl"]
+# brotli is needed only for a `brob` box. djxl is used only by the CLI's `--opt decode=1` (pixels);
+# solve() and intake never start it
+needs_tools = ["py:brotli"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a JPEG XL container or codestream anywhere in the handout
+files = ["magic:\u0000\u0000\u0000\u000cJXL ", "ext:.jxl"]
+priority = 31
+
+[[routes]]
+keywords = ["jpeg xl", "jpeg-xl", "jpegxl", "jxl"]
+priority = 61
+
+[intake]  # B-002: read boxes and the header at intake (no pixel decode, no subprocess)
+select = "files"
+run = "challenge"
+# FF 0A opens a bare codestream whatever the file is called. Two bytes are too short for a route (many
+# files share them); here they only start the reader, whose detect() then holds the file to a whole
+# image header and passes over anything else.
+match = ["magic:\u0000\u0000\u0000\u000cJXL ", "ext:.jxl", "magic:0xff0a"]
+timeout = 60

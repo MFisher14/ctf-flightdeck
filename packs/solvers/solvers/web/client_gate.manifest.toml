@@ -1,0 +1,23 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-127.
+id = "web.client_gate"
+lane = "web"
+entry = "solvers.web.client_gate:solve"
+capabilities = ["executes", "javascript", "comments", "decoder", "gate-eval", "recon"]
+inputs = ["ext:.html", "ext:.htm", "ext:.js"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-127: a page that checks the flag in its own script, or hides a route behind a script's encoding (Spooky Hemophobia, Gelotophobia)
+category = ["web"]
+keywords = ["client-side check", "client side check", "client-side validation", "checks the flag in the browser",
+            "javascript check", "flag hash", "hash of the flag", "encoded path", "encoded route", "hidden key",
+            "hidden endpoint", "obfuscated path", "page script", "inspect the page"]
+priority = 63
+
+[intake]  # B-127: saved pages and scripts only (no request is made at intake): gates, encodings, hidden routes to fetch.
+select = "files"
+run = "challenge"
+match = ["ext:.js", "ext:.html", "ext:.htm"]
+timeout = 60
+spawns = false

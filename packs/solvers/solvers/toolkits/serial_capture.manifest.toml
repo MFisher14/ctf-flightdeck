@@ -1,0 +1,30 @@
+# Engine manifest (docs/CONTRACTS.md section 6). B-076: socat -v -x serial logs and the XMODEM transfers in
+# them. Written by hand. Pure Python, no tool. The sweep (ctf/recover) already adds each transfer as a member
+# and sweeps it; this engine prints the record/transfer report at intake, writes the transfers to its own
+# folder and names the passphrase step when a transfer is a steghide cover.
+id = "toolkits.serial_capture"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/serial_capture.py"
+capabilities = ["analysis", "cli", "serial", "socat", "xmodem", "carve"]
+inputs = ["magic:> 2", "magic:< 2", "ext:.log"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a serial-link capture or a file-transfer protocol over one
+category = ["forensics", "networking", "misc", "programming"]
+keywords = ["socat", "xmodem", "ymodem", "serial capture", "serial-capture", "serial log", "serial link",
+            "hexdump log"]
+priority = 64
+
+[[routes]]  # the log itself, by the socat record header it opens with
+files = ["magic:> 2", "magic:< 2"]
+priority = 62
+
+[intake]
+select = "files"
+run = "per-file"
+match = ["magic:> 2", "magic:< 2"]
+args = ["--out", "{out}", "{file}"]
+max_files = 4
+timeout = 60

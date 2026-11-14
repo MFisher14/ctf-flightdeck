@@ -1,0 +1,23 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-075.
+id = "toolkits.sqlite_timetravel"
+lane = "toolkits"
+entry = "solvers.toolkits.sqlite_timetravel:solve"
+capabilities = ["analysis", "documented", "sqlite", "wal", "forensics", "timeline"]
+inputs = ["magic:0x377f0682", "magic:0x377f0683"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a SQLite WAL in the handout (either byte order of its magic), whatever the category
+files = ["magic:0x377f0682", "magic:0x377f0683"]
+priority = 66
+
+[[routes]]  # the brief asks for the database as of a commit; phrases only (bare "wal" is inside "firewall")
+keywords = ["write-ahead log", "sqlite wal", "wal pair", "database and wal", "-wal file", "wal file", "as of the commit"]
+priority = 61
+
+[intake]  # B-075: the commit timeline of every database that has a WAL beside it, at intake, with no model
+select = "files"
+run = "challenge"
+match = ["magic:0x377f0682", "magic:0x377f0683"]
+timeout = 120

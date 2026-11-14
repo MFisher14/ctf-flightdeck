@@ -1,0 +1,30 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-063.
+# Contract engine: solve(challenge_dir, profile, **opts) -> SolverResult. It reports a recovered
+# MT19937 state with the outputs after and before it, never a flag (status unsure or none).
+id = "toolkits.mt_arrays"
+lane = "toolkits"
+entry = "solvers.toolkits.mt_arrays:solve"
+capabilities = ["analysis", "prng", "mt19937", "rewind", "cbor", "json", "crypto"]
+inputs = ["ext:.cbor", "ext:.msgpack", "ext:.json", "text: lists of integers", "raw uint32 dumps"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # the brief names the generator: above prng_recovery (60), which needs the observations typed in
+keywords = ["mt19937", "mersenne", "getrandbits", "untemper", "twister"]
+priority = 63
+
+[[routes]]  # a crypto or misc handout that is a CBOR or MessagePack value: journals and key logs (CSCTF 9094)
+category = ["crypto", "misc"]
+files = ["ext:.cbor", "ext:.msgpack"]
+priority = 52
+
+# Intake (B-002): on any structured handout or a text of outputs, with no model. A list is reported only
+# when its words follow the MT19937 recurrence, so other files cost a read and find nothing. Offline:
+# no network, no child process.
+[intake]
+select = "files"
+run = "challenge"
+match = ["ext:.cbor", "ext:.msgpack", "ext:.json", "ext:.jsonl", "name:*output*.txt", "name:*random*.txt",
+         "name:*numbers*.txt", "name:*leak*.txt"]
+timeout = 60

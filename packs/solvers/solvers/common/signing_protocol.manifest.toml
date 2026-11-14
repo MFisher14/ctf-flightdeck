@@ -1,0 +1,16 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-027.
+# import-only: a transport+auth scaffold a live driver imports; `ctf run` refuses library engines.
+id = "common.signing_protocol"
+lane = "common"
+entry = "solvers.common.signing_protocol:authenticate"
+capabilities = ["library", "ecdsa", "crypto"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # surfaced for live signing/authorize services; import-only (a driver imports it)
+category = ["crypto", "networking", "pwn"]
+keywords = ["challenge-response", "signing service", "signing authority", "authorize endpoint",
+            "signed receipts", "binary protocol client", "length-prefixed protocol", "prove opcode"]
+priority = 61

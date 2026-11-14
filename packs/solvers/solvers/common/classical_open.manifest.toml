@@ -1,0 +1,24 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-125.
+# The classical-cipher opener: classical.crack (substring-crib rail fence, substitution with the
+# dictionary polish) on every text drop at intake, keeping readings that hold the event's wrapper.
+id = "common.classical_open"
+lane = "common"
+entry = "cli:python solvers/common/classical_open.py"
+capabilities = ["executes", "cli", "cipher", "railfence", "substitution", "classical"]
+inputs = ["ext:.txt"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a crypto brief that reads like a classical text drop (no file route: a .txt ships with every category)
+category = ["crypto"]
+keywords = ["scrambled", "rails", "rail fence", "railfence", "substitution", "monoalphabetic", "transposition", "classical"]
+priority = 58
+
+[intake]  # B-125: every short text drop or letter-shaped text, whatever the category
+select = "files"
+run = "per-file"
+match = ["ext:.txt", "ext:.text", "ext:.enc", "ext:.cipher", "ext:.ct", "ext:.msg", "ext:.crypt"]
+args = ["{file}", "--out", "{out}"]
+max_files = 4
+timeout = 30

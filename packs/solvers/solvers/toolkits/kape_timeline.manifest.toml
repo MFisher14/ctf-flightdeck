@@ -1,0 +1,29 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-071.
+# Regeneration never overwrites this file.
+id = "toolkits.kape_timeline"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/kape_timeline.py"
+# Prints a text report and, as its last line, one SolverResult (never `solved`: see the module docstring).
+capabilities = ["analysis", "cli", "documented", "browser", "evtx", "kape", "powershell", "registry", "timeline", "windows"]
+inputs = ["name:*EvtxECmd*.csv", "name:*RECmd_Batch*.csv", "name:*Hindsight*.xlsx"]
+# No external tool: CSVs are streamed with the csv module, the Hindsight workbook is read with zipfile
+# and the XML parser, and the event rows go through solvers/toolkits/windows.py and timeline.py.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a brief that names the collection tool or its parsers (above the bare-category band)
+category = ["forensics", "windows"]
+keywords = ["kape", "evtxecmd", "recmd", "hindsight", "triage collection", "ez tools", "eztools"]
+priority = 64
+
+[[routes]]  # the parsed-output files themselves, whatever the category
+files = ["name:*EvtxECmd*.csv", "name:*RECmd_Batch*.csv", "name:*Hindsight*.xlsx"]
+priority = 62
+
+[intake]  # B-002: one run over the unpacked folder whenever a KAPE parser output is in the handout
+select = "files"
+run = "folder"
+match = ["name:*EvtxECmd*.csv", "name:*RECmd_Batch*.csv", "name:*Hindsight*.xlsx"]
+args = ["--out", "{out}", "{folder}"]
+timeout = 120

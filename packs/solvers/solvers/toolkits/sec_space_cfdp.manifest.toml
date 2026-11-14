@@ -1,0 +1,28 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-077.
+# Regeneration never overwrites this file.
+id = "toolkits.sec_space_cfdp"
+lane = "toolkits"
+entry = "solvers.toolkits.sec_space_cfdp:solve"
+capabilities = ["analysis", "cli", "documented", "cfdp", "ccsds", "nak", "space"]
+inputs = ["name:*cfdp*", "ext:.bin"]
+# Pure Python (stdlib): no external tool, no network.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # the brief names CFDP: above the general CCSDS decoder (60)
+keywords = ["cfdp", "file delivery protocol", "nak pdu", "727.0-b"]
+priority = 66
+
+[[routes]]  # a CFDP handout behind a brief that does not say so (the file name does)
+files = ["name:*cfdp*", "name:*CFDP*"]
+priority = 64
+
+[[routes]]  # a CCSDS / Space Packet brief: survey the capture for CFDP, after the general decoder
+keywords = ["ccsds", "space packet"]
+priority = 58
+
+[intake]  # B-002: survey the handout's captures (or run cfdp-filter.toml when the folder has one)
+select = "route"
+run = "challenge"
+timeout = 30

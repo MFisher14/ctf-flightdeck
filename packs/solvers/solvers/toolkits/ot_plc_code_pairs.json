@@ -1,0 +1,90 @@
+{
+  "schema": "plc-pairs-1",
+  "note": [
+    "Reference pairs for compiled PLC logic (B-160): a compiled sample plus its KNOWN source listing.",
+    "A pair is the only thing that can prove an opcode-table entry in",
+    "solvers/toolkits/ot_plc_code_tables.json; tests/test_ot_plc_pairs.py holds the table to it.",
+    "",
+    "A row under 'pairs' is PINNED: both files named, both sha256 set, source and licence stated.",
+    "The files live outside this repo at $CTF_REALDATA/plc/<id>/<sample> and <listing>; nothing here",
+    "is ever committed. An unpinned idea goes under 'candidates', never under 'pairs'.",
+    "",
+    "This file sits beside the opcode table because the engine reads it at run time (it holds every",
+    "citation to it). A pair may be pinned before any entry reads it: it is then 'pinned, unused', the",
+    "oracle checks its digests and that it is a usable pair, and reports NOT RUN while the table is",
+    "empty. Once an entry cites a pair, the table must decode that pair completely and exactly.",
+    "",
+    "kind 'mc7': sample is a complete classic online block (36-byte header .. 36-byte footer).",
+    "kind 'mc7-code': sample is bare MC7 code bytes. The listing is absolute-operand STL, one",
+    "statement per line, NETWORK lines between networks (the block editor's view of the compiled",
+    "block, or source written with absolute operands and no macro statements such as CALL with",
+    "parameters, which compile to several instructions).",
+    "",
+    "Samples are untrusted data: they are read as bytes and never loaded into a PLC runtime, a",
+    "simulator or an engineering tool by this repo."
+  ],
+  "survey": {
+    "date": "2026-11-12",
+    "question": "Which public MC7 or CODESYS samples with known source exist in the B-204 corpus?",
+    "b204_rows": "tests/real/manifest_ot.json holds 11 rows. All are network captures and all are unpinned (rev and sha256 empty), so none has been fetched. None pairs compiled PLC code with its source. One row (s7comm, an S7 block download named for DB1) can carry a data block at most: no code, no listing.",
+    "local_corpus": "The real-data root had no ot/ or plc/ folder at build time.",
+    "result": "0 pinned pairs. No opcode entry can be proven, so the opcode table ships empty and ot_plc_code.py reports MC7 code and CODESYS applications as opaque."
+  },
+  "pairs": [],
+  "candidates": [
+    {
+      "id": "mc7-operator-compiled",
+      "family": "mc7",
+      "verified": false,
+      "how": "Write STL with absolute operands, compile it in STEP 7 V5.x, and keep the compiled block (complete online block) and the block editor's STL view as text. Small blocks, one instruction family each, so a mismatch points at one entry.",
+      "yields": "Exact pairs with no third-party licence question; the listing is the vendor tool's own reading.",
+      "blocker": "Needs a licensed STEP 7 on a Windows host. Not automatable from here."
+    },
+    {
+      "id": "mc7-dotnetsiemens-toolbox",
+      "family": "mc7",
+      "verified": false,
+      "how": "The open-source DotNetSiemensPLCToolBoxLibrary (the MC7 block-format reference the CSCTF OT lane research used) includes an MC7-to-AWL converter. Run it offline on a block and keep its listing; its repository may also hold sample projects.",
+      "yields": "A differential reference: agreement with that tool, which is itself a reverse-engineered reading, not ground truth.",
+      "blocker": "Not checked from build work (no network): its licence, whether it holds samples, and a .NET build are operator steps. Ideas and a second opinion only; none of its code or tables are copied here."
+    },
+    {
+      "id": "mc7-b204-s7comm-row",
+      "family": "mc7",
+      "verified": false,
+      "how": "The B-204 s7comm capture row is named as a download of DB1.",
+      "yields": "At most a data block, which ot_s7deep_project already reads. No code.",
+      "blocker": "Not a pair: no code and no listing. The row is unpinned."
+    },
+    {
+      "id": "mc7-published-stl-snippets",
+      "family": "mc7",
+      "verified": false,
+      "how": "Public malware reports print STL for injected blocks (the Stuxnet dossier's OB1/OB35 prologue, cited by ot_stuxnet_artifacts).",
+      "yields": "Listings only.",
+      "blocker": "Not a pair: the reports print no block bytes to hold against the listing."
+    },
+    {
+      "id": "codesys-operator-compiled",
+      "family": "codesys",
+      "verified": false,
+      "how": "Compile known Structured Text in the CODESYS IDE for one named target; keep the boot application with its sidecars, the PLCopen XML export of the source and the symbol configuration.",
+      "yields": "The first evidence of what a boot application holds for that target. Whether the code inside is a CODESYS encoding or the target CPU's own machine code decides if this is a table at all or a container-layout job; settle that on the first pair, not before.",
+      "blocker": "Needs the CODESYS IDE on a Windows host and a device description. Each target is its own corpus."
+    },
+    {
+      "id": "codesys-icsref",
+      "family": "codesys",
+      "verified": false,
+      "how": "ICSREF (Keliris and Maniatakos, NDSS 2019) is published tooling and sample binaries for CODESYS V2 program files on one ARM target.",
+      "yields": "Prior art and possibly samples for V2 program files; not V3 boot applications.",
+      "blocker": "Named from the literature, not checked from build work: availability, content and licence are operator steps."
+    }
+  ],
+  "missing": [
+    {"family": "mc7", "what": "a compiled code block (OB/FC/FB) with its known STL listing",
+     "reason": "No public pair located; the B-204 rows are captures. See candidates."},
+    {"family": "codesys", "what": "a boot application with its known source",
+     "reason": "No public pair located. See candidates."}
+  ]
+}

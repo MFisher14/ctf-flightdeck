@@ -1532,3 +1532,32 @@ def test_the_notes_say_which_flag_format_the_run_checks_and_where_it_came_from(t
     default = DeckConfig(event="x").flag_format
     assert f"flag format: {default}, from flightdeck's default, since neither the board nor an event profile sets one" in run.notes()
     assert sum(note.startswith("flag format: ") for note in run.notes()) == 1
+
+
+def test_lane_tools_puts_the_packs_note_in_every_lanes_brief_and_a_pack_without_one_stops_the_run(tmp_path):
+    from l1_kit import cli_engine
+
+    pack = tmp_path / "pack"
+    cli_engine(pack, "quiet", "true\n", route="any = true")  # runs first and finds nothing: the lane goes on to its model
+    (pack / "pack.toml").write_text('name = "p"\n[lanes]\nnote = "LANE.md"\n')
+    (pack / "LANE.md").write_text("Solvers are at {pack}: run {pack}/tool.\n")
+    server = FakeModelServer([text_reply("thinking")])
+    with server:
+        path = config(tmp_path, server.base_url)
+        path.write_text(path.read_text() + f'[l1]\npack = "{pack}"\nlane_tools = true\n')
+        run = prepare_run(RunOptions(board=board(tmp_path), config=path, runtime="host", pack=pack))
+        assert "L1: the lanes' models may call your pack's engines (lane_tools)" in run.notes()
+
+        async def main():
+            run.release()
+            await wait_for(lambda: server.chats(), "the lane's first model call")
+            await run.shutdown()
+
+        asyncio.run(main())
+        first = server.chats()[0]["json"]["messages"][1]["content"]
+        assert f"Solvers are at {pack}: run {pack}/tool." in first
+        assert first.index("challenge-text>>>") < first.index("The player's solver toolkit")
+
+        (pack / "pack.toml").write_text('name = "p"\n')  # the pack no longer says how a lane calls it
+        with pytest.raises(RunError, match="lane_tools is on, but the pack p is no toolkit for lanes"):
+            prepare_run(RunOptions(board=board(tmp_path / "again"), config=path, runtime="host", pack=pack))

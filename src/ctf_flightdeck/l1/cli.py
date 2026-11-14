@@ -200,7 +200,8 @@ def _route_lines(manifest) -> list[str]:
     """An engine's routes, a line each: "    priority 20: category cry, and keywords a | b"."""
     lines = []
     for rule in manifest.routes:
-        parts = [f"category {' | '.join(rule.category)}"] if rule.category else []
+        parts = ["any challenge"] if rule.any else []
+        parts += [f"category {' | '.join(rule.category)}"] if rule.category else []
         parts += [f"keywords {' | '.join(rule.keywords)}"] if rule.keywords else []
         parts += [f"files {' | '.join(rule.files)}"] if rule.files else []
         lines.append(_show(f"    priority {rule.priority}: {', and '.join(parts)}"))

@@ -662,7 +662,8 @@ def test_engines_see_only_the_allowlisted_environment(pack, handout, tmp_path, m
     r = go(m, handout, tmp_path / "w1")
     assert r.status == "none" and FAKE_TOKEN not in r.notes
     env = json.loads(r.notes)
-    assert set(env) - PROCESS_OWN <= ALLOWED | {"FLIGHTDECK_L1_RESULT"} and "PATH" in env
+    assert set(env) - PROCESS_OWN <= ALLOWED | {"FLIGHTDECK_L1_RESULT", "FLIGHTDECK_FLAG_FORMAT"} and "PATH" in env
+    assert env["FLIGHTDECK_FLAG_FORMAT"] == FLAG  # the event's flag format, as the run was given it
     assert env["HOME"] == str(tmp_path / "w1" / "env_py" / ".flightdeck" / "home")
     result_file = Path(env["FLIGHTDECK_L1_RESULT"])  # flightdeck's own: where the result goes, a name nobody can guess
     assert result_file.parent == tmp_path / "w1" / "env_py" / ".flightdeck" and re.fullmatch(r"l1-result-[0-9a-f]{32}\.json", result_file.name)
@@ -962,3 +963,15 @@ def test_run_routed_refuses_bad_arguments_before_anything_runs(pack, handout, tm
 
 def test_no_hits_is_no_runs(handout, tmp_path):
     assert run(run_routed([], handout, workdir=tmp_path / "work", flag_format=FLAG)) == []
+
+
+def test_a_cli_engine_is_given_the_events_flag_format(pack, handout, tmp_path):
+    m = cli_engine(pack, "fmt", 'printf %s "$FLIGHTDECK_FLAG_FORMAT" > seen.format\n')
+    assert go(m, handout, tmp_path / "work").status == "none"
+    assert (tmp_path / "work" / "fmt" / "seen.format").read_text() == FLAG
+
+
+def test_a_manifest_with_an_any_route_loads_and_lists(pack):
+    m = cli_engine(pack, "all", "echo hi\n", route="any = true\npriority = 80")
+    rule = load(m).routes[0]
+    assert (rule.any, rule.priority, rule.category, rule.keywords, rule.files) == (True, 80, (), (), ())

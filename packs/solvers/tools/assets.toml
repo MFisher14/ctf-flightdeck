@@ -1,0 +1,109 @@
+# The asset manifest (B-188): files and folders the engines need that live outside the repo. One entry
+# per asset; ctf/toolchain/assets.py validates the keys (an unknown key is an error). The preflight
+# doctor resolves them (check `assets`); `python -m ctf toolchain assets` lists them and
+# `eval "$(python -m ctf toolchain env)"` exports them.
+#
+#   name        unique id
+#   kind        file | dir
+#   role        core (the doctor warns while it is not ok) | optional
+#   env         override variables, first set wins; one that names nothing usable is `broken`, never
+#               skipped (no silent fall-through to a candidate)
+#   candidates  tried in order: {toolbox} is $CTF_TOOLBOX_DIR (default ~/tools), ~ the home folder, a
+#               glob takes its highest (natural-sort) match
+#   export      the variables the resolved path is exported under (names the engines already read)
+#   contains    dir: relative paths that must exist inside it
+#   min_bytes   file: smallest acceptable size (a truncated download is broken)
+#   probe       argv run once ({path} replaced) that must exit 0
+#   install     how a human provides it
+#   used_by     the engines and tools that read it (documentation)
+
+[[asset]]
+name = "rockyou"
+kind = "file"
+role = "core"
+env = ["CTF_ASSET_ROCKYOU", "ROCKYOU", "WORDLIST"]
+candidates = ["{toolbox}/wordlists/rockyou.txt", "/usr/share/wordlists/rockyou.txt",
+              "/opt/homebrew/share/wordlists/rockyou.txt",
+              "/usr/share/seclists/Passwords/Leaked-Databases/rockyou.txt", "~/wordlists/rockyou.txt",
+              "~/rockyou.txt"]
+export = ["CTF_ASSET_ROCKYOU", "ROCKYOU"]
+min_bytes = 130000000        # the full list is 139,921,507 bytes; a partial download is smaller
+install = "./setup.sh fetches it to {toolbox}/wordlists/rockyou.txt (or place a copy there)"
+used_by = ["solvers/toolkits/hashcrack.py (reads $ROCKYOU first)", "ctf doctor host extras"]
+
+[[asset]]
+name = "john-share"
+kind = "dir"
+role = "core"
+env = ["CTF_ASSET_JOHN_SHARE"]
+candidates = ["/opt/homebrew/share/john", "/opt/homebrew/opt/john-jumbo/share/john", "/usr/local/share/john",
+              "/usr/share/john", "/opt/john/run", "/opt/john"]
+export = ["CTF_ASSET_JOHN_SHARE"]
+contains = ["7z2john.pl", "zip2john"]
+probe = ["perl", "-MCompress::Raw::Lzma", "-e", "1"]
+install = "brew install john-jumbo, then `cpan Compress::Raw::Lzma` (7z2john.pl needs it); or use ctf-toolkit:1"
+used_by = ["solvers/toolkits/hashcrack.py (JOHN_SHARE_DIRS)", "setup.sh (links the helpers onto PATH)"]
+note = "a past event lost a crack to 7z2john.pl failing on the missing Perl module; the probe catches it"
+
+[[asset]]
+name = "seclists"
+kind = "dir"
+role = "optional"
+env = ["CTF_ASSET_SECLISTS"]
+candidates = ["{toolbox}/SecLists", "/usr/share/seclists", "/opt/homebrew/share/seclists", "~/SecLists"]
+export = ["CTF_ASSET_SECLISTS"]
+contains = ["Discovery/Web-Content", "Passwords"]
+install = "git clone --depth 1 https://github.com/danielmiessler/SecLists {toolbox}/SecLists"
+used_by = ["web content discovery (ffuf)", "password spraying wordlists"]
+
+[[asset]]
+name = "ghidra"
+kind = "dir"
+role = "optional"
+env = ["CTF_ASSET_GHIDRA", "GHIDRA_INSTALL_DIR"]
+candidates = ["/opt/homebrew/opt/ghidra/libexec", "/usr/local/opt/ghidra/libexec",
+              "/opt/homebrew/Caskroom/ghidra/*/ghidra_*_PUBLIC", "/usr/local/Caskroom/ghidra/*/ghidra_*_PUBLIC",
+              "{toolbox}/ghidra_*_PUBLIC", "/opt/ghidra_*_PUBLIC", "/opt/ghidra"]
+export = ["CTF_ASSET_GHIDRA", "GHIDRA_INSTALL_DIR"]
+contains = ["support/analyzeHeadless"]
+install = "brew install ghidra (the formula: libexec/ is the install folder)"
+used_by = ["headless Ghidra (support/analyzeHeadless)", "pyghidra (reads GHIDRA_INSTALL_DIR)"]
+
+[[asset]]
+name = "schema-bundle"
+kind = "dir"
+role = "optional"
+env = ["CTF_ASSET_SCHEMAS"]
+candidates = ["{toolbox}/schemas"]
+export = ["CTF_ASSET_SCHEMAS"]
+install = "create {toolbox}/schemas and add one folder per schema family you may hold (iso15118-2, din70121, iso15118-20, etsi-its-r2, mms, vmf-k); docs/toolkits/schema_bundle.md says where each comes from and what may be redistributed"
+used_by = ["solvers/toolkits/schema_bundle.py (EXI, ASN.1 and bit-dictionary decoders; never vendored in the repo)"]
+note = "licensed protocol schemas (B-159): a missing family is a named SchemaMissing, never a fallback decode"
+
+# B-087: the local Whisper models of solvers/toolkits/audio_speech.py. One backend is enough; the engine
+# takes the first whose program (or module) AND model are both there, and names what is missing when
+# none is. Models are never downloaded by the repo and never live inside it.
+[[asset]]
+name = "whisper-ggml"
+kind = "file"
+role = "optional"
+env = ["CTF_ASSET_WHISPER_GGML"]
+candidates = ["{toolbox}/whisper/ggml-large-v3-turbo.bin", "{toolbox}/whisper/ggml-medium.bin",
+              "{toolbox}/whisper/ggml-small.bin", "{toolbox}/whisper/ggml-base.bin",
+              "{toolbox}/whisper/ggml-small.en.bin", "{toolbox}/whisper/ggml-base.en.bin"]
+export = ["CTF_ASSET_WHISPER_GGML"]
+min_bytes = 30000000         # the smallest published ggml model is over 30 MB; a partial download is smaller
+install = "brew install whisper-cpp (gives whisper-cli), then place a whisper.cpp ggml model at {toolbox}/whisper/ggml-small.bin (a human download; the repo never fetches it)"
+used_by = ["solvers/toolkits/audio_speech.py (backend whisper-cli)"]
+
+[[asset]]
+name = "whisper-ct2"
+kind = "dir"
+role = "optional"
+env = ["CTF_ASSET_WHISPER_CT2"]
+candidates = ["{toolbox}/whisper/faster-whisper-large-v3-turbo", "{toolbox}/whisper/faster-whisper-medium",
+              "{toolbox}/whisper/faster-whisper-small", "{toolbox}/whisper/faster-whisper-base"]
+export = ["CTF_ASSET_WHISPER_CT2"]
+contains = ["model.bin", "config.json"]
+install = "install faster-whisper into the venv (pin it in requirements.in), then place a CTranslate2 Whisper model folder at {toolbox}/whisper/faster-whisper-small (a human download; the repo never fetches it)"
+used_by = ["solvers/toolkits/audio_speech.py (backend faster-whisper)"]

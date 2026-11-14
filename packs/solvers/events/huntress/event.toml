@@ -1,0 +1,74 @@
+# Huntress CTF 2026: a past event, kept as a profile fixture. Facts from the Huntress source repo
+# (2026-ctf-huntress, read-only): Game Master platform, flag{<32 hex>} answers, proof_<32 hex> tokens on web targets
+# (tools/web_candidate.py, tools/verify.py), flat $50/challenge-day hard-tail budget (B-033).
+# Hosts are placeholders (.example); the real ones go in a live profile, never in a fixture.
+slug = "huntress"
+name = "Huntress CTF 2026"
+categories = ["Warmups", "Binary", "Metadata Forensics", "Mobile Android", "Script Analysis", "Web"]
+sectors = []
+dates = { start = 2026-10-01, end = 2026-10-31 }
+
+[platform]
+kind = "gamemaster"
+base_url = "https://gamemaster.huntress.example"
+
+[flag]
+prefixes = ["flag"]
+body = "[0-9a-f]{32}"
+case = "exact"
+
+[proof]
+pattern = "proof_[0-9a-f]{32}"
+case = "exact"
+
+[rules]
+submit_mode = "auto"
+wrong_answer_stop = 3
+guess_budget = 0
+hints_allowed = false
+flag_sharing = "allowed"
+ai_on_platform = "allowed"
+live_service_scope = ["*.huntress.example"]
+web_state_changing = false
+
+[writeups]
+redact_flags = true
+
+[budget]
+per_point = 0.5
+floor = 25.0
+ceiling = 250.0
+per_challenge_day = 50.0
+
+# B-140: the request journal and release-minute budget (ctf/platform/wire.py). From the Day 8-12
+# retros: the Game Master refused our 52nd-66th request of the release minute and the 88th-102nd of a
+# rolling 60 s, though 120 a minute passed off-hours and 81 a minute after the release. So the whole
+# release minute stays under the earliest refusal (51), reads and polls under it less the reserve
+# kept for submits and starts, list polls (every lane and the watcher) spread to one per 4 s from
+# +5 s (a 1 s fast poll alone would spend the minute), and each lane's reads
+# budgeted. Tune from `ctf wire ratelimits` after each release.
+[wire]
+per_minute = 85
+release_budget = 48
+reserve = 8
+release_window_s = 60.0
+release_poll_free_s = 5.0
+release_poll_gap_s = 4.0
+release_lane_budget = 8
+release_lanes = { watch = 6 }
+pause_s = 20.0
+pause_max_s = 120.0
+max_wait_s = 30.0
+
+# B-169: points were confirmed by hand in CourseStack every day, and the Game Master record once
+# disagreed with it (session reports, huntress oct10-18 and oct19-25). `ctf human confirm-list`
+# and `ctf human reconcile` work from this.
+[human]
+confirm_system = "CourseStack"
+
+# B-211: the release clock. Challenges released every day at 09:00 US Eastern (the source repo's
+# AGENTS.md and the day-4 retrospective timeline: "released at 09:00:00"). The zone also makes the
+# date-only dates above Eastern days, which is how the event ran. `ctf clock` and ctf.quota count down to it.
+[allowance]
+daily_release = "09:00"
+tz = "America/New_York"

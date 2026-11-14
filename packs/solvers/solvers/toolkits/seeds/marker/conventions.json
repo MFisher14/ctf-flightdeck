@@ -1,0 +1,75 @@
+{
+  "marker.convention/ics#candidates": {
+    "accepted": "sha256[:8];colon;header=hex_0x_upper,station=as_stored,timestamp=as_stored,register=as_stored,seed=as_stored",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "seed: shape of the CSCTF 2026 ICS marker (firmware header tag as 0x upper-case hex, station, first critical timestamp, register, seed; colon-joined; first 8 hex of SHA-256); reproduced on synthetic values in tests/test_common_marker_convention.py; no challenge value is kept"
+    ]
+  },
+  "marker.convention/networking#candidates": {
+    "accepted": "sha256[:8];colon;imsi=as_stored,session_id=as_stored,epoch=as_stored",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "seed: shape of the CSCTF 2026 telecom marker (subscriber id, full session id verbatim, attack epoch; colon-joined; first 8 hex of SHA-256); reproduced on synthetic values in tests/test_common_marker_convention.py; no challenge value is kept"
+    ]
+  },
+  "marker.convention/forensics#candidates": {
+    "accepted": "sha256[:16];none;approved_lat=dp_4,approved_lon=dp_4,delta_lat=dp_6,delta_lon=dp_6,distance=dp_1",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "seed: shape of the CSCTF 2026 flight-record marker (two coordinates at 4 decimal places, two offsets at 6, a distance at 1; no separator; first 16 hex of SHA-256, with an in-file tag equal to the digest's last 8); reproduced on synthetic values in tests/test_common_marker_convention.py; no challenge value is kept"
+    ]
+  },
+  "marker.join/ics": {
+    "accepted": "colon",
+    "rejected": [],
+    "split": false,
+    "evidence": ["seed: the ICS marker shape above"]
+  },
+  "marker.join/networking": {
+    "accepted": "colon",
+    "rejected": [],
+    "split": false,
+    "evidence": ["seed: the telecom marker shape above"]
+  },
+  "marker.join/forensics": {
+    "accepted": "none",
+    "rejected": [],
+    "split": false,
+    "evidence": ["seed: the flight-record marker shape above"]
+  },
+  "marker.digest/ics": {
+    "accepted": "sha256[:8]",
+    "rejected": [],
+    "split": false,
+    "evidence": ["seed: the ICS marker shape above"]
+  },
+  "marker.digest/networking": {
+    "accepted": "sha256[:8]",
+    "rejected": [],
+    "split": false,
+    "evidence": ["seed: the telecom marker shape above"]
+  },
+  "marker.digest/forensics": {
+    "accepted": "sha256[:16]",
+    "rejected": [],
+    "split": false,
+    "evidence": ["seed: the flight-record marker shape above"]
+  },
+  "marker.render/tag.ics": {
+    "accepted": "hex_0x_upper",
+    "rejected": [],
+    "split": false,
+    "evidence": ["seed: the ICS marker shape above (the rendering that was missed: 0x plus upper-case hex of the tag's bytes)"]
+  },
+  "marker.render/decimal.forensics": {
+    "accepted": "dp_6",
+    "accepted_names": ["dp_6", "dp_1"],
+    "rejected": [],
+    "split": false,
+    "evidence": ["seed: the flight-record marker shape above (offsets at 6 decimal places, the distance at 1)"]
+  }
+}

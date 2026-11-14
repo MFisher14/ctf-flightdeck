@@ -1,0 +1,26 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-069.
+id = "toolkits.firmware_sections"
+lane = "toolkits"
+entry = "solvers.toolkits.firmware_sections:solve"
+capabilities = ["executes", "documented", "firmware", "section-table", "crc", "uboot-env", "zlib", "fdict", "cpio", "xor"]
+# `magic:DWFW` is one known vendor magic (a past challenge). The table walk needs no magic: the name and
+# extension matches carry the routing, and DWFW only routes a bundle of that vendor named otherwise.
+inputs = ["magic:DWFW", "name:*firmware*", "ext:.fw", "ext:.bin", "ext:.img", "ext:.rom"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-069: the words of a vendor firmware bundle brief
+keywords = ["firmware.bin", "firmware image", "firmware bundle", "firmware update", "recovery bundle", "section table",
+            "redundant env", "preset dictionary"]
+priority = 63
+
+[[routes]]  # B-069: a bundle by its magic or its name, whatever the category
+files = ["magic:DWFW", "name:*firmware*.bin", "ext:.fw"]
+priority = 31
+
+[intake]  # B-069: run at intake on any firmware-looking file; a file with no CRC-confirmed table and no env is skipped fast
+select = "files"
+run = "challenge"
+match = ["magic:DWFW", "name:*firmware*", "ext:.fw", "ext:.bin", "ext:.img", "ext:.rom"]
+timeout = 60

@@ -1,0 +1,20 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-241.
+# A carried-style CLI engine: `python solvers/binary/unpack_worker.py FILE [--out DUMP]` unpacks a PE by
+# bounded emulation in a child process under the OS sandbox (sandbox-exec / unshare) and prints its report as
+# JSON. It never runs the image on the host and never falls back to an unsandboxed run: where the OS sandbox
+# cannot be applied it exits 2 naming why. `spawns`: it starts its own worker child.
+id = "binary.unpack_worker"
+lane = "binary"
+entry = "cli:python solvers/binary/unpack_worker.py"
+capabilities = ["analysis", "cli", "legacy-output", "pe", "packer", "emulation", "windows"]
+inputs = ["magic:MZ"]
+needs_tools = ["py:unicorn", "py:capstone"]
+cost_class = "medium"
+status = "active"
+
+# A reverse challenge whose description names a packed or self-decrypting Windows program. UPX itself has
+# its own road (binary.packer_unpack, binary.sandbox_recover); these keywords are the other families.
+[[routes]]
+category = ["reverse"]
+keywords = ["custom packer", "packed pe", "packed executable", "unpacking stub", "self-decrypting", "original entry point"]
+priority = 55

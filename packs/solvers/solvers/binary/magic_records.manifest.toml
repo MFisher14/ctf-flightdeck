@@ -1,0 +1,16 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-225 (generic binary field/container/
+# overlay reader). import-only: records/unique_record/solve_set are its public callables, not a contract
+# entry; `ctf run` refuses library engines.
+id = "binary.magic_records"
+lane = "binary"
+entry = "solvers.binary.magic_records:records"
+capabilities = ["library", "crc", "xor", "json"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+category = ["reverse"]
+keywords = ["magic-agnostic record", "xor crc record", "hcfg record reader", "config capsule record"]
+priority = 60

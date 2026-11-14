@@ -1,0 +1,32 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-116.
+# Rebuilds a small saved MLP from its weight file (never unpickled), flags outlier units, searches for
+# the input the net is backdoored to accept and decodes it as a flag. Contract entry: SolverResult.
+id = "toolkits.model_trigger"
+lane = "toolkits"
+entry = "solvers.toolkits.model_trigger:solve"
+capabilities = ["executes", "ml", "backdoor", "trigger", "mlp", "npz", "safetensors", "torch-zip"]
+inputs = ["ext:.npz", "ext:.npy", "ext:.safetensors", "ext:.pt", "ext:.pth", "ext:.ckpt"]
+needs_tools = ["py:numpy"]
+cost_class = "cheap"
+status = "active"
+
+[intake]  # B-002 input adapter: run when the router sends the challenge here (an ML challenge with a small net)
+select = "route"
+run = "challenge"
+timeout = 300
+
+[[routes]]  # an ML challenge that ships a small saved net as plain arrays: no keyword needed
+category = ["ml"]
+files = ["ext:.npz", "ext:.npy", "ext:.safetensors"]
+priority = 66
+
+[[routes]]  # a PyTorch checkpoint with no backdoor word: as likely a pickle-exploit file, so after the static
+# model-file readers (ai_model_files 49/48, ml_security 46); this engine never unpickles and returns none there
+category = ["ml"]
+files = ["ext:.pt", "ext:.pth", "ext:.ckpt"]
+priority = 45
+
+[[routes]]  # the task named in the brief, whatever the category is called
+keywords = ["backdoored", "trojaned", "authenticator", "trigger input", "poisoned model", "tampered model", "neural network accepts"]
+files = ["ext:.npz", "ext:.npy", "ext:.safetensors", "ext:.pt", "ext:.pth", "ext:.ckpt"]
+priority = 64

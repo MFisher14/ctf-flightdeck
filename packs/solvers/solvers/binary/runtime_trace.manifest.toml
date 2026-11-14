@@ -1,0 +1,43 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-242.
+# B-242: runtime semantic adapters. A bounded trace of a WebAssembly module, a .pyc, a Lua chunk, a
+# Java class or jar, a CIL assembly or JavaScript / V8 cached data, run in a pinned, networkless
+# container of its own runtime (docker/runtime/, started only by tools/sandbox.py runtime_run).
+id = "binary.runtime_trace"
+lane = "binary"
+entry = "solvers.binary.runtime_trace:solve"
+# executes: it runs the artifact end to end (in the container) and scans the trace for the flag format.
+capabilities = ["executes", "trace", "sandbox", "wasm", "jvm", "dotnet", "python", "lua", "node", "bytecode",
+                "reverse"]
+inputs = ["magic:0x0061736d", "ext:.wasm", "magic:0xcafebabe", "ext:.class", "ext:.jar", "ext:.pyc",
+          "magic:0x1b4c7561", "ext:.luac", "ext:.jsc", "ext:.dll", "ext:.exe"]
+# needs_tools is empty on purpose: the runtimes live in the ctf-runtime-* images, not on PATH or in the
+# venv. A missing or stale image is a loud, named `blocked` from the engine itself (no silent
+# fallback), and so is an event whose rules.sandboxed_execution is "forbidden" (the default).
+needs_tools = []
+cost_class = "heavy"
+status = "active"
+
+[[routes]]  # reverse lane, after recovery: binary.sandbox_recover (38) and the decompile intake come
+# first; this engine then computes behind what they unpacked. The file matchers keep the route to
+# challenges that ship one of the formats it runs.
+category = ["reverse"]
+files = ["magic:0x0061736d", "ext:.wasm", "magic:0xcafebabe", "ext:.class", "ext:.jar", "ext:.pyc",
+         "magic:0x1b4c7561", "ext:.luac", "ext:.jsc"]
+priority = 36
+
+[[routes]]  # reverse lane, a .NET assembly: a PE is only told from a CIL assembly by its CLR header, which
+# a file matcher cannot read, so any .dll / .exe routes here, low. The engine's own scan reads the
+# header and gives `none` for a native PE.
+category = ["reverse"]
+files = ["ext:.dll", "ext:.exe"]
+priority = 22
+
+[[routes]]  # a managed crackme is sometimes filed under misc or pwn; only a bytecode file routes it here
+category = ["misc", "pwn"]
+files = ["magic:0x0061736d", "ext:.wasm", "magic:0x1b4c7561", "ext:.luac", "ext:.jsc"]
+priority = 28
+
+# No [intake] table, on purpose. Intake runs with no model on every challenge; this engine executes a
+# delivered file, so it is run deliberately (`python -m ctf run binary.runtime_trace <challenge_dir>
+# --event <slug>`), only for an event whose profile allows it, and never at intake. (On macOS the
+# intake guard denies a guarded engine the Docker socket anyway: docs/build-log/B-167.md.)

@@ -578,3 +578,74 @@ def test_a_no_tries_answer_stands_when_ctfds_details_do_not_show_tries_left(case
     assert verdict.ok is None and (verdict.attempt.status, verdict.attempt.tries_left) == ("locked_out", 0)
     assert verdict.error.startswith("CTFd did not check the flag: this account has no tries left on this challenge")
     assert took < 2.5  # the flag and the details within the one timeout
+
+
+# ---------------------------------------------------------------------- a rate limit that passes (P33)
+
+FAST = {"success": True, "data": {"status": "ratelimited", "message": "You're submitting flags too fast. Slow down."}}
+TIMED = {"success": True, "data": {"status": "ratelimited", "message": "Not accepted. Try again in 41 seconds"}}
+
+
+def no_wait(run) -> list[float]:
+    """The run's submitter waits no real time before a resend; the waits it asked for."""
+    waits: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    run._submits.sleep = sleep
+    return waits
+
+
+def test_a_rate_limited_flag_is_sent_again_after_the_wait_ctfd_names_and_solves(tmp_path, token):
+    with FakeCTFd(three()) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{hello}")]})) as server:
+        fake.script("POST", ATTEMPT, Reply(429, TIMED))
+        run = auto_run(tmp_path, fake, server)
+        waits = no_wait(run)
+
+        async def body(run):
+            await wait_for(lambda: run.deck.lanes["L01"].state is LaneState.SOLVED, "the flag accepted on the second send")
+
+        play(run, body)
+    assert waits == [42.0]  # the seconds CTFd named, and one
+    assert [r.json["submission"] for r in fake.to(ATTEMPT)] == ["test{hello}", "test{hello}"]
+    assert submits(run) == [("test{hello}", True, "platform")]
+    assert not [e for e in log(run) if e["kind"] == "warning"]  # nothing went to the player
+    notes = [a.text for a in run.deck.lanes["L01"].actions]
+    assert any("CTFd rate-limited the submission of test{hello} and did not check it; flightdeck sends it again in 42s "
+               "(send 2 of 4)" in text for text in notes), notes
+
+
+def test_a_rate_limit_that_does_not_pass_goes_back_to_the_player_after_the_last_resend(tmp_path, token):
+    with FakeCTFd(three()) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{hello}")]})) as server:
+        fake.script("POST", ATTEMPT, *[Reply(429, FAST)] * 4)
+        run = auto_run(tmp_path, fake, server)
+        waits = no_wait(run)
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+            await wait_for(lambda: lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM, "a hand submit")
+
+        play(run, body)
+    assert waits == [65.0, 65.0, 65.0] and len(fake.to(ATTEMPT)) == 4  # the first send and three more, never a fifth
+    assert submits(run) == []
+    (warning,) = [e for e in log(run) if e["kind"] == "warning"]
+    assert warning["text"].startswith("CTFd did not judge test{hello} for Warmup: CTFd rate-limited the submission")
+
+
+def test_a_rate_limited_flag_is_never_sent_again_where_ctfd_counts_the_tries(tmp_path, token):
+    # CTFd records a refused try against a challenge's limit, so a resend could spend the tries: they stay the player's
+    capped = FakeChallenge(1, "Warmup", category="Misc", value=50, flag="test{hello}", max_attempts=5)
+    with FakeCTFd([capped]) as fake, FakeModelServer(responder=Model({"Warmup": [submit("test{hello}")]})) as server:
+        fake.script("POST", ATTEMPT, Reply(429, FAST))
+        run = auto_run(tmp_path, fake, server)
+        waits = no_wait(run)
+
+        async def body(run):
+            lane = run.deck.lanes["L01"]
+            await wait_for(lambda: lane.pending is not None, "the flag, which waits for the player (D21)")
+            assert run.deck.apply(iv.Approve(lane.id)).ok
+            await wait_for(lambda: lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM, "a hand submit")
+
+        play(run, body)
+    assert waits == [] and len(fake.to(ATTEMPT)) == 1

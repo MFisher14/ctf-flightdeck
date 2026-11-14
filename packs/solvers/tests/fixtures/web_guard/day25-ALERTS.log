@@ -1,0 +1,16 @@
+2026-10-25T09:02:28-04:00 INFO [web-exploitation] HELPER LAUNCHED 1 open 7
+2026-10-25T09:02:28-04:00 INFO [web-exploitation] HELPER LAUNCHED 1 open 6
+2026-10-25T09:02:28-04:00 INFO [web-exploitation] HELPER LAUNCHED 1 open 6
+2026-10-25T09:04:57-04:00 INFO [web-exploitation] HELPER LAUNCHED 2 open 174
+2026-10-25T09:04:57-04:00 INFO [web-exploitation] HELPER LAUNCHED 2 open 173
+2026-10-25T09:04:58-04:00 INFO [web-exploitation] HELPER LAUNCHED 2 open 173
+2026-10-25T09:06:43-04:00 INFO [web-exploitation] HELPER LAUNCHED 1 open 45
+2026-10-25T09:08:21-04:00 INFO [web-exploitation] HELPER LAUNCHED 1 open 47
+2026-10-25T09:09:42-04:00 INFO [web-exploitation] HELPER LAUNCHED 1 open 45
+2026-10-25T09:09:42-04:00 INFO [web-exploitation] HELPER LAUNCHED 1 open 117
+2026-10-25T09:09:42-04:00 INFO [web-exploitation] HELPER LAUNCHED 2 open 117
+2026-10-25T09:11:37-04:00 INFO [web-exploitation] HELPER LAUNCHED 2 open 122
+2026-10-25T09:12:56-04:00 INFO [web-exploitation] HELPER LAUNCHED 1 open 64
+2026-10-25T09:12:56-04:00 INFO [web-exploitation] HELPER LAUNCHED 1 open 31
+2026-10-25T09:14:17-04:00 WARN [web-exploitation] WEB TARGET DEAD shell-company origin torn down 410 completed cfOrigin 0 CAUSE blind cmdi at feature route process param is path not q name input FIX fresh start needed then oob exfil of proof file NEEDS main thread start a fresh attempt see notes-helper2
+2026-10-25T09:15:06-04:00 WARN [web-exploitation] WEB PROOF4 target dead http 410 completed cannot recover from this mastery attempt CAUSE all four targets base64 wrap bodies so proof hunt and d17 solve read empty routes FIX solvers web d17 b64 solve py handles base64 reset takeover NEEDS main thread mastery retry to draw a fresh target 4 no deadline attempt loses three banked

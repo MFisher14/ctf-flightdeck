@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from ..flagformat import check as check_flag_format
+from ..flagvariants import MAX_VARIANTS
 
 ME = "me"
 """Owner name for the player themself (claims, manual solves)."""
@@ -49,7 +50,10 @@ class Challenge:
     solved_by: str | None = None  # a lane id, ME or a teammate handle
     note: str = ""  # why it is blocked or parked
     max_attempts: int = 0  # the tries the platform allows at its flag (the board says); 0: any number
+    on_demand: bool = False  # its live instance is started on the platform when asked (the board, or the event's [instances] types)
+    platform_type: str = ""  # the platform's own name for its type (CTFd's "type"), when the board says
     tries_left: int | None = None  # the tries left, as the platform last said; None: it has not said
+    rotates: int = 0  # its flag rotates every this many seconds, on clock boundaries (the board says); 0: it does not
     family: str = ""  # the specialist family a light model routed it to (agent/facts.py); "" when none did
     category_guess: str = ""  # a light model's guess at its category, where the board names none flightdeck knows: never `category`
 
@@ -370,6 +374,14 @@ class Event:
 SUBMIT_POLICIES = ("auto", "confirm")
 
 
+UNLIMITED_LANES = 100_000  # max_lanes when the player wants no limit ("unlimited"): more than any board has challenges
+
+
+def lanes_text(max_lanes: int) -> str:
+    """A lane limit as the console shows it: the number, or ∞ for no limit."""
+    return "∞" if max_lanes >= UNLIMITED_LANES else str(max_lanes)
+
+
 @dataclass(frozen=True)
 class DeckConfig:
     event: str
@@ -379,7 +391,11 @@ class DeckConfig:
     flag_format: str = r"\w{1,64}\{[^{}\s]{1,256}\}"  # bounded: searched over megabytes of output
     submit: str = "confirm"  # stage policy for submitting flags
     submit_limited: str = "confirm"  # "auto": under submit auto, a challenge's counted tries are spent without the player
+    wrong_stop: int = 3  # under submit auto: once this many flags were wrong at a challenge, its next ones wait for the player; 0: never
+    variant_tries: int = 0  # variants of a flag the platform rejected that the deck proposes per challenge in a run (flagvariants); 0: none
     models: tuple[str, ...] = ()  # weakest to strongest; escalation moves right
+    lanes_ceiling: int | None = None  # the most lanes the event's rules allow at once; None: they set no limit
+    submit_ceiling: str = "auto"  # the loosest submit policy the player may switch to in the console (the event's rules)
 
     def __post_init__(self) -> None:
         if self.max_lanes < 1:
@@ -390,6 +406,10 @@ class DeckConfig:
             )
         if self.submit_limited not in SUBMIT_POLICIES:
             raise ValueError(f"submit_limited {self.submit_limited!r} is not known; known: {', '.join(SUBMIT_POLICIES)}")
+        if not isinstance(self.wrong_stop, int) or isinstance(self.wrong_stop, bool) or self.wrong_stop < 0:
+            raise ValueError(f"wrong_stop must be a whole number, 0 or more, got {self.wrong_stop!r}")
+        if not isinstance(self.variant_tries, int) or isinstance(self.variant_tries, bool) or not 0 <= self.variant_tries <= MAX_VARIANTS:
+            raise ValueError(f"variant_tries must be a whole number from 0 to {MAX_VARIANTS}, got {self.variant_tries!r}")
         check_flag_format(self.flag_format, "the deck's flag_format")  # the backstop: every loader checks it first
 
     @property

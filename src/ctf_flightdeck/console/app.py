@@ -19,6 +19,7 @@ import time
 from collections.abc import Awaitable, Callable
 
 from rich.text import Text
+from textual import events
 from textual.app import App
 from textual.driver import Driver
 from textual.drivers.linux_driver import LinuxDriver
@@ -28,7 +29,7 @@ from ..core import interventions as iv
 from ..core.attention import SortMode
 from ..core.deck import Deck
 from ..core.driver import TakeoverRefused
-from ..core.model import ME, Event, EventKind, Lane, LaneState
+from ..core.model import ME, UNLIMITED_LANES, Event, EventKind, Lane, LaneState, lanes_text
 from ..text import untrusted
 from . import theme, views
 from .commands import CommandError, needs_lane, parse
@@ -69,6 +70,11 @@ class FlightdeckApp(App[None]):
         on_start: Callable[[], None] | None = None,
         on_exit: Callable[[], Awaitable[None]] | None = None,
         run_dir: str = "",
+        config_path: str = "",
+        adder: Callable[[object], Awaitable[tuple[bool, str]]] | None = None,
+        paster: Callable[[], object] | None = None,
+        attacher: Callable[[str, list], Awaitable[tuple[bool, str]]] | None = None,
+        welcome: bool = False,
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -80,6 +86,13 @@ class FlightdeckApp(App[None]):
         self._on_start = on_start
         self._on_exit = on_exit
         self._run_dir = run_dir
+        self.paster = paster  # ctrl+v in the /new form: saves the clipboard's image and returns its path, in a thread (None: no pasting)
+        self.welcome = welcome  # open on the welcome screen (a player's first console, and the live mock)
+        # /attach: copies files into a challenge's folder and restarts its lanes (None: not this board). Awaited in
+        # a worker, like the adder: each makes its copy in a thread, so neither holds the keys up
+        self.attacher = attacher
+        self.adder = adder  # /new: puts a challenge the player hands over on the board (a folder board's run; None otherwise)
+        self.config_path = config_path  # the player's config file, named by /config ("": none, as in the mock)
         self._exiting = False
         self.stopped_by: signal.Signals | None = None  # the signal that stopped the run, if one did
         self._signals: list[int] = []  # the signals this console catches while it runs
@@ -117,6 +130,18 @@ class FlightdeckApp(App[None]):
             self._catch_signals()  # before any lane starts
         if self._on_start is not None:
             self._on_start()
+        if self.adder is not None and not self.deck.challenges:
+            self.say("The board is empty. Type /new to add a challenge: its name, then its text, files and screenshots.")
+        if self.welcome:
+            from .screens import WelcomeScreen
+
+            empty = self.adder is not None and not self.deck.challenges
+
+            def done(go: bool | None) -> None:
+                if go and empty:
+                    self.new_challenge()
+
+            self.push_screen(WelcomeScreen(mock=self._ticker is not None, empty=empty, lanes=min(self.deck.config.max_lanes, 99)), done)
 
     async def action_quit(self) -> None:
         """Quit (q, /quit, ctrl+q): stop the run's lanes (on_exit) before the console exits.
@@ -217,6 +242,127 @@ class FlightdeckApp(App[None]):
 
     def warn(self, text: str) -> None:
         self.say(text, "warning")
+
+    async def on_event(self, event: events.Event) -> None:
+        """Files dropped on the terminal arrive as pasted paths. Wherever the focus is, they
+        go where files belong (take_drop) instead of into whatever widget had the focus;
+        any other paste goes on as usual."""
+        if isinstance(event, events.Paste) and not event.is_forwarded and self.take_drop(event.text):
+            return
+        await super().on_event(event)
+
+    def take_drop(self, text: str) -> bool:
+        """Whether `text` was files dropped (or pasted) on the console, now taken. Only a
+        paste whose whole text is paths of files that exist is a drop (addchallenge.dropped);
+        any other text is an ordinary paste. The files go into the /new form when it is open.
+        Otherwise they go onto the command bar as an /attach to finish with Enter, and only
+        when that loses nothing: the bar is empty (the /attach then names the challenge Enter
+        attaches to: the one selected) or already holds an /attach. What the player typed
+        there is never replaced: the paste then goes on as text. A file that cannot be
+        attached is not taken, and the console says why."""
+        from ..addchallenge import dropped, quote, refusal
+        from .screens import NewChallengePrompt
+
+        if self.adder is None:
+            return False
+        files = dropped(text)
+        if not files:
+            return False
+        screen = self.screen
+        if isinstance(screen, NewChallengePrompt):
+            return screen.add_files(files)
+        bar = screen.query("#bar-input")
+        if not bar:
+            return False
+        checked = [(file, refusal(file)) for file in files]
+        refused = [why for _, why in checked if why is not None]
+        files = [file for file, why in checked if why is None]
+        if refused:
+            self.warn("not attached: " + "; ".join(refused))
+        if not files:
+            return False
+        field = bar.first()
+        typed = field.value.strip()
+        count = f"{len(files)} file{'' if len(files) == 1 else 's'}"
+        quoted = " ".join(quote(file) for file in files)
+        if typed.split(maxsplit=1)[:1] == ["/attach"]:
+            field.value = f"{typed} {quoted} "
+            self.say(f"{count} added to the /attach in the command bar: Enter attaches")
+        elif "/attach".startswith(typed):  # nothing typed, or the start of this very command: nothing is lost
+            target = self._selected_challenge(getattr(screen, "lane_id", None) or getattr(screen, "selected_lane", None))
+            field.value = f"/attach {target} {quoted} " if target else f"/attach {quoted} "
+            self.say(f"{count} ready: press Enter to attach to {target} (or change the name in the command bar)" if target
+                     else f"{count} ready: type the challenge's name after /attach, then Enter")
+        else:
+            if screen.focused is not field:  # the paste goes to whatever has the focus, which shows nothing: say what to do
+                self.warn(f"{count} not taken: the command bar holds what you typed. Send or clear it, then drop the "
+                          f"file{'' if len(files) == 1 else 's'} again")
+            return False
+        field.focus()
+        field.cursor_position = len(field.value)
+        return True
+
+    async def pick_files(self, *, many: bool = True, warn: Callable[[str], None] | None = None) -> list:
+        """The operating system's file window (filepick.choose), in a thread so lanes go on
+        while it is open. Await it from a worker, never from a key's action: the keys wait
+        for an action to end. [] when cancelled; when there is no such window, also a warning
+        (to `warn`, else on the status line)."""
+        from ..filepick import PickError, choose
+
+        try:
+            return await asyncio.to_thread(choose, many=many)
+        except PickError as exc:
+            (warn or self.warn)(str(exc))
+            return []
+
+    async def _attach(self, cid: str, files: list) -> None:
+        """/attach's work, in a worker: the file window when no file was named, then the copy
+        (the attacher makes it in a thread), with a line that says it is going on."""
+        if not files:
+            files = await self.pick_files()
+            if not files:
+                return
+        self.say(f"copying {len(files)} file{'' if len(files) == 1 else 's'} into {cid}...")
+        try:
+            ok, message = await self.attacher(cid, files)
+        except Exception as exc:  # a bug: said, and the console goes on
+            ok, message = False, f"could not attach to {cid}: {type(exc).__name__}: {exc}"
+        self.say(message, "information" if ok else "warning")
+        self.refresh_view()
+
+    def attach(self, arg: str, lane_id: str | None = None) -> None:
+        """/attach [challenge] <files>: the files named (dragged onto the command bar) go into
+        the challenge's folder, and its lanes start afresh with them. Without a challenge: the
+        open lane's, or the one selected on the board. Without a file: the file window."""
+        from ..addchallenge import AddError, attach_arg
+
+        if self.attacher is None:
+            self.warn("/attach adds files to a challenge on a board you fill yourself")
+            return
+        try:
+            rest, files = attach_arg(arg)
+        except AddError as exc:
+            self.warn(str(exc))
+            return
+        cid = self._challenge_arg(rest, lane_id)
+        if cid is not None:
+            self.run_worker(self._attach(cid, files), exclusive=False)
+
+    def new_challenge(self, name: str = "") -> None:
+        """/new: ask for a challenge (NewChallengePrompt), which puts it on the board (the
+        adder) and closes once it is there; a lane takes it."""
+        if self.adder is None:
+            self.warn("/new adds a challenge to a board you fill yourself; this board comes from the platform" if self._ticker is None
+                      else "/new adds a challenge to a real board; the mock's board is scripted")
+            return
+        from .screens import NewChallengePrompt
+
+        def done(said: str | None) -> None:
+            if said:
+                self.say(said)
+                self.refresh_view()
+
+        self.push_screen(NewChallengePrompt(name, paster=self.paster, adder=self.adder), done)
 
     def inform(self, text: str) -> None:
         self.say(text)
@@ -551,6 +697,72 @@ class FlightdeckApp(App[None]):
         self.say(outcome.message, "information" if outcome.ok else "warning")
         self.refresh_view()
 
+    def configure(self, arg: str) -> None:
+        """/config: open the settings dialog (config_dialog); /config file: where the
+        config file is. /config lanes N (or
+        unlimited): how many lanes run at once. /config submit auto|confirm: auto approve on
+        or off. Each change is for the rest of this run; the config file keeps its own."""
+        words = arg.split()
+        deck = self.deck
+        if not words:
+            self.config_dialog()
+            return
+        if words == ["file"]:
+            self.say(f"your config file: {self.config_path}" if self.config_path else "this console has no config file (the mock)",
+                     "information")
+            return
+        if len(words) != 2 or words[0].lower() not in ("lanes", "submit"):
+            self.warn("/config takes nothing, 'file', 'lanes N|unlimited', or 'submit auto|confirm'")
+            return
+        key, value = words[0].lower(), words[1].lower()
+        if key == "lanes":
+            if value in ("unlimited", "max", "∞"):
+                outcome = deck.set_max_lanes(UNLIMITED_LANES)
+            elif value.isascii() and value.isdigit():
+                outcome = deck.set_max_lanes(int(value))
+            else:
+                self.warn("/config lanes takes a whole number, 1 or more, or 'unlimited'")
+                return
+        else:
+            outcome = deck.set_submit({"on": "auto", "off": "confirm"}.get(value, value))
+        self.say(outcome.message, "information" if outcome.ok else "warning")
+        self.refresh_view()
+
+    def config_dialog(self) -> None:
+        """/config alone: the settings dialog (ConfigPrompt). What it changes goes through the
+        same deck calls as /config lanes and /config submit, so the event's rules hold."""
+        from .screens import ConfigPrompt
+
+        deck, cfg = self.deck, self.deck.config
+        before = ("unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes), cfg.submit)
+
+        def done(answer: tuple[str, str] | None) -> None:
+            if answer is None or answer == before:
+                return
+            lanes, submit = answer
+            said, ok = [], True
+            if lanes.lower() != before[0]:
+                value = lanes.lower()
+                if value in ("unlimited", "max", "∞"):
+                    outcome = deck.set_max_lanes(UNLIMITED_LANES)
+                elif value.isascii() and value.isdigit():
+                    outcome = deck.set_max_lanes(int(value))
+                else:
+                    self.warn("Lanes at once takes a whole number, 1 or more, or 'unlimited'; nothing was changed")
+                    return
+                said.append(outcome.message)
+                ok = ok and outcome.ok
+            if submit != before[1]:
+                outcome = deck.set_submit(submit)
+                said.append(outcome.message)
+                ok = ok and outcome.ok
+            self.say(" ".join(said), "information" if ok else "warning")
+            self.refresh_view()
+
+        lanes_note = f"the event's rules allow {cfg.lanes_ceiling} at most" if cfg.lanes_ceiling is not None else ""
+        submit_note = "the event's rules do not let flightdeck submit, so auto is refused" if cfg.submit_ceiling != "auto" else ""
+        self.push_screen(ConfigPrompt(*before, lanes_note=lanes_note, submit_note=submit_note, config_path=self.config_path), done)
+
     def unhold(self) -> None:
         """/unhold: lift the hold on the queue (Deck.release_hold), so queued lanes start again."""
         outcome = self.deck.release_hold()
@@ -594,6 +806,16 @@ class FlightdeckApp(App[None]):
             cid = self._challenge_arg(arg, lane_id)
             if cid is not None:
                 self.claim_toggle(cid)
+        elif name == "note":
+            outcome = self.deck.tell_all(arg)
+            self.say(outcome.message, "information" if outcome.ok else "warning")
+            self.refresh_view()
+        elif name == "config":
+            self.configure(arg)
+        elif name == "new":
+            self.new_challenge(arg)
+        elif name == "attach":
+            self.attach(arg, lane_id)
         elif name == "unhold":
             self.unhold()
         elif name == "autopilot":
@@ -665,20 +887,25 @@ class FlightdeckApp(App[None]):
             self.warn(f"No lane {lane_id}" if lane_id else "Select a lane first")
         return lane
 
+    def _selected_challenge(self, lane_id: str | None) -> str | None:
+        """The challenge a command with no name acts on: the board selection (in the fleet,
+        when the board has the focus), else the challenge of `lane_id`; None when there is none."""
+        fleet = self._fleet
+        if self.screen is fleet and fleet.board_focused and fleet.selected_challenge:
+            return fleet.selected_challenge
+        lane = self.deck.lanes.get(lane_id or "")
+        return lane.challenge_id if lane is not None else None
+
     def _challenge_arg(self, arg: str, lane_id: str | None) -> str | None:
         """A challenge named by id or name; else the board selection (in the fleet) or the
         lane's challenge (the open lane, in the focus view)."""
         deck = self.deck
         arg = arg.strip()
         if not arg:
-            fleet = self._fleet
-            if self.screen is fleet and fleet.board_focused and fleet.selected_challenge:
-                return fleet.selected_challenge
-            lane = deck.lanes.get(lane_id or "")
-            if lane is not None:
-                return lane.challenge_id
-            self.warn("Name a challenge, e.g. /queue pocket-litter")
-            return None
+            selected = self._selected_challenge(lane_id)
+            if selected is None:
+                self.warn("Name a challenge, e.g. /queue pocket-litter")
+            return selected
         if arg in deck.challenges:
             return arg
         by_name = [ch.id for ch in deck.challenges.values() if ch.name.lower() == arg.lower()]

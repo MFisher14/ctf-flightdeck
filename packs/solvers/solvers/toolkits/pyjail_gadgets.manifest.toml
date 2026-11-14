@@ -1,0 +1,17 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Shared pyjail escape gadget vocabulary (B-051):
+# denylist-evasion literal splitting, subclass/__init__.__globals__ and frame-walk builders, an
+# audit-hook parser over jail source read as data, and audit-aware gadget ranking under a jail
+# profile. Assembly only -- it never evaluates a payload or the jail source.
+id = "toolkits.pyjail_gadgets"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/pyjail_gadgets.py"
+capabilities = ["analysis", "cli", "legacy-output", "symbolic"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+category = ["pwn", "misc"]
+keywords = ["subclasses", "__globals__", "gadget library", "object graph", "frame escape", "audit hook"]
+priority = 59

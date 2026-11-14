@@ -1,0 +1,17 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-124.
+# import-only: run_harness is the live driver and `ctf invariant` (ctf/cli/invariant.py) the operator
+# entry; the harness needs a stated invariant spec, so `ctf run` refuses it as a library engine.
+id = "web.invariant_harness"
+lane = "web"
+entry = "solvers.web.invariant_harness:run_harness"
+capabilities = ["library"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a stated business-logic invariant to hold against a live target (import it: `ctf invariant`
+            # drives it; `ctf run` refuses a library engine). Above the agent-handoff playbook's 20.
+category = ["web"]
+keywords = ["business logic", "business-logic", "state invariant", "invariant spec", "invariant harness"]
+priority = 57

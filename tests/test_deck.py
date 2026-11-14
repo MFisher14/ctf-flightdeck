@@ -2543,3 +2543,126 @@ def test_dismiss_is_refused_with_the_reason_for_an_alert_that_has_its_own_answer
     deck.apply(iv.Decline(box.id))
     assert deck.apply(iv.Dismiss(box.id)).message == f"{box.id} has no alert to dismiss"
     assert deck.apply(iv.Dismiss("L99")).message == "No lane L99"
+
+
+def platform_deck(**config):
+    """A deck whose flags go to a platform (a submitter): what it was handed, and the deck."""
+    sent: list[tuple[str, str, str]] = []
+    deck = Deck(DeckConfig(event="t", flag_format=FLAG_FORMAT, models=MODELS, submit="auto", **config), RecordingDriver(), Clock(),
+                lambda cid, flag: None, submitter=lambda lane, challenge, flag: sent.append((lane, challenge, flag)))
+    deck.release([Challenge("c0", "C", "misc", 100), Challenge("c1", "D", "misc", 100)], [QueueEntry("c0", "small"), QueueEntry("c1", "small")])
+    return deck, sent
+
+
+def test_under_auto_submit_the_flags_of_a_challenge_wait_for_the_player_once_three_were_wrong():
+    deck, sent = platform_deck()
+    lane, other = lane_on(deck, "c0"), lane_on(deck, "c1")
+    for n in range(3):
+        deck.report(lane.id, TurnReport(flag=f"t{{guess{n}}}"))
+        deck.platform_verdict(lane.id, f"t{{guess{n}}}", False, "Incorrect")
+    assert [flag for _, _, flag in sent] == ["t{guess0}", "t{guess1}", "t{guess2}"] and deck.wrong_flags("c0") == 3
+    deck.report(lane.id, TurnReport(flag="t{guess3}"))  # the fourth is not sent: it waits
+    assert len(sent) == 3 and lane.pending is not None and (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{guess3}")
+    assert any("3 flags were wrong at C, so t{guess3} waits for you (wrong_stop 3)" in a.text for a in lane.actions)
+    assert deck.apply(iv.Approve(lane.id)).ok and sent[-1] == (lane.id, "c0", "t{guess3}")  # the player's yes sends it
+    deck.report(other.id, TurnReport(flag="t{elsewhere}"))  # another challenge has its own count
+    assert sent[-1] == (other.id, "c1", "t{elsewhere}")
+
+
+def test_a_declined_flag_is_not_a_wrong_one_and_wrong_stop_zero_never_stops():
+    deck, sent = platform_deck(wrong_stop=0)
+    lane = lane_on(deck, "c0")
+    for n in range(5):
+        deck.report(lane.id, TurnReport(flag=f"t{{guess{n}}}"))
+        deck.platform_verdict(lane.id, f"t{{guess{n}}}", False, "Incorrect")
+    assert len(sent) == 5 and lane.pending is None
+    with pytest.raises(ValueError, match="wrong_stop"):
+        DeckConfig(event="t", wrong_stop=-1)
+    confirm = Deck(DeckConfig(event="t", flag_format=FLAG_FORMAT, models=MODELS), RecordingDriver(), Clock(), lambda cid, flag: None)
+    confirm.release([Challenge("c0", "C", "misc", 100)], [QueueEntry("c0", "small")])
+    mine = lane_on(confirm, "c0")
+    confirm.report(mine.id, TurnReport(flag="t{maybe}"))
+    assert confirm.apply(iv.Decline(mine.id)).ok and confirm.wrong_flags("c0") == 0
+
+
+def test_a_note_for_every_lane_reaches_the_running_ones_and_each_lane_started_later():
+    deck, driver, _ = make_deck(n=3, max_lanes=2)
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+    outcome = deck.tell_all("  the organizers replaced every handout: download again  ")
+    note = "the organizers replaced every handout: download again"
+    assert outcome.ok and outcome.message.startswith("2 lanes read it on their next turn, and every lane started later")
+    assert first.hints == [note] and second.hints == [note]
+    assert driver.named("hint") == [(first.id, note), (second.id, note)]
+    deck.report(first.id, TurnReport(gave_up="no lead"))  # a slot frees: the third challenge's lane starts
+    third = lane_on(deck, "c2")
+    assert third.hints == [note] and driver.named("hint")[-1] == (third.id, note)  # told at its start
+    assert not deck.tell_all("   ").ok and deck.standing == [note]
+
+
+def test_a_note_for_every_lane_passes_over_a_lane_in_the_players_hands_and_stops_at_twelve():
+    deck, driver, _ = make_deck(n=2, max_lanes=2)
+    mine, other = lane_on(deck, "c0"), lane_on(deck, "c1")
+    assert deck.apply(iv.TakeOver(mine.id)).ok
+    outcome = deck.tell_all("flags are lower-case")
+    assert outcome.ok and "1 lane read it" in outcome.message and "1 passed over" in outcome.message
+    assert mine.hints == [] and other.hints == ["flags are lower-case"]
+    for n in range(11):
+        assert deck.tell_all(f"note {n}").ok
+    refused = deck.tell_all("one too many")
+    assert not refused.ok and "12 notes for every lane are standing already" in refused.message and len(deck.standing) == 12
+
+
+def test_under_auto_submit_a_flag_that_solved_another_challenge_waits_for_the_player():
+    deck, sent = platform_deck()
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+    deck.report(first.id, TurnReport(flag="t{of_the_first}"))
+    deck.platform_verdict(first.id, "t{of_the_first}", True, "Correct")
+    assert deck.challenges["c0"].closed and len(sent) == 1
+    deck.report(second.id, TurnReport(flag="t{of_the_first}"))  # read out of the sibling's files, say
+    assert len(sent) == 1 and second.pending is not None and second.pending.flag == "t{of_the_first}"
+    assert any("t{of_the_first} is the flag that solved C, so it waits for you here" in a.text for a in second.actions)
+    deck.report(second.id, TurnReport(flag="t{its_own}"))  # any other flag still goes at once
+    assert sent[-1] == (second.id, "c1", "t{its_own}")
+
+
+def test_the_player_raises_the_lane_limit_and_queued_lanes_start_and_lowering_it_stops_none():
+    deck, driver, _ = make_deck(n=5, max_lanes=2)
+    assert len(deck.active_lanes()) == 2 and len(deck.queue) == 3
+    raised = deck.set_max_lanes(4)
+    assert raised.ok and "Lanes at once: 4 for the rest of this run" in raised.message
+    assert len(deck.active_lanes()) == 4 and deck.config.max_lanes == 4
+    lowered = deck.set_max_lanes(1)
+    assert lowered.ok and "4 run now and go on, and no new lane starts until fewer than 1 run" in lowered.message
+    assert len(deck.active_lanes()) == 4 and len(deck.queue) == 1  # nothing stopped, nothing started
+    from ctf_flightdeck.core.model import UNLIMITED_LANES, lanes_text
+
+    assert deck.set_max_lanes(UNLIMITED_LANES).ok and len(deck.active_lanes()) == 5 and lanes_text(deck.config.max_lanes) == "∞"
+    for bad in (0, -1, True, 1.5):
+        assert not deck.set_max_lanes(bad).ok
+    changed = [e.data for e in deck.events if e.data.get("config") == "max_lanes"]
+    assert [(c["was"], c["max_lanes"]) for c in changed] == [(2, 4), (4, 1), (1, UNLIMITED_LANES)]
+
+
+def test_the_lane_limit_and_auto_approve_never_go_past_the_events_rules():
+    config = DeckConfig(event="t", flag_format=FLAG_FORMAT, models=MODELS, max_lanes=2, lanes_ceiling=3, submit_ceiling="confirm")
+    deck = Deck(config, RecordingDriver(), Clock(), RecordingVerifier())
+    refused = deck.set_max_lanes(4)
+    assert not refused.ok and "The event's rules allow at most 3 lanes at once" in refused.message and deck.config.max_lanes == 2
+    assert deck.set_max_lanes(3).ok
+    auto = deck.set_submit("auto")
+    assert not auto.ok and "do not let flightdeck submit flags by itself" in auto.message and deck.config.submit == "confirm"
+
+
+def test_the_player_turns_auto_approve_on_and_off_and_waiting_flags_stay_theirs():
+    deck, sent = platform_deck()  # starts under auto
+    lane, other = lane_on(deck, "c0"), lane_on(deck, "c1")
+    off = deck.set_submit("confirm")
+    assert off.ok and off.message == "Auto approve is off: every flag waits for your approval"
+    deck.report(lane.id, TurnReport(flag="t{one}"))
+    assert sent == [] and lane.pending is not None
+    on = deck.set_submit("auto")
+    assert on.ok and "Auto approve is on" in on.message and "the 1 waiting now still wait for you (A approves them all)" in on.message
+    assert sent == [] and lane.pending is not None  # the one that waited still waits
+    deck.report(other.id, TurnReport(flag="t{two}"))
+    assert sent == [(other.id, "c1", "t{two}")]  # a new one goes at once
+    assert deck.set_submit("auto").message == "Submit is auto already" and not deck.set_submit("always").ok

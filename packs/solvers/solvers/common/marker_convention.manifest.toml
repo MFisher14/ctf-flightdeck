@@ -1,0 +1,23 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). B-119, hand-written.
+# The constructed-marker fallback: it lists candidates and never claims one (`analysis`, never
+# `solved`).
+#
+# NO [intake] table, on purpose. Intake takes an engine's flags whatever its result status, and one
+# distinct flag makes the intake `solved`, which `ctf intake --submit` may send. This engine's flags
+# are guesses (a prior, or a convention learned on another challenge), so it must not run there: the
+# router lists it for the agent, who runs it by hand (`ctf marker candidates <dir>`).
+# tests/test_common_marker_intake.py fails if the table comes back.
+id = "common.marker_convention"
+lane = "common"
+entry = "solvers.common.marker_convention:solve"
+capabilities = ["analysis", "marker", "witness", "sha256", "convention", "candidates"]
+inputs = ["ext:.json", "ext:.xml", "ext:.log", "ext:.dat", "ext:.bin"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # the brief asks for a marker built from the evidence. Marker phrases only: a hex answer
+            # shape ("32 lowercase hex characters") is any flag format, not a constructed marker.
+keywords = ["resulting marker", "recover its marker", "submit the marker", "build the marker",
+            "construct the marker", "consensus marker"]
+priority = 62

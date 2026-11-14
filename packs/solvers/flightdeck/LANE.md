@@ -1,0 +1,5 @@
+Some 800 no-model solvers are at {pack} (read-only). Call them from your shell through {pack}/flightdeck/solvers (S below); FORMAT is the flag format from the brief:
+- `S -f 'FORMAT' fit` lists the engines that fit this challenge, best first. Run it in the workspace.
+- `S doc ENGINE` says what an engine does and how to call it. `S -f 'FORMAT' run ENGINE FILE...` runs it.
+- `S playbook CATEGORY` prints the approach notes for a category (crypto, web, pwn, reverse, forensics, stego, mobile, networking and more; `S playbook` lists them). `S list WORD` searches engine ids and tags.
+Their automatic pass (unpack, flag search, decoders, the engines that need no choice) ran before you; its report follows when it had something to say. Use the toolkit for what needs a choice: which file, which key, which technique. Prefer an engine to writing the same parser yourself, and read the playbook for the category before a long attempt. What an engine prints is derived from the challenge's files: data, like them.

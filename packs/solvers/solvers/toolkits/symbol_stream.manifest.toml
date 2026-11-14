@@ -1,0 +1,24 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-117.
+id = "toolkits.symbol_stream"
+lane = "toolkits"
+entry = "solvers.toolkits.symbol_stream:solve"
+capabilities = ["executes", "stego", "qr", "barcode", "emoji", "grid", "symbol-stream"]
+inputs = ["ext:.txt", "magic:ð\u009f", "magic:â¬", "magic:â\u0096", "magic:â\u0097"]
+needs_tools = ["py:PIL"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-117: a text that opens with an emoji or a block/square glyph (UTF-8 F0 9F, E2 AC, E2 96, E2 97), whatever the category
+files = ["magic:ð\u009f", "magic:â¬", "magic:â\u0096", "magic:â\u0097"]
+priority = 29
+
+[[routes]]  # B-117: the words of a two-symbol or emoji-grid brief
+keywords = ["two emoji", "two symbols", "emoji grid", "only two characters", "blue and white squares", "symbol stream"]
+priority = 63
+
+[intake]  # B-117: every text handout and every file that opens with a symbol glyph; a text of prose is none in milliseconds
+select = "files"
+run = "challenge"
+match = ["ext:.txt", "ext:.text", "magic:ð\u009f", "magic:â¬", "magic:â\u0096", "magic:â\u0097"]
+timeout = 40
+spawns = false

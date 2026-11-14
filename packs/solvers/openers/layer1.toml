@@ -1,0 +1,354 @@
+# Armed Layer-1 openers per lane (B-014). Contract: docs/CONTRACTS.md section 21.
+#
+# Each [[opener]] is a no-model, day-1 opener: a lane, the engine that opens the lane's first
+# release, synthetic first-days fixtures (ctf.openers.fixtures) with the frozen answer key the engine
+# must print on each, and neutral controls on which no key may hold. `python -m ctf arm` is the
+# regression gate: it builds every fixture, runs the engine under the intake network guard with no
+# token, no ledger and a fresh workdir, checks every key, and checks no key also holds on a control.
+# The point is that the first release of ANY event is played armed, with no model, as Days 1-3 of
+# the 2026 events were not (see docs/build-log/B-014.md).
+#
+# Keys: lane (the opener's unique key: the solvers/<lane>/ folder, or a name of its own when a folder
+# holds several openers), category (the event.toml category this serves), engine (id;
+# a cli entry, run on the fixture file), label, fixture + expect (the base case), controls (neutral
+# fixtures, at least one). [[opener.case]]: fixture, expect, mode (the row mode it stands for),
+# within (a timed case's window, seconds). Optional: needs_tools (beyond the manifest's own),
+# needs_os_sandbox (the engine loads ctypes or starts programs: armed only under the OS sandbox),
+# offline/reason (armed only against a live or fake service: reported not-run, never green).
+#
+# A multi-delivery Mastery case (B-042) is a saved attempt, attempt.json beside its deliveries
+# (ctf.openers.set_fixtures). The gate runs the opener's engine once per set, on the set's own delivery
+# as ctf.deliveries pairs them, and prefixes each set's lines `set<N>> ` with the file path replaced by
+# the delivery (`delivery 2: blob.txt`). Its key therefore names the set, the delivery and the answer,
+# and the lane's `*_crossed` control is the same attempt with the files of sets 1 and 2 exchanged: every
+# answer still comes out there, under the wrong set. These cases carry no `within`: the window of a
+# Mastery covers every set, and each set's run already has the gate's cap.
+#
+# Keys are anchored on the answer as the engine prints it (`<path>: <slug>   [<chain>]`), never on a
+# string the engine echoes back from its input, and they carry the signal, not a default: the
+# script-analysis key holds the technique and indicators because the analyzer prints its default
+# scenario even on a neutral script (that is the control).
+
+[[opener]]
+lane = "warmups"
+category = "Warmups"
+engine = "warmups.layered_decode"
+label = "Warmups layered text decoder"
+fixture = "warmups_base64_slug"                       # Day-1 base: base64 blob, slug on the last line
+expect = [": armed-opener-check-01   [b64]"]
+controls = ["warmups_no_slug", "warmups_mastery_crossed"]
+
+[[opener.case]]
+mode = "time_trial"                                   # Day-1 Time Trial: a fresh variant in a 30 s window
+fixture = "warmups_base64_variant"
+expect = [": fresh-variant-check-11   [b64]"]
+within = 30
+
+[[opener.case]]
+mode = "mastery"                                      # Day-1 Mastery: one numbered record `01<TAB>...`
+fixture = "warmups_mastery_record"
+expect = [": mastery-record-check-21   [b64]"]
+within = 30
+
+[[opener.case]]
+mode = "single"                                       # Day-2: rot13 blob; the slug's digits pass through
+fixture = "warmups_rot13_slug"
+expect = [": half-turn-check-02   [rot13]"]
+
+[[opener.case]]
+mode = "mastery"                                      # Day-2 Mastery: records mixing base64 and rot13
+fixture = "warmups_multi_record"
+expect = [": multi-record-check-22   [b64 | rot13 | b64]"]
+within = 30
+
+[[opener.case]]
+mode = "base"                                         # Day-3: hex blob
+fixture = "warmups_hex_slug"
+expect = [": hex-appeal-check-03   [hex]"]
+
+[[opener.case]]
+mode = "base"                                         # Day-3 layered: hex under base64
+fixture = "warmups_layered"
+expect = [": layered-wrap-check-33   [b64+hex]"]
+
+[[opener.case]]
+mode = "mastery"                                      # Day-1 Mastery: three deliveries, all blob.txt, one per set
+fixture = "warmups_mastery_deliveries"
+expect = ["set1> delivery 1: blob.txt: first-set-delivery-41   [b64]",
+          "set2> delivery 2: blob.txt: second-set-delivery-42   [b64]",
+          "set3> delivery 3: blob.txt: third-set-delivery-43   [b64]"]
+
+[[opener.case]]
+mode = "mastery"                                      # Day-4 Mastery: one bundle zip, a numbered blob per set
+fixture = "warmups_mastery_bundle"
+expect = ["set1> delivery 1: warmups-mastery.zip -> blob-01.txt: first-bundle-member-51   [b64]",
+          "set2> delivery 1: warmups-mastery.zip -> blob-02.txt: second-bundle-member-52   [b64]"]
+
+[[opener]]
+lane = "metadata-forensics"
+category = "Metadata Forensics"
+engine = "metadata_forensics.file_properties"
+label = "Metadata file-identity / inventory reader"
+fixture = "metadata_png"                              # Day-1 base: identity and hashes of one file
+expect = ["image.format = png", "png.ihdr_dimensions_pixels = 2x1", "size_bytes = 75",
+          "sha256 = a98746a4698f72e26a504a8d8e6ea993e29325006809447ceba9df9159766fe6",
+          "md5 = 3e2f3e7c7be432ffa7da13ca434b47ec"]
+controls = ["metadata_text", "metadata_mastery_crossed"]
+
+[[opener.case]]
+mode = "mastery"                                      # Day-3 Mastery: one bundle, a numbered evidence zip per set
+fixture = "metadata_mastery_bundle"
+expect = ["set1 <- delivery 1: metadata-mastery-bundle.zip -> metadata-evidence-01.zip [member]",
+          "set1> png.ihdr_dimensions_pixels = 3x2",
+          "set1> sha256 = 9a04bdb06f8832dc838a6b15955aa1c181e5419d86c5a782161405e75bcbaaee",
+          "set2 <- delivery 1: metadata-mastery-bundle.zip -> metadata-evidence-02.zip [member]",
+          "set2> png.ihdr_dimensions_pixels = 4x3",
+          "set2> sha256 = 2b25cfc01625ac2388473edba3fe147a23974f146ed35819480d9c0fba2b579f"]
+
+[[opener]]
+lane = "script-analysis"
+category = "Script Analysis"
+engine = "script_analysis.powershell"
+label = "PowerShell scenario / technique / indicator analyzer"
+fixture = "powershell_resource_hijack"                # Day-1 base: scenario, ATT&CK technique, indicators
+expect = ["scenario=resource_hijacking attack=T1496 descriptor=plain",
+          "  url = http://pool.invalid.example:3333/job",
+          "  wallet = wallet_synthetic_0001_armed_check",
+          "  mutex = Global\\ArmedOpenerMiner01"]
+controls = ["powershell_neutral", "powershell_mastery_crossed"]
+
+[[opener.case]]
+mode = "time_trial"                                   # Day-1 Time Trial: a fresh variant in a 30 s window
+fixture = "powershell_resource_variant"
+expect = ["scenario=resource_hijacking attack=T1496 descriptor=plain",
+          "  url = http://stratum.invalid.example:4444/v2",
+          "  wallet = wallet_synthetic_0002_fresh_variant",
+          "  mutex = Global\\FreshVariantMiner02"]
+within = 30
+
+[[opener.case]]
+mode = "mastery"                                      # Day-2 Mastery: two deliveries, both evidence.zip, in set order
+fixture = "powershell_mastery_deliveries"
+expect = ["set1 <- delivery 1: evidence.zip [position]",
+          "set1>   url = http://pool.invalid.example:3333/set-one",
+          "set1>   wallet = wallet_synthetic_0011_set_one",
+          "set1>   mutex = Global\\SetOneMiner11",
+          "set2 <- delivery 2: evidence.zip [position]",
+          "set2>   url = http://pool.invalid.example:3333/set-two",
+          "set2>   wallet = wallet_synthetic_0012_set_two",
+          "set2>   mutex = Global\\SetTwoMiner12"]
+
+[[opener]]
+lane = "mobile-android"
+category = "Mobile Android"
+engine = "mobile_android.codec_search"
+label = "APK puzzle-asset reader (fail-closed codec search)"
+fixture = "apk_puzzle"                                # Day-1 base: the ANS- code, answered plain
+expect = [": ANS-0123456789ABCDEF  [high] plain"]
+controls = ["apk_without_puzzle", "apk_analysis_unmodelled", "apk_analysis_no_payload",
+            "apk_split_asset_no_asset", "apk_split_feature_no_parts", "apk_mastery_crossed"]
+
+[[opener.case]]
+mode = "time_trial"                                   # Day-1 Time Trial: a fresh variant in a 30 s window
+fixture = "apk_puzzle_variant"
+expect = [": ANS-FEDCBA9876543210  [high] plain"]
+within = 30
+
+# B-229: the shapes Huntress dealt after day 1, so `ctf arm` and `adapt prewarm` replay them through the
+# current dex-chain VM before a release. The codes are frozen here; ctf/openers/mobile_fixtures.py computes
+# each one independently (its oracles), and tests/test_b229_dex_chain.py checks the two agree. The controls
+# above hold the same chain with an unmodelled call, the loader with its payload missing and the Day 26
+# bundle without its feature asset: their codes must never come out.
+[[opener.case]]
+mode = "base"                                         # Day 5: codec split, parts placed by `order`
+fixture = "apk_split_by_order"
+expect = [": ANS-5B11D0C0DE05A1E5  [high] split:by-order"]
+
+[[opener.case]]
+mode = "time_trial"                                   # Day 23 TT: codec analysis, the dex chain computes it
+fixture = "apk_analysis_chain"
+expect = [": ANS-A9714811B1207F9A  [high] analysis dex chain"]
+within = 30
+
+[[opener.case]]
+mode = "mastery"                                      # Day 23 Mastery: the same chain on another build
+fixture = "apk_analysis_chain_variant"
+expect = [": ANS-63E9840589D53934  [high] analysis dex chain"]
+
+[[opener.case]]
+mode = "mastery"                                      # Day 31 Mastery set 10 (the Day 20 build): in-memory dex
+fixture = "apk_analysis_loader"
+expect = [": ANS-981CDDFE3125E982  [high] analysis dex chain"]
+
+[[opener.case]]
+mode = "time_trial"                                   # Day 26 TT: a split bundle; the chain reads a feature asset
+fixture = "apk_split_asset_bundle"
+expect = [": ANS-FC461EF52AFA3049  [high] analysis:dex-chain+split-asset"]
+within = 30
+
+# B-228: the codec_search reversible-transform shapes the Mobile lane consolidated out of the Huntress
+# catch-all (Days 4, 15, 19, 20, 26, 29). These exercise codec_search's own readers — the bounded transform
+# search, the native .so fallthrough, the lone-data plain reading, the pointer-step-first named-member read,
+# the split+feature empty-part reassembly, and the shape-triggered white-box reader — not B-229's dex chain.
+# ctf/openers/mobile_fixtures.py builds each deterministically with a Python oracle; tests/test_b228_codec_search.py
+# checks the frozen key against that oracle and proves the pointer-step/white-box readers survive a Mastery budget.
+# The apk_split_feature_no_parts control holds the same bundle with the feature parts removed: its key may not come out.
+[[opener.case]]
+mode = "base"                                         # Day 4: a reversible xor transform, the key an extra field
+fixture = "apk_reversible_xor"
+expect = [": ANS-04D04D04D04D0411  [high] xor"]
+
+[[opener.case]]
+mode = "time_trial"                                   # Day 4 TT: a fresh variant, the timed mode after base CORRECT
+fixture = "apk_reversible_xor_variant"
+expect = [": ANS-04CAFE04BABE0421  [high] xor"]
+within = 30
+
+[[opener.case]]
+mode = "base"                                         # Day 15: codec native, the code a string of a bundled .so
+fixture = "apk_native_so"
+expect = [": ANS-15DEADBEEF150015  [medium] native:so-secret"]
+
+[[opener.case]]
+mode = "base"                                         # Day 19: a lone-data reading under the folded-in reflection codec
+fixture = "apk_lone_reflection"
+expect = [": ANS-19C0FFEE19BADA55  [high] reflection:plain"]
+
+[[opener.case]]
+mode = "base"                                         # Day 20: the document names a dex by path; read before the brute
+fixture = "apk_named_member"
+expect = [": ANS-20105EED20314201  [medium] apk-string:dex"]
+
+[[opener.case]]
+mode = "base"                                         # Day 26: codec split with empty parts the feature split fills
+fixture = "apk_split_feature"
+expect = [": ANS-26AB26CD26EF2601  [high] split:by-order+feature"]
+
+[[opener.case]]
+mode = "base"                                         # Day 29: hex data + integer key, the shape-triggered white-box reader
+fixture = "apk_whitebox_offset"
+expect = [": unsure ANS-29ABCDEF29012933", "linear-offset:sub-key-step"]
+
+[[opener.case]]
+mode = "mastery"                                      # Day-1 Mastery (B-042): one APK per set, named by the questions
+fixture = "apk_mastery_deliveries"
+expect = ["set1> delivery 1: sample_mastery_01.apk: ANS-A1A1A1A1A1A10001  [high] plain",
+          "set2> delivery 2: sample_mastery_02.apk: ANS-B2B2B2B2B2B20002  [high] plain"]
+
+# binary.d01 imports capstone, which loads its library through ctypes; the audit-hook guard refuses
+# ctypes, so this opener is armed only where the OS network sandbox works (reported not-run elsewhere).
+# Its manifest's needs_tools (py:capstone, py:elftools) are checked too.
+[[opener]]
+lane = "binary"
+category = "Binary"
+engine = "binary.d01"
+label = "Binary ELF orientation reader (header, sections, symbols, disassembly)"
+needs_os_sandbox = true
+fixture = "elf64_orientation"                         # Day-1 base: the nine orientation fields and more
+expect = ["  analysis_elf_class = ELF64", "  analysis_machine = x86-64", "  analysis_elf_type = ET_EXEC",
+          "  analysis_endianness = little",
+          "  analysis_section_names = [\"\",\".text\",\".huntress\",\".symtab\",\".strtab\",\".shstrtab\"]",
+          "  analysis_symbols = [\"recover_code\"]", "  analysis_disassembly = [\"mov eax, 8100\",\"ret\"]",
+          "  analysis_marker = synthetic-day01", "  analysis_has_symtab = true",
+          "  analysis_exported_symbol = recover_code", "  analysis_recover_code = 8100",
+          "  analysis_entry_point = 0x401000"]
+controls = ["elf64_bare", "elf64_mastery_crossed"]
+
+[[opener.case]]
+mode = "mastery"                                      # B-042: one ELF per set, both sample.elf, named by the questions
+fixture = "elf64_mastery_deliveries"                  # (the real Day-1 Mastery shipped an evidence zip per set)
+expect = ["set1 <- delivery 1: sample.elf [named]",
+          "set1>   analysis_marker = synthetic-set-one", "set1>   analysis_recover_code = 4101",
+          "set2 <- delivery 2: sample.elf [named]",
+          "set2>   analysis_marker = synthetic-set-two", "set2>   analysis_recover_code = 4202"]
+
+# B-246: the binary lane's CRC-gated config readings (solvers/binary/crc_transforms.py through hcfg.containers).
+# Its own key, so `binary` (the d01 orientation opener) is untouched, and the B-036 lane gate replays these cases on
+# every change to solvers/binary/ (`python -m ctf adapt gate binary-hcfg`). Every expect line is a value the engine
+# decodes from a transformed payload behind the stored CRC-32; each control flips one bit of every stored CRC-32.
+# The costly pass reads only the first four headers of a file, so its families are spread over five samples.
+[[opener]]
+lane = "binary-hcfg"
+category = "Binary"
+engine = "binary.crc_transforms"
+label = "Binary HCFG config, CRC-gated transform readings (rotate, add key, RLE/LZ, ChaCha20, PRNG)"
+fixture = "hcfg_crc_cheap"            # rotate+XOR, add/sub keys, deflate, bz2, xz, LZ4 frame, RLE, PackBits, _outer
+expect = ["how=rotate_r3 key_bytes=5a", "  campaign = B246-rotate-r3", "how=repeating_add key_bytes=1122334455",
+          "  campaign = B246-repeat-add", "  campaign = B246-repeat-sub", "how=deflate_raw",
+          "  campaign = B246-deflate-raw", "how=rle_cb", "how=packbits", "how=bz2\n", "  campaign = B246-bz2",
+          "how=lzma", "  campaign = B246-xz", "how=lz4f", "  campaign = B246-lz4-frame", "how=rle_bc",
+          "  campaign = B246-rle-bc-", "how=deflate_raw_outer", "  campaign = B246-deflate-raw-outer",
+          "how=bz2_outer", "  campaign = B246-bz2-outer", "how=rle_cb_outer", "  campaign = B246-rle-outer-"]
+controls = ["hcfg_crc_broken", "hcfg_crc_broken_lz", "hcfg_crc_broken_lcg", "hcfg_crc_broken_java",
+            "hcfg_crc_broken_py"]
+
+[[opener.case]]
+mode = "base"                                         # LZNT1, LZSS, ChaCha20 near key, MSVC rand() keystream
+fixture = "hcfg_crc_costly"
+expect = ["how=lznt1", "how=lzss", "how=chacha20 key_bytes=42323436", "  campaign = B246-chacha20",
+          "how=prng_msvc seed=322420463", "  campaign = B246-prng-msvc"]
+
+[[opener.case]]
+mode = "base"                                         # LZ4 blocks (raw, size-prefixed), aPLib, Salsa20 near key
+fixture = "hcfg_crc_costly_lz"
+expect = ["how=lz4\n", "  campaign = B246-lz4-block-", "how=lz4_sized", "  campaign = B246-lz4-sized-",
+          "how=aplib", "  campaign = B246-aplib", "how=salsa20 key_bytes=423234362d73616c73612d6b31362121",
+          "  campaign = B246-salsa20"]
+
+[[opener.case]]
+mode = "base"                                         # K&R, Numerical Recipes, minstd, glibc rand() keystreams
+fixture = "hcfg_crc_costly_lcg"
+expect = ["how=prng_ansi seed=4711", "  campaign = B246-prng-ansi", "how=prng_nr seed=2712847316",
+          "  campaign = B246-prng-nr", "how=prng_minstd seed=195948557", "  campaign = B246-prng-minstd",
+          "how=prng_glibc seed=156", "  campaign = B246-prng-glibc"]
+
+[[opener.case]]
+mode = "base"                                         # java.util.Random (two forms), xorshift32, MT19937
+fixture = "hcfg_crc_costly_java"
+expect = ["how=prng_java_bytes seed=3405648436", "  campaign = B246-prng-java-bytes",
+          "how=prng_java_int256 seed=12648430", "  campaign = B246-prng-java-int256",
+          "how=prng_xorshift32 seed=610839777", "  campaign = B246-prng-xorshift32",
+          "how=prng_mt19937 seed=31337", "  campaign = B246-prng-mt19937"]
+
+[[opener.case]]
+mode = "base"                                         # Python random (three forms), LZNT1 outside the XOR
+fixture = "hcfg_crc_costly_py"
+expect = ["how=prng_py_getrandbits8 seed=91", "  campaign = B246-prng-py-getrandbits8",
+          "how=prng_py_randint seed=200", "  campaign = B246-prng-py-randint",
+          "how=prng_py_randbytes seed=2119674654", "  campaign = B246-prng-py-randbytes",
+          "how=lznt1_outer", "  campaign = B246-lznt1-outer-"]
+
+# The web Layer-1 opener is a passive probe of a running service; there is no day-1 web row to close
+# and no offline fixture. The gate reports it not-run with this reason until B-036 arms it against a
+# 127.0.0.1 fake service.
+[[opener]]
+lane = "web"
+category = "Web"
+engine = "web.passive_checks"
+offline = false
+reason = "web Layer-1 is a passive probe of a live service; arm it against a 127.0.0.1 fake service (B-036)"
+label = "Web Layer-1 passive recon"
+
+# B-136: the Linux memory-image opener (the triage half of Spooky's Peering Eyes). The gate arms its
+# no-tool stage: the kernel's banner carved from a LiME image and the symbol table (ISF) made for
+# exactly that kernel picked out of the delivery, with no download. The Volatility stage behind
+# `--vol` needs the Docker sandbox and a real kernel image, so it is not armed here: its tests run
+# against a stand-in sandbox (tests/test_b136_vol_triage.py). The lane is its own key, so another
+# forensics opener (B-129's audio one) adds a block of its own and never edits this one.
+# Controls: a table of the same release and file name but another build, and an image with no banner.
+[[opener]]
+lane = "memory-forensics"
+category = "Forensics"
+engine = "toolkits.vol_triage"
+label = "Linux memory-image triage (kernel banner, exact-banner ISF match)"
+fixture = "memory_lime_with_table"                    # a LiME image and its kernel's table, xz-compressed
+expect = ["kernel_release = 6.1.0-armed-amd64", "arch = x64",
+          "isf = matched symbols.json.xz [delivery]",
+          "symbol_strategy = exact-banner ISF matched among the local symbol tables"]
+controls = ["memory_lime_foreign_table", "memory_lime_no_banner"]
+
+[[opener.case]]
+mode = "base"                                         # another kernel, two tables beside it: picked by banner
+fixture = "memory_lime_two_tables"
+expect = ["kernel_release = 5.15.0-variant-arm64", "arch = arm64",
+          "isf = matched kernel-5.15.0.json [delivery]"]

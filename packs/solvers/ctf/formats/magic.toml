@@ -1,0 +1,193 @@
+# Local magic table (B-207). Loaded by ctf/formats/fingerprint.py; the offline known-format lookup the
+# format_fingerprint step runs on a member that ctf.formats.identify could not name, BEFORE any remote
+# code search.
+#
+# These are short, fixed byte signatures that name a format or the tool that writes it. They are NOT the
+# structural detectors of catalog.toml (those parse the container); each entry here is a magic string at a
+# fixed offset, the kind of token that is also safe to send verbatim to a public code search. Keep every
+# signature short (a handful of bytes): the fingerprint step may send the ascii of one to GitHub, and only
+# a short, non-content token may leave the host.
+#
+#   id     a unique slug (also printed by `ctf formats fingerprint`)
+#   label  one line for people
+#   tool   the tool or library that produces the format, when one is known (optional)
+#   sig    the signature as hex (no spaces); 2..16 bytes
+#   at     the byte offset the signature sits at (default 0)
+#   ext    the names a delivery usually gives it (a hint only; never matched on alone)
+#   note   why it matters / what to do next (optional)
+
+[[magic]]
+id = "sqlite3"
+label = "SQLite 3 database"
+tool = "sqlite3 / libsqlite3"
+sig = "53514c69746520666f726d6174203300"   # "SQLite format 3\x00"
+ext = [".sqlite", ".sqlite3", ".db"]
+note = "open with the sqlite3 module read-only; tables/rows carry the content"
+
+[[magic]]
+id = "pcap_le"
+label = "libpcap capture (little-endian, microsecond)"
+tool = "tcpdump / libpcap"
+sig = "d4c3b2a1"
+ext = [".pcap", ".cap"]
+note = "a packet capture; dissect with the pcap readers, not as a flat file"
+
+[[magic]]
+id = "pcap_be"
+label = "libpcap capture (big-endian, microsecond)"
+tool = "tcpdump / libpcap"
+sig = "a1b2c3d4"
+ext = [".pcap", ".cap"]
+
+[[magic]]
+id = "pcap_le_ns"
+label = "libpcap capture (little-endian, nanosecond)"
+tool = "tcpdump / libpcap"
+sig = "4d3cb2a1"
+ext = [".pcap"]
+
+[[magic]]
+id = "pcapng"
+label = "pcapng capture"
+tool = "Wireshark / dumpcap"
+sig = "0a0d0d0a"
+ext = [".pcapng", ".ntar"]
+
+[[magic]]
+id = "elf"
+label = "ELF object / executable"
+tool = "a compiler/linker toolchain (gcc, clang, ld)"
+sig = "7f454c46"
+ext = [".elf", ".so", ".o"]
+note = "never execute; parse statically"
+
+[[magic]]
+id = "pe_mz"
+label = "DOS/PE executable (MZ)"
+tool = "a Windows compiler/linker toolchain"
+sig = "4d5a"
+ext = [".exe", ".dll", ".sys"]
+note = "never execute; parse statically"
+
+[[magic]]
+id = "macho_le64"
+label = "Mach-O 64-bit object (little-endian)"
+tool = "an Apple compiler/linker toolchain"
+sig = "cffaedfe"
+ext = [".macho", ".dylib", ".o"]
+
+[[magic]]
+id = "java_class"
+label = "Java class file (shares CAFEBABE with a Mach-O fat binary)"
+tool = "a Java compiler (javac)"
+sig = "cafebabe"
+ext = [".class"]
+note = "CAFEBABE also starts a Mach-O universal binary; check the bytes after it"
+
+[[magic]]
+id = "dex"
+label = "Android Dalvik executable"
+tool = "d8 / dx (Android build tools)"
+sig = "6465780a"                             # "dex\n"
+ext = [".dex"]
+
+[[magic]]
+id = "wasm"
+label = "WebAssembly module"
+tool = "a wasm toolchain (wat2wasm, emscripten, rustc)"
+sig = "0061736d"
+ext = [".wasm"]
+
+[[magic]]
+id = "pdf"
+label = "Portable Document Format"
+tool = "a PDF writer"
+sig = "25504446"                             # "%PDF"
+ext = [".pdf"]
+
+[[magic]]
+id = "png"
+label = "PNG image"
+tool = "an image encoder"
+sig = "89504e470d0a1a0a"
+ext = [".png"]
+
+[[magic]]
+id = "jpeg"
+label = "JPEG image"
+tool = "an image encoder"
+sig = "ffd8ff"
+ext = [".jpg", ".jpeg"]
+
+[[magic]]
+id = "gif"
+label = "GIF image"
+tool = "an image encoder"
+sig = "474946383961"                         # "GIF89a"
+ext = [".gif"]
+
+[[magic]]
+id = "gzip"
+label = "gzip stream"
+tool = "gzip / zlib"
+sig = "1f8b"
+ext = [".gz"]
+
+[[magic]]
+id = "bzip2"
+label = "bzip2 stream"
+tool = "bzip2"
+sig = "425a68"                               # "BZh"
+ext = [".bz2"]
+
+[[magic]]
+id = "xz"
+label = "xz stream"
+tool = "xz / liblzma"
+sig = "fd377a585a00"
+ext = [".xz"]
+
+[[magic]]
+id = "zstd"
+label = "Zstandard stream"
+tool = "zstd / libzstd"
+sig = "28b52ffd"
+ext = [".zst"]
+
+[[magic]]
+id = "sevenzip"
+label = "7-Zip archive"
+tool = "7-Zip"
+sig = "377abcaf271c"                         # "7z\xbc\xaf'\x1c"
+ext = [".7z"]
+
+[[magic]]
+id = "rar5"
+label = "RAR archive (v5)"
+tool = "WinRAR / rar"
+sig = "526172211a070100"                     # "Rar!\x1a\x07\x01\x00"
+ext = [".rar"]
+
+[[magic]]
+id = "gitpack"
+label = "Git packfile"
+tool = "git"
+sig = "5041434b"                             # "PACK"
+ext = [".pack"]
+note = "a git object pack; carve with the git plumbing, not as a flat file"
+
+[[magic]]
+id = "vim_swap"
+label = "Vim swap file (recoverable editor buffer)"
+tool = "Vim"
+sig = "62305649"                             # "b0VI" (start of "b0VIM ...")
+ext = [".swp", ".swo"]
+note = "an editor swap holds the unsaved buffer; recover its text"
+
+[[magic]]
+id = "ti_nspire_tns"
+label = "TI-Nspire document (.tns)"
+tool = "TI-Nspire calculator / TI-Nspire Student Software"
+sig = "2a54494d4c50"                         # "*TIMLP"
+ext = [".tns"]
+note = "a zip variant no archive tool opens, its XML pages encrypted (method 13); read it with python -m ctf run toolkits.tns_nspire (B-132)"

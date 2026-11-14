@@ -1,0 +1,39 @@
+# Spooky CTF 2026: a past event, kept as a profile fixture. Facts from the Spooky source repo's SPOOKY.md
+# (read-only): the event forbids using the platform API (no pulling, no auto-submit, no scraping), so
+# the player downloads files and submits by hand (manual mode). Flag prefix spooky{...} (any case seen
+# in notes); flags must not be shared. Dates approximate (workspace activity 2026-11-06..07).
+slug = "spooky"
+name = "Spooky CTF 2026"
+categories = []
+sectors = []
+dates = { start = 2026-11-06, end = 2026-11-07 }
+
+[platform]
+kind = "manual"
+
+[flag]
+prefixes = ["spooky"]
+body = "[^{}\\n]{1,256}"
+case = "prefix-insensitive"
+
+[rules]
+submit_mode = "manual"
+wrong_answer_stop = 3
+guess_budget = 0
+hints_allowed = false
+flag_sharing = "forbidden"
+ai_on_platform = "forbidden"
+live_service_scope = []
+web_state_changing = false
+# B-173: the player's ruling at the event (session review, spooky issues 2 and 12): platform
+# automation is banned, but solving against a challenge service the player points at is allowed.
+# Claude had refused those services as "infrastructure" while Codex solved about ten of them.
+pointed_services = "allowed"
+
+[writeups]
+redact_flags = true
+
+[budget]
+per_point = 0.5
+floor = 25.0
+ceiling = 250.0

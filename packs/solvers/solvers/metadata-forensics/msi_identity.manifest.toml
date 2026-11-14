@@ -1,0 +1,26 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-220.
+# The MSI / MSIX identity facts of a handout (readers_msi.py through the Metadata lane), the GUIDs read as
+# text in their stored form first. Reads tables and manifests only: no cabinet is unpacked, nothing spawned.
+id = "metadata_forensics.msi_identity"
+lane = "metadata-forensics"
+entry = "solvers.metadata-forensics.msi_identity:solve"
+capabilities = ["analysis", "msi", "msix", "windows", "installer"]
+inputs = ["ext:.msi", "ext:.msix", "ext:.appx", "ext:.msixbundle", "ext:.appxbundle"]
+needs_tools = ["py:olefile"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # an installer or package in a forensics / windows / misc handout
+category = ["forensics", "windows", "misc", "reverse"]
+files = ["ext:.msi", "ext:.msix", "ext:.appx", "ext:.msixbundle", "ext:.appxbundle"]
+priority = 28
+
+[[routes]]  # the description names an installer's identity, whatever the files are called
+keywords = ["productcode", "upgradecode", ".msi", "msix", "appx"]
+priority = 62
+
+[intake]  # B-002 input adapter: identity of every installer/package in the handout at intake
+select = "files"
+run = "challenge"
+match = ["ext:.msi", "ext:.msix", "ext:.appx", "ext:.msixbundle", "ext:.appxbundle"]   # the sweep unpacks a zip, so a member matches too
+timeout = 30

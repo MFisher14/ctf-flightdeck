@@ -56,6 +56,9 @@ the files, write a `challenge.json`, and submit the flags yourself (see
 | `urls` | no | The challenge's live instance, if it has one: web origins such as `"http://127.0.0.1:8080"`, and TCP services such as `"tcp://127.0.0.1:1337"` (what `nc 127.0.0.1 1337` reaches). An origin is a scheme, a host and an optional port, with no path, query or user name; a TCP service needs its port. |
 | `id` | no | The challenge's id: lower-case letters, digits, `_`, `.` and `-` (a letter or digit first), at most 64 characters. Left out, it is the folder's name, which must then follow the same rule. Two challenges cannot share an id. |
 | `max_attempts` | no | How many tries the platform allows at the flag (0, the default: any number). A flag for a challenge with a limit waits for you, under auto submit too, unless your config says `submit_limited = "auto"` under `[lanes]`. |
+| `instance` | no | `"on-demand"`: the challenge has no fixed address; the platform starts its instance (a container for your team) when asked. No lane starts on it until the instance is up, and then its address is the challenge's `urls` for the run. flightdeck starts it only where an event profile says how ([Instances on demand](#instances-on-demand)). |
+| `type` | no | The platform's own name for the challenge's type (CTFd's `type`, such as `dynamic` or a plugin's `container`): letters, digits, `_`, `.` and `-`. `ctfd pull` writes it when it is not `standard`; an event profile's `[instances] types` reads it. |
+| `rotates` | no | How often the challenge's flag rotates, in whole seconds (0, the default: it does not; at most 86400). See [Rotating flags](#rotating-flags). |
 
 A key that is not in this table is an error, so a typo fails loudly instead of being ignored.
 So is a `files` entry that does not exist, that leaves the challenge folder (`..` or an absolute
@@ -64,6 +67,34 @@ path), or that is or passes through a symlink.
 A challenge with `urls` is a **live** challenge. A Docker lane gets a network only when its
 challenge is live (the guide's [Docker or host](GUIDE.md#docker-or-host) says which network,
 and when a lane asks you first), and a lane's http tool reaches only the origins listed here.
+
+### Rotating flags
+
+Some challenges hand out a flag that changes every N seconds on clock boundaries (with
+`"rotates": 300`: at :00, :05, :10 and so on): a flag fetched at 16:04:58 is dead at 16:05:02.
+Say so in the challenge's `challenge.json`, and flightdeck plays it by that rule:
+
+- the lane is told to fetch the flag immediately before submitting, to script the fetch, and
+  never to reuse an earlier one;
+- a flag is sent only in the window a lane found it in. One that waited into a later window (for
+  your approval, or in line behind another flag) is not sent, and neither is one whose window
+  ends within 8 seconds: the lane is told it rotated out and to fetch and submit a fresh one, a
+  warning says so, and nothing is counted as wrong;
+- a flag the platform does call wrong is remembered and never sent again, but the first 6 at such
+  a challenge do not count toward the wrong-answer stop (`wrong_stop`): a miss there is usually a
+  rotation, not a guess. From the seventh on they count like any other.
+
+Under the submit policy `confirm` a rotating flag will usually rotate out while it waits for your
+approval (a run that starts that way says so); `--submit auto` avoids it.
+
+The windows are counted on this machine's clock. If the platform's clock differs from yours, its
+boundaries fall that much earlier or later than flightdeck thinks: keep your clock synchronised.
+
+A CTFd pull does not know which challenges rotate: add `"rotates"` to the pulled challenge's
+`challenge.json` yourself. A later pull or wave keeps the folder as it is, your key included. A
+run reads the key when it puts the challenge on its board: pull the board first
+(`flightdeck ctfd pull`), add the key, then play. A challenge that a wave brings during a run is
+played without the key in that run.
 
 ## `board.json`
 
@@ -114,6 +145,27 @@ flag. When a lane finds one, the console shows it and asks you to submit it on t
 yourself; then press `a` if the platform accepted it or `d` if it did not. The same holds for a
 challenge the answers file does not list.
 
+## A series of challenges
+
+A board often splits one lab into several challenges on the same target. flightdeck links them by
+name alone: two challenges are siblings when their names have the same start, compared in lower
+case with punctuation folded to spaces. The start is
+
+- the part before the first separator: a colon followed by a space, a hyphen or a bar with a space
+  on both sides, or an en or em dash ("Harbor Lab: Read the Certificate", "Harbor Lab - The Gate",
+  "Ghost Ship | Logbook"), or
+- with no separator, the part before a trailing part number ("Harbor Lab Part 3", "Harbor Lab
+  Task 2", "Harbor Lab (2/3)").
+
+A start that is only a category or a label ("Web: SQL Login", "Warmup: Hello"), only a part
+number ("Task 2 - Read it"), or shorter than three letters and digits links nothing.
+
+A lane on a challenge of a series is told of its siblings and may read the files a sibling's
+ended lane left ([the guide](GUIDE.md#play-a-board)). A challenge whose description reads as a
+continuation ("continuation of the same lab", "see the first task") while no other challenge
+shares the start of its name is told so, and its lane's log says it: name the challenges of one
+lab alike when you write a board by hand.
+
 ## A board is untrusted
 
 Everything in a board folder comes from someone else: a platform, a challenge author, a teammate.
@@ -125,7 +177,8 @@ flightdeck treats all of it as data.
   1 MB is refused.
 - Symlinks are never followed, and no path may leave its challenge folder.
 - A challenge's text reaches a lane's model fenced as data, never as instructions, and reaches
-  your terminal with escape sequences made harmless.
+  your terminal with escape sequences made harmless. What one lane hands another (what it tried,
+  a sibling challenge's files) is challenge-derived, and is fenced and named as data the same way.
 
 ## A board from CTFd
 
@@ -144,6 +197,48 @@ could not start or finish.
 
 You rarely need it: `flightdeck play FOLDER --event event.toml` pulls the board itself.
 A CTFd board has no answers file, since CTFd checks the flags.
+
+## A board from a Game Master
+
+A Game Master is a platform that is one URL. A challenge there is an attempt: it must be started
+before its files and questions can be read, it takes one or more answers, and an answer is often
+a name, a hash or a number, not a flag.
+
+```sh
+export GM_TOKEN=...                                     # your Game Master token
+flightdeck gm list https://gm.example.org               # every challenge: id, lane, mode, solved or open
+flightdeck gm pull https://gm.example.org ~/ctf/gm-board
+flightdeck gm pull https://gm.example.org ~/ctf/gm-board --start
+```
+
+`gm pull` writes the same folder format, from the attempts that are started:
+
+- **It starts nothing unless you say so.** Without `--start`, every attempt that is not started is
+  left out and named, with the reason. With `--start`, each one that runs no clock is started and
+  pulled.
+- **It never starts a clock.** An attempt whose id ends in `/time_trial` or `/mastery` (or whose
+  listed mode is one of those) starts a clock when it starts. flightdeck never starts one: start
+  it on the Game Master yourself, then pull again, and its deadline is in the challenge's
+  description.
+- **One board challenge per answer.** An attempt with one answer is one challenge. An attempt with
+  several is one challenge per answer id, named `Name (answer id)`, each with a copy of the
+  attempt's files and its own question.
+- **Answers are submitted as `answer{...}`.** flightdeck checks every candidate against the
+  board's flag format before it goes anywhere, so a Game Master board's flag format says what an
+  answer looks like. A new board gets `answer\{(?P<answer>[^{}\r\n]{1,200})\}`: a lane submits
+  `answer{Alice Example}`, and what the group named `answer` matched, `Alice Example`, is what
+  the Game Master is sent. `--flag-format` sets another; a format with no `answer` group sends
+  the whole match (`[0-9a-f]{32}` for an event whose answers are all hashes). Keep it narrow: a
+  format that matches ordinary prose makes every sentence a candidate.
+
+It also writes `gm.json`, flightdeck's own record of which Game Master challenge and answer id
+each folder is; leave it where it is. `--token-env` names another variable for the token, and
+`--event` sets the board's name. Pulling again keeps what is there and adds what is new. It
+exits with status 1 when some challenges could not be pulled, and 2 when the pull could not start
+or finish, or nothing is started.
+
+`flightdeck play ~/ctf/gm-board` plays that board with you submitting each answer by hand. With an
+event profile whose platform is `gamemaster` (below), flightdeck submits them.
 
 ## The event profile: `event.toml`
 
@@ -184,6 +279,13 @@ live_targets = "confirm"            # "allowed", "confirm" or "off": may lanes t
 # submit = "confirm"
 # instance = "confirm"
 ```
+
+A Game Master event says `platform = "gamemaster"`, with the Game Master's `url` and `token_env`,
+and plays the folder `flightdeck gm pull` wrote: `flightdeck play ~/ctf/gm-board --event
+event.toml`, or `board = "..."` in the profile. A run pulls nothing and starts no attempt, so the
+pull policy does nothing there. Under `submit = "confirm"` or `"auto"` flightdeck sends answers
+to the Game Master and reads its solved list; under `manual` or `off` it contacts the Game Master
+not at all. Set `flag_format` in the profile only to override the board's.
 
 `[event]` says where the board comes from. With `platform = "ctfd"`, flightdeck pulls the board
 from `url` into the folder you give `play`. With `platform = "manual"`, `board` names a folder
@@ -246,3 +348,59 @@ What the policies mean during a run:
 
 `rules.max_lanes` caps how many lanes run at once, and `team = true` asks for a team folder
 (`play --team-dir`).
+
+## Instances on demand
+
+Some CTFd challenges have no fixed address: a plugin starts a container for your team when you
+press a button, lets only a few run at once, and stops each after a while. With an `[instances]`
+table in the event profile, flightdeck presses the button:
+
+```toml
+[instances]
+plugin = "docker_per_team"      # the site's container plugin
+types = ["container"]           # CTFd challenge types that have such an instance
+max_running = 3                 # the most kept running at once: the site's cap for a team, or less
+```
+
+- **Which challenges.** A challenge whose `type` (above) is one of `types`, or whose
+  `challenge.json` says `"instance": "on-demand"`. To find the type name, pull the board and look
+  at a container challenge's `challenge.json`.
+- **When.** flightdeck starts an instance before a lane works its challenge, in the queue's own
+  order, and no lane starts on such a challenge before its instance is up; the challenges behind
+  it in the queue start meanwhile. It renews an instance five minutes before its end while lanes
+  work it, and stops it when the challenge is solved, or parked with no lane on it, and when the
+  run ends. A slot freed by a solve goes to the next challenge that waits.
+- **What a lane gets.** The instance's address as its live instance: in its brief, and, in
+  Docker, as the one thing its network reaches. A web challenge's is `http://host:port`, any
+  other `tcp://host:port`, unless the plugin itself gives a URL.
+- **Your team.** An instance that is already running when flightdeck asks (a teammate's, or an
+  earlier run's) is used and never stopped by this run. When the site says its cap is reached,
+  flightdeck says so once and asks again every 30 seconds: teammates' instances take slots it
+  cannot see.
+- **What it needs.** `platform = "ctfd"`, `platform_automation = true`, and the `instance` policy
+  at `auto` (so `live_targets = "allowed"`): starting an instance is reaching it. Otherwise
+  flightdeck starts none, and `preflight` and the start of a run say why; start it on the site
+  yourself, and the lane works from the files.
+- **Limits.** If the platform ends an instance and starts it again at another address, lanes
+  hear of it, but a Docker lane's network was fenced to the old address: kill such a lane and
+  queue the challenge again. A flightdeck that is killed leaves its instances to the platform,
+  which stops them at their expiry.
+
+`docker_per_team` is the one plugin seen working (`POST /containers/api/request`, `stop`, `renew`
+and `view_info`, each with `{"chal_id": N}`). `ctfd_docker` is a guess at CTFd-Docker-Plugin's
+routes and was never confirmed. For any other plugin, give the four routes yourself instead of
+`plugin`; look at what the site's "start instance" button sends in your browser's network tab:
+
+```toml
+[instances]
+start = ["POST", "/plugins/example/container?challenge_id={id}"]   # {id} is the challenge's number
+stop = ["DELETE", "/plugins/example/container?challenge_id={id}"]
+renew = ["PATCH", "/plugins/example/container?challenge_id={id}"]
+status = ["GET", "/plugins/example/container?challenge_id={id}"]
+api = true                      # the paths are under /api/v1 (false: under the site's root)
+# body_key = "chal_id"          # the number goes in a JSON body under this key, instead of {id}
+types = ["container"]
+```
+
+flightdeck asks the plugin only about challenges on your board, sends each request once, and
+never calls a route that spends points.

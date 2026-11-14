@@ -29,4 +29,40 @@ def own_state_folder(tmp_path_factory, monkeypatch):
     """Each test has a state folder of its own (XDG_STATE_HOME), never the player's: what a
     run notes there, and the containers a sweep may remove (leftovers.py), are the test's
     only. Commands a test starts get it through the environment they inherit."""
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("state")))
+    state = tmp_path_factory.mktemp("state")
+    monkeypatch.setenv("XDG_STATE_HOME", str(state))
+    # the player has seen the welcome screen: a test's console opens on the dashboard (cli._first_console)
+    (state / "ctf-flightdeck").mkdir()
+    (state / "ctf-flightdeck" / "welcomed").write_text("")
+
+
+@pytest.fixture(autouse=True)
+def calm_host(monkeypatch):
+    """No test depends on this machine's load, RAM or disk: what a run's host governor and
+    doctor's host line read (governor.probe) is a calm machine, the same everywhere. The tests
+    of the probe itself (test_governor.py) replace this fixture with one that does nothing;
+    a test that wants a busy machine gives its own reading (RunOptions.host_reading, or the
+    Governor's `read`)."""
+    from ctf_flightdeck import governor
+    from ctf_flightdeck.hardware import GIB, Fact
+
+    def calm(path, host=None, **readers):
+        return governor.Reading(load=Fact(0.5), cpus=Fact(8), free_ram=Fact(16 * GIB), free_disk=Fact(200 * GIB), disk_path=str(path))
+
+    monkeypatch.setattr(governor, "probe", calm)
+
+
+@pytest.fixture(autouse=True)
+def no_real_file_window(monkeypatch):
+    """No test opens the operating system's file window (filepick.choose): one that would
+    fails instead. A test of the window gives its own stand-in."""
+    from ctf_flightdeck import filepick
+
+    real = filepick.choose
+
+    def guarded(*args, **kwargs):
+        if "run" not in kwargs and "which" not in kwargs:
+            raise AssertionError("a test would have opened a real file window: give filepick.choose a stand-in")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(filepick, "choose", guarded)

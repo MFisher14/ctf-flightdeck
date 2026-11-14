@@ -1,0 +1,27 @@
+# Engine manifest (docs/CONTRACTS.md section 6). B-076: HTTP pair triage of a packet capture. Written by hand.
+# Pure Python on solvers/toolkits/network.py's reader and ctf/fragjoin.py's joiner: no tool, no process,
+# no network, so intake runs it on every capture of the handout (the pcap [intake] table below).
+id = "toolkits.http_triage"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/http_triage.py"
+capabilities = ["analysis", "cli", "pcap", "http", "base64", "basic-auth", "fragments"]
+inputs = ["magic:0xd4c3b2a1", "magic:0xa1b2c3d4", "magic:0x4d3cb2a1", "magic:0xa1b23c4d", "magic:0x0a0d0d0a",
+          "ext:.pcap", "ext:.pcapng"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # the brief names HTTP auth or a header-borne answer in a capture (above toolkits.network at 49/50)
+category = ["networking", "forensics"]
+keywords = ["basic auth", "authorization header", "http header", "custom header", "unauthorized", " 401 ",
+            "request/response", "odd response"]
+priority = 61
+
+# The pcap intake table: every capture in the handout (by its magic, so a renamed capture is taken too).
+[intake]
+select = "files"
+run = "per-file"
+match = ["magic:0xd4c3b2a1", "magic:0xa1b2c3d4", "magic:0x4d3cb2a1", "magic:0xa1b23c4d", "magic:0x0a0d0d0a"]
+args = ["{file}"]
+max_files = 4
+timeout = 60

@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+"""@@NAME@@: repro scaffold (python -m ctf scaffold repro). Fill TARGET and cases(), then run:
+
+    .venv/bin/python @@NAME@@.py                    PASS / FAIL with a diff / ERROR / OUT per case
+    .venv/bin/python @@NAME@@.py --only base --pdb  one case, debugger on its error
+    .venv/bin/python @@NAME@@.py --save out.json    the outputs as an expectations file
+                                                    (python -m ctf testpin --outputs out.json tests/...)
+    .venv/bin/python @@NAME@@.py --expect out.json  check against a saved expectations file
+
+Read challenge files as data only; nothing here runs a challenge binary.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "@@REPO@@")
+from ctf import scaffold as S  # noqa: E402
+
+TARGET = "@@TARGET@@"   # FILE.py:FUNCTION (relative to the current folder) or package.module:FUNCTION
+
+
+def cases():
+    """Yield S.case(id, *args, expect=..., **kwargs); leave expect out to just print the output."""
+    sample = Path("sample.bin")
+    yield S.case("base", sample.read_bytes() if sample.is_file() else b"")
+
+
+if __name__ == "__main__":
+    sys.exit(S.repro_main(TARGET, cases))

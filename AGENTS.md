@@ -3,7 +3,8 @@
 ctf-flightdeck is an open-source terminal harness for playing CTFs with AI agents. The player is the
 operator: the harness pulls and triages challenges, runs no-model (L1) solvers, spins up agent lanes,
 and submits. The player watches every lane and steps in when something looks wrong.
-**Status: 0.3.0 is released (PyPI, public on GitHub), with M5 Autopilot. Next: the issues in the Later milestone.**
+**Status: 0.4.0 is released (PyPI, public on GitHub): M6, the solver pack (`packs/solvers`, D24), and the first run
+(`flightdeck start`, `/new`, the home screen: P45 to P50). Next: the Later milestone.**
 Keep this file short: every agent re-reads it on every turn.
 
 ## Where things are
@@ -22,6 +23,8 @@ Keep this file short: every agent re-reads it on every turn.
   the last release took it).
 - `docs/MODEL-APIS.md`, `docs/MODELS.md`: model APIs, keys, prices; which model for which job.
 - `docs/BOARDS.md`, `docs/SOLVERS.md`: the board folder and event profile; L1 packs.
+- `packs/solvers/`: the solver pack (D24): its own `ctf` package, venv and tests
+  (`packs/solvers/README.md`). Not in the wheel; nothing in `src/` imports it.
 - `docs/SCREENSHOTS.md`: the console, in pictures.
 - `CONTRIBUTING.md` (setup, the commit guard) and `SECURITY.md` (what counts, how to report).
 - `private-notes/`: git-ignored local notes; most checkouts have none. Never copy from it into
@@ -33,8 +36,9 @@ httpx/asyncio. Tests: `uv run pytest`.
 ## Rules
 
 1. **This repo is public.** Nothing private goes in: no secrets, no real event data, no player
-   names, nothing from a local `private-notes/` folder or from any private repository. The one
-   exception is a leaderboard row a player sent in about themself (D22).
+   names, nothing from a local `private-notes/` folder or from any private repository. The two
+   exceptions are a leaderboard row a player sent in about themself (D22) and the solver pack
+   the maintainer exports into `packs/solvers/` (D24); nobody else copies into it from a private repo.
 2. **No secrets.** Keys come from environment variables or a user config outside the repo. Never print,
    log or commit tokens, cookies or Authorization values. The pre-commit guard (`.githooks/`) must pass
    (`git config core.hooksPath .githooks` turns it on: CONTRIBUTING.md); never use `--no-verify`.

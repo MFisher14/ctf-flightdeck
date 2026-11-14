@@ -1,0 +1,75 @@
+{
+  "schema": "ot-realdata-1",
+  "note": [
+    "Real-capture sample corpus per OT/ICS protocol, for the oracle tests in tests/real/test_real_ot.py.",
+    "Each row names a public capture by repo + commit + path, its sha256, its licence, the parser engine",
+    "that reads it (tests/real/_ot_oracle.py) and the protocol that engine must recognise in it.",
+    "",
+    "rev and sha256 are PINS the operator fills, not values this repo invents: fetching is an operator",
+    "step gated by rules.public_fetch_allow (see tests/real/fetch_ot.py), never run in build work, so a",
+    "row ships with rev/sha256 empty and the fetcher refuses it until both are pinned. licence is",
+    "'unverified' until the operator confirms the upstream per-file licence before any redistribution.",
+    "No capture file is ever committed to this repo; the corpus lives under $CTF_REALDATA/ot/<proto>/.",
+    "",
+    "A protocol with no located public capture is listed under 'missing', never faked."
+  ],
+  "default_repos": {
+    "automayt": {
+      "github": "automayt/ICS-pcap",
+      "home": "https://github.com/automayt/ICS-pcap",
+      "licence": "unverified: aggregation of third-party public captures; confirm each file's upstream licence"
+    },
+    "wireshark": {
+      "home": "https://gitlab.com/wireshark/wireshark (test/captures and the SampleCaptures wiki)",
+      "licence": "unverified: Wireshark sample captures; confirm the individual capture's licence"
+    }
+  },
+  "files": [
+    {"proto": "modbus", "name": "modbus.pcap", "engine": "ics_capture", "expect": "modbus", "min_messages": 1,
+     "github": "automayt/ICS-pcap", "rev": "", "path": "MODBUS/modbus_test_data_part1.pcap", "sha256": "",
+     "licence": "unverified", "source": "automayt", "note": "Modbus/TCP request+response over port 502."},
+
+    {"proto": "dnp3", "name": "dnp3.pcap", "engine": "ics_capture", "expect": "dnp3", "min_messages": 1,
+     "github": "automayt/ICS-pcap", "rev": "", "path": "DNP3/dnp3_read.pcap", "sha256": "",
+     "licence": "unverified", "source": "automayt", "note": "DNP3 over port 20000; 0x0564 data-link frames."},
+
+    {"proto": "s7comm", "name": "s7comm.pcap", "engine": "ics_capture", "expect": "s7comm", "min_messages": 1,
+     "github": "automayt/ICS-pcap", "rev": "", "path": "S7COMM/s7comm_downloading_block_db1.pcap", "sha256": "",
+     "licence": "unverified", "source": "automayt", "note": "S7comm over TPKT/COTP, port 102."},
+
+    {"proto": "iec104", "name": "iec104.pcap", "engine": "ics_capture", "expect": "iec104", "min_messages": 1,
+     "github": "automayt/ICS-pcap", "rev": "", "path": "IEC104/iec104.pcap", "sha256": "",
+     "licence": "unverified", "source": "automayt", "note": "IEC 60870-5-104 over port 2404; 0x68 APDUs."},
+
+    {"proto": "enip", "name": "enip.pcap", "engine": "ics_capture", "expect": "enip", "min_messages": 1,
+     "github": "automayt/ICS-pcap", "rev": "", "path": "ENIP/enip_cip.pcap", "sha256": "",
+     "licence": "unverified", "source": "automayt", "note": "EtherNet/IP encapsulation over port 44818 (CIP)."},
+
+    {"proto": "bacnet", "name": "bacnet.pcap", "engine": "ics_fieldbus", "expect": "bacnet", "min_messages": 1,
+     "github": "automayt/ICS-pcap", "rev": "", "path": "BACNET/bacnet.pcap", "sha256": "",
+     "licence": "unverified", "source": "automayt", "note": "BACnet/IP over UDP 47808; read via ics_fieldbus (scapy)."},
+
+    {"proto": "profinet", "name": "profinet.pcap", "engine": "ics_fieldbus", "expect": "profinet", "min_messages": 1,
+     "github": "automayt/ICS-pcap", "rev": "", "path": "PROFINET/profinet_dcp.pcap", "sha256": "",
+     "licence": "unverified", "source": "automayt", "note": "Profinet DCP/RT layer-2 (0x8892); read via ics_fieldbus (scapy)."},
+
+    {"proto": "goose", "name": "goose.pcap", "engine": "goose", "expect": "goose", "min_messages": 1,
+     "github": "automayt/ICS-pcap", "rev": "", "path": "IEC61850/goose.pcap", "sha256": "",
+     "licence": "unverified", "source": "automayt", "note": "IEC-61850 GOOSE layer-2 (0x88B8); read via network_ics_depth.parse_goose."},
+
+    {"proto": "mms", "name": "mms.pcap", "engine": "mms", "expect": "mms", "min_messages": 1,
+     "github": "automayt/ICS-pcap", "rev": "", "path": "IEC61850/mms.pcap", "sha256": "",
+     "licence": "unverified", "source": "automayt", "note": "IEC-61850 MMS over TPKT/COTP, port 102; read via ot_mms_services."},
+
+    {"proto": "opcua", "name": "opcua.pcap", "engine": "opcua", "expect": "opcua", "min_messages": 1,
+     "github": "automayt/ICS-pcap", "rev": "", "path": "OPCUA/opcua.pcap", "sha256": "",
+     "licence": "unverified", "source": "automayt", "note": "OPC UA binary over TCP 4840; read via ics_app_depth.analyze_opcua_stream."},
+
+    {"proto": "ethercat", "name": "ethercat.pcap", "engine": "ethercat", "expect": "ethercat", "min_messages": 1,
+     "github": "automayt/ICS-pcap", "rev": "", "path": "ETHERCAT/ethercat.pcap", "sha256": "",
+     "licence": "unverified", "source": "automayt", "note": "EtherCAT layer-2 (0x88A4); read via ics_app_depth.parse_ethercat_frame."}
+  ],
+  "missing": [
+    {"proto": "cip-io", "reason": "no distinct public EtherNet/IP implicit-I/O (port 2222) capture located at build time; the enip row covers explicit CIP. Operator: add a row if a public UDP I/O capture is found."}
+  ]
+}

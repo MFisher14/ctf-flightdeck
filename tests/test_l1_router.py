@@ -255,3 +255,14 @@ def test_a_file_in_a_pycache_folder_never_routes_an_engine_that_would_not_see_it
 def test_a_handout_that_is_not_a_directory_is_an_error(tmp_path):
     with pytest.raises(ValueError, match="not a directory"):
         route([engine("e", Route(keywords=("x",)))], challenge(), tmp_path / "missing")
+
+
+def test_an_any_route_reaches_every_challenge_and_says_so(handout, tmp_path):
+    rule = Route(any=True, priority=90)
+    for category, name in (("cry", "Tiny RSA"), ("web", "Portal"), ("warmup of an odd kind", "x")):
+        hits = route([engine("e", rule)], challenge(name, category=category), handout)
+        assert [(h.manifest.id, h.priority, h.reason) for h in hits] == [("e", 90, "any challenge")]
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert ids(route([engine("e", rule)], challenge(), empty)) == ["e"]  # a challenge with no handout file too
+    assert ids(route([engine("e", Route(keywords=("rsa",)))], challenge(), empty)) == []

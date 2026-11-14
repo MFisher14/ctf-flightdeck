@@ -1,0 +1,25 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). B-028.
+# Hand-written: wires the NPZ/NPY CPA engine into routing and intake.
+id = "common.cpa_npz"
+lane = "common"
+entry = "solvers.common.cpa_npz:solve"
+capabilities = ["executes", "crypto", "sidechannel", "cpa", "aes"]
+inputs = ["magic:\u0093NUMPY", "ext:.npz", "ext:.npy"]
+needs_tools = ["py:numpy"]
+cost_class = "medium"
+status = "active"
+
+[intake]  # B-002 input adapter: run on any challenge shipping a trace corpus, whatever the category
+select = "files"
+run = "challenge"
+match = ["ext:.npz", "ext:.npy", "magic:\u0093NUMPY"]
+timeout = 300
+
+[[routes]]  # any crypto/misc challenge shipping a NumPy trace corpus (file-gated, keyword-free for recall)
+category = ["crypto", "misc"]
+files = ["ext:.npz", "ext:.npy", "magic:\u0093NUMPY"]
+priority = 62
+
+[[routes]]  # CPA keywords, moved here from sidechannel_offline (import-only, so its route ran nothing)
+keywords = ["power trace", "cpa", "correlation power", "side channel trace"]
+priority = 60

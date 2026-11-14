@@ -1,0 +1,1409 @@
+[
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1145Z_7xgocspSowgK0Gto.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1145Z_7xgocspSowgK0Gto.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "6c5462263e132a0ef62960899dce6872cf9f6e2c5ce38e5914e49116229596f0",
+  "size": 43324
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1145Z_s7dpHbl38neqZbm2.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1145Z_s7dpHbl38neqZbm2.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "adf9d37d4079d76368ab6db572b6b8bc147424c2d4cfd8b7f06f043c62a8dbe9",
+  "size": 74280
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1150Z_1vnLavRRp0ek1mP4.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1150Z_1vnLavRRp0ek1mP4.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "fc5f81ad7ee46dd03fb99a44e28d647da13bdd177158d0d0bc4063a31daebe79",
+  "size": 2090
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1200Z_iLj9fb7yyUG9X4Bf.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1200Z_iLj9fb7yyUG9X4Bf.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "532219dbf2a5e25b6ce6cb5f0101d7163a44dfd7d68460c58614dd9337ff32cf",
+  "size": 521389
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1200Z_x9kHmzMa7cx6l9wM.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1200Z_x9kHmzMa7cx6l9wM.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "7db0ceb54599584f166a8413d5f17152c98bba275eaa3602f76b53b3255ad674",
+  "size": 173877
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1205Z_1dM7GQM67kudSyGD.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1205Z_1dM7GQM67kudSyGD.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "93c6883e797ca261a6604adfc9a36c4d652378c69b11a2c74a4a4be6e6dd3012",
+  "size": 16852
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1205Z_86g9Vok9HiUCgSI7.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1205Z_86g9Vok9HiUCgSI7.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "a307e7fd73fe4d6c2773d307df4d54df50d45310e3e33f96029804e336e5b1fd",
+  "size": 23923
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1205Z_SjF3IkuNXJkoHyar.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1205Z_SjF3IkuNXJkoHyar.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "00338bd79cddbbb3254008b586839013580a78c63c188462049df80e8bf238ca",
+  "size": 37502
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1205Z_UljXNp9xLp8nsAGc.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1205Z_UljXNp9xLp8nsAGc.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "b80a0b30ed930378cabe224a74194ab0f287a87b351ffe89ee052d58a279bf5a",
+  "size": 87236
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1205Z_dOIWyEekdNWhkpqY.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1205Z_dOIWyEekdNWhkpqY.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "19a0597672c12c825013b500e5e984f7ecf3fec78c8659a668384038a805697e",
+  "size": 34005
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1205Z_lKy08gyrqqRJyzsn.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1205Z_lKy08gyrqqRJyzsn.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "aadc493e96206ae4bef807fb6d7d5e65f3aefd22cfdc357429257b9b057f01a9",
+  "size": 1207
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1205Z_nx9Yx1FyJdBaTqKj.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1205Z_nx9Yx1FyJdBaTqKj.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "3f1965d4acecaafca089edb704eecb374280e7f8c7fd4ed4204ab06198d1f77f",
+  "size": 13158
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1205Z_zs3JGxETHr59VpkX.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1205Z_zs3JGxETHr59VpkX.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "d7f2e8aaae9084f6bad66dac3488a892a30750067981ad5659441f8539a7ed5c",
+  "size": 253171
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1210Z_2ru8PrDKZmsO3yWC.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1210Z_2ru8PrDKZmsO3yWC.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "18039fbf7a8175c0765f8b48d67f69961cd2833676b4df2d7c3eca31c22800e6",
+  "size": 3671
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1210Z_6CICdbJQM3beT7n3.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1210Z_6CICdbJQM3beT7n3.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "4272d7d4c3c745da389ab51064c805fcc2131fe7b806ddfc90a500c89fcfa3cb",
+  "size": 304844
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1210Z_QY5iPRtGUt0EpVaH.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1210Z_QY5iPRtGUt0EpVaH.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "e3cb50787cc49a1f24c1dda608140c00a8d68c424df98096682ebc906fa1a06c",
+  "size": 84571
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1210Z_RBxlxVrF890sGHGg.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1210Z_RBxlxVrF890sGHGg.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "9a7047d41e00ad15d0027ebd0e2d716b8b600ee89992ead4eff628c4b4e443cb",
+  "size": 23454
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1210Z_ZgEBhdXGdLTXGoIe.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1210Z_ZgEBhdXGdLTXGoIe.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "ac134b76a7f448fcddad82a08caf1bef19dc61c90e1497a2a66feb8e2486e380",
+  "size": 1286
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1210Z_bXGZYqBeCCsqWq1U.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1210Z_bXGZYqBeCCsqWq1U.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "2c3146a140b32b3646687a0d8ddcb5a4c6b16329368381d04e712ba4c201a449",
+  "size": 7708
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1210Z_vj0QE0Tf5ZmzMsCo.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1210Z_vj0QE0Tf5ZmzMsCo.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "0e159eeb5f59143d926a220ea3a7c37b9a8dcbedbefc199f12aa7f49c00ea376",
+  "size": 185658
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1215Z_5f9a6SYejzdNeREZ.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1215Z_5f9a6SYejzdNeREZ.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "fdab33c3726cc6d6d54a206b9cacea51622bf181f26b669a7ab3133d5a5ada5b",
+  "size": 34642
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1215Z_MifI13MOmOjRfXzJ.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1215Z_MifI13MOmOjRfXzJ.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "24a5fe7c3495f69a2bf88984253b56036593038b564fe4e43b15301bfac1458e",
+  "size": 69121
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1215Z_P0WZuP2zvLW2RcUo.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1215Z_P0WZuP2zvLW2RcUo.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "671473cbf41b065eef5cc50a82a11e4b5be549f9847c9dcf260a89e7a6285665",
+  "size": 38332
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1215Z_YMDRJwtmC82bUwAo.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1215Z_YMDRJwtmC82bUwAo.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "12db575e63f788eecdf029e9623e08c4b2aa8f64eb16fd1c7110c3630bbba192",
+  "size": 179286
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1215Z_YxpR6PTmNBivhnJJ.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1215Z_YxpR6PTmNBivhnJJ.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "00d6f881a044e0dac02b4e53557d90a441e34c2c2bb92e40754c719f75b4d998",
+  "size": 30483
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1215Z_Z8x5aqgtcXn5NEG9.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1215Z_Z8x5aqgtcXn5NEG9.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "6153e2d1f3bdddb117c679d512308b4319935b624ccf6735d6ccc0950c579e86",
+  "size": 146076
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1215Z_dTTFsx4I2m3om5Oy.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1215Z_dTTFsx4I2m3om5Oy.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "874eae00b719b3029b3459c8e51f2c77a98b2e4ab6f82a8342783500548a956e",
+  "size": 1044
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1215Z_nBsuPO1qSTEVerMD.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1215Z_nBsuPO1qSTEVerMD.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "c23afa21160ea63ce343ff4a5581b5dbf65edfb5fda19128074e680ceef03c93",
+  "size": 261535
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1220Z_8sBQhbu5YO94UV8p.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1220Z_8sBQhbu5YO94UV8p.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "60de7ee3aedcc2d7252d5e05a50e7d813a641cea4201f39bcf1a3343da912e8b",
+  "size": 7231
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1220Z_AkYyuTYmKtOUB1Lx.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1220Z_AkYyuTYmKtOUB1Lx.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "ba1dfc7bcc329f4583378fcd556c652fd4508ce112bc9dbd86046265c5f3fb91",
+  "size": 20678
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1220Z_WMiHxZgr5Hdd6UDc.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1220Z_WMiHxZgr5Hdd6UDc.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "f170b305c4f6a055ec2e213ea6131bdc14ba9c1ab66c32b0e89cc7a49d0ad031",
+  "size": 18452
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1220Z_ovtmbuX3ENJ119uH.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1220Z_ovtmbuX3ENJ119uH.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "05e8b61e760c59ae5bc6774cf8f6c114ca0a75635da0a1170bf6b2cef25d782e",
+  "size": 64866
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1220Z_r7NFD65BgeDMqD23.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1220Z_r7NFD65BgeDMqD23.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "fe16136905025eba9ec3a023656de09de6c9346fd9c8c2ac3c7eda6113160ed3",
+  "size": 89139
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1220Z_sM25jC0Ku0QcGkDa.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1220Z_sM25jC0Ku0QcGkDa.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "fe302204abe49e97c8825ce284b97972b9b656497bcb33fe6cc89690e345c06e",
+  "size": 17733
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1225Z_4iD2boYSOwmb6sWd.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1225Z_4iD2boYSOwmb6sWd.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "33f297a364e033a63e3735f53a1f9f93e5c3621ecc26b5087fe64e4694d28867",
+  "size": 15855
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1225Z_QqgbBkK0L13H8Wbv.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1225Z_QqgbBkK0L13H8Wbv.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "51723b9725de62c28c92eecf081471b8e06faf085ddb56f83fa40b2ae921268d",
+  "size": 3444
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1225Z_RL8g7SsRoNFvvVBW.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1225Z_RL8g7SsRoNFvvVBW.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "81cf3458347d6270b13279874e69018b58dd5c37933ca16905309fdfa5fd939b",
+  "size": 5879
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1225Z_qWyTCPHzELqDMshA.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1225Z_qWyTCPHzELqDMshA.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "4664679137550f36905c28a3022a505e9f9aabfeeed5e38907fbcb299de642c0",
+  "size": 4837
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1225Z_vMAR90Iiaqr6M5sR.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1225Z_vMAR90Iiaqr6M5sR.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "fc357f02f47d9dcd486842a1ee1aae7eaf7ff30e8e5b163e51139e54475115c8",
+  "size": 18632
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_04rtp9DpvIpSZzMr.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_04rtp9DpvIpSZzMr.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "b0efaf3c69b7a922c9ea92fee5378a4664206a6720f3e71c06a87ddf5819322f",
+  "size": 25150
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_9JM8uKEITHqwJKXr.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_9JM8uKEITHqwJKXr.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "b21419bb7b55bedab3895f532af99479f8562b2e428bb8c7273828da37ff31c8",
+  "size": 25994
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_9SJSsrxJ0ChF5VFb.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_9SJSsrxJ0ChF5VFb.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "465526269cc637a3fb56135990a6e3b9bbec64cf021603932a9951513e143a79",
+  "size": 96588
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_9dKPuRzdLzqZRjqm.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_9dKPuRzdLzqZRjqm.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "d946498fca5642c15f90eeac3bdf044cafefde3fb7eb7b62b4712d9fdbc79f7a",
+  "size": 2765
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_AvIajGd5rkz6vTy4.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_AvIajGd5rkz6vTy4.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "1948ad96edbd3818ecb484d4bb6af6a4c6c7ae3829da511548ab225b31188f8a",
+  "size": 72028
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_GyyPwrInk2rgv8V0.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_GyyPwrInk2rgv8V0.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "5727fe2a36a440e6886585b7669b216823dedbdecb4fed9e0e230ddae42dd999",
+  "size": 1938
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_KV9LZlfXqBel7nqf.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_KV9LZlfXqBel7nqf.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "c468355f897de1ebcb27e785fbe88bba4ac6cdb8753a14d75f2738e05faa8a9e",
+  "size": 55594
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_OU6Ha25B4GGhUIMr.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_OU6Ha25B4GGhUIMr.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "d07214cdbda0a31747430d6c3641f01488adc9edd025c62f2518157a0a21632a",
+  "size": 8368
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_ZtUNbBkwAu98FPZb.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_ZtUNbBkwAu98FPZb.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "9e9b3b0466fbc58e1c4f63230a46227ff066693aa51dc555ae6122a832aa6aa1",
+  "size": 95167
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_lHgkh3VeI3XnjZSL.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_lHgkh3VeI3XnjZSL.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "03dc80d052dea639348bb5de85cfc04e4e3a7e5bd6b69abf0d6795a53c37518f",
+  "size": 114451
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_s2m4APJ8BhmXSIE6.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_s2m4APJ8BhmXSIE6.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "b007555eec6b1646d11fd321ae4b9d9c33f55bc4734ae7542afb8805a7acce28",
+  "size": 2329
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1230Z_soULWstxp7lqsODg.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1230Z_soULWstxp7lqsODg.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "e49f4da4cb01e29f1d19a4fb77b1fb1c1a6811264ce0746058b80675335f66ce",
+  "size": 4077
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1235Z_Vp7r3boWJKtPb3wM.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1235Z_Vp7r3boWJKtPb3wM.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "f2cd671e0b6472fc4ddeb325f837e09ad6bb77e1c6f6851ec9876e6f5fd3c0f4",
+  "size": 1074
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1235Z_YbVFCP9AYzJDhHV9.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1235Z_YbVFCP9AYzJDhHV9.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "b8ddb7d1878f13143a23f8a84e32dee589f4d1deb72392a2b02e5541eb3651cb",
+  "size": 225571
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1235Z_kboLbHJlz2H6cLyo.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1235Z_kboLbHJlz2H6cLyo.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "3399d7b944d08f89b5bc09d5ed569c7ee61875c4e59d7949607db5e45e007f95",
+  "size": 7301
+ },
+ {
+  "to": "cloudlogs/aws_dataset/218007301253_CloudTrail_us-east-1_20230710T1240Z_C1qUFaqvZS64BcIN.json",
+  "url": "https://raw.githubusercontent.com/invictus-ir/aws_dataset/main/CloudTrail/218007301253_CloudTrail_us-east-1_20230710T1240Z_C1qUFaqvZS64BcIN.json",
+  "note": "Invictus IR: CloudTrail of a Stratus Red Team run, account 218007301253, 2023-07-10",
+  "sha256": "5aad0385e130b10c9c5e451f642a4d33d6332a0d7730738ebdc6d92f3b2803c5",
+  "size": 2090
+ },
+ {
+  "to": "cloudlogs/o365_dataset/auditrecords.7z",
+  "url": "https://raw.githubusercontent.com/invictus-ir/o365_dataset/main/auditrecords.7z",
+  "unpack": "7z",
+  "note": "Invictus IR: Unified Audit Log of a simulated BEC",
+  "sha256": "2fda621cb66771615f3d40ad6e7c5d7d8d968f7b5dd7580b6bdc22c5f6cf76e9",
+  "size": 598237
+ },
+ {
+  "to": "cloudlogs/beats/cloudtrail/assume-role-json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/aws/cloudtrail/test/assume-role-json.log",
+  "note": "Elastic beats test log",
+  "sha256": "7c6a4559e6bd4e78268f9790b2b2dc7df36a45ad386a5ff896cb815ca517e44c",
+  "size": 2404
+ },
+ {
+  "to": "cloudlogs/beats/cloudtrail/console-login-json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/aws/cloudtrail/test/console-login-json.log",
+  "note": "Elastic beats test log",
+  "sha256": "fc0fedcdf3e36a46f2a3820baf53c5f1e982f2105f8b261a9153cc5edf1ca0ea",
+  "size": 2401
+ },
+ {
+  "to": "cloudlogs/beats/cloudtrail/create-access-key-json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/aws/cloudtrail/test/create-access-key-json.log",
+  "note": "Elastic beats test log",
+  "sha256": "134017871e333a4f8fd2b7532f325ab30b56c86520836970cbbf456fa6990c7e",
+  "size": 855
+ },
+ {
+  "to": "cloudlogs/beats/cloudtrail/create-user-json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/aws/cloudtrail/test/create-user-json.log",
+  "note": "Elastic beats test log",
+  "sha256": "eb95038e2169bd2640fdd6a8f1cc37cca6a9d9084ebe0d56bdee9b56844dd1fa",
+  "size": 614
+ },
+ {
+  "to": "cloudlogs/beats/cloudtrail/stop-logging-json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/aws/cloudtrail/test/stop-logging-json.log",
+  "note": "Elastic beats test log",
+  "sha256": "8d1defc9c043237f78357c27e8e7be013c57a68e4d5ead1fc1040b9fa5869148",
+  "size": 856
+ },
+ {
+  "to": "cloudlogs/beats/cloudtrail/delete-trail-json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/aws/cloudtrail/test/delete-trail-json.log",
+  "note": "Elastic beats test log",
+  "sha256": "3183ef0999742c5447a0ce9717f153269ebe9814c07f5a90427ef7bada5179e2",
+  "size": 719
+ },
+ {
+  "to": "cloudlogs/beats/cloudtrail/deactivate-mfa-device-json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/aws/cloudtrail/test/deactivate-mfa-device-json.log",
+  "note": "Elastic beats test log",
+  "sha256": "5f62347f40cc16de6c58d3b7aeb6941f0184aa26bf1fac2111d3b9b8dc53ae2a",
+  "size": 799
+ },
+ {
+  "to": "cloudlogs/beats/cloudtrail/add-user-to-group-json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/aws/cloudtrail/test/add-user-to-group-json.log",
+  "note": "Elastic beats test log",
+  "sha256": "e78e7275b6c906310d36dd89f1c6b38a9eafc03b09920bb6c82d21ee2f18f271",
+  "size": 570
+ },
+ {
+  "to": "cloudlogs/beats/cloudtrail/update-login-profile-json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/aws/cloudtrail/test/update-login-profile-json.log",
+  "note": "Elastic beats test log",
+  "sha256": "ccee2cb765decf87e942d3ede4b63800d0dc63bb1b1a82e2c621c35343b0f4fa",
+  "size": 743
+ },
+ {
+  "to": "cloudlogs/beats/cloudtrail/delete-bucket-json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/aws/cloudtrail/test/delete-bucket-json.log",
+  "note": "Elastic beats test log",
+  "sha256": "92c9816b6480dace799f305ad5732c7dc56e70977d542193a01f7e4e8719a4e4",
+  "size": 1002
+ },
+ {
+  "to": "cloudlogs/beats/cloudtrail/create-key-pair-json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/aws/cloudtrail/test/create-key-pair-json.log",
+  "note": "Elastic beats test log",
+  "sha256": "a478b4c25d9dee0dd9711d33473f4d1482fdff458b458f7415ba24d2f3ca0bb0",
+  "size": 772
+ },
+ {
+  "to": "cloudlogs/beats/azure/signinlogs.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/azure/signinlogs/test/signinlogs.log",
+  "note": "Elastic beats test log (Azure Monitor)",
+  "sha256": "6feff54dbc7be123f31639363779d94d2a3421807476f979a04987362572a223",
+  "size": 7651
+ },
+ {
+  "to": "cloudlogs/beats/azure/test-non-interactive-user-signin.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/azure/signinlogs/test/test-non-interactive-user-signin.log",
+  "note": "Elastic beats test log (Azure Monitor)",
+  "sha256": "647a5435bc48cd41fd2e3c7159acf3bf10e31148d579f06076217eaf23a93919",
+  "size": 6181
+ },
+ {
+  "to": "cloudlogs/beats/azure/test-signinlogs-raw.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/azure/signinlogs/test/test-signinlogs-raw.log",
+  "note": "Elastic beats test log (Azure Monitor)",
+  "sha256": "f30cd69ccb340782cdbcd2be0e5bbe1326c205d1108db6c37ce700bce8aa6da0",
+  "size": 3395
+ },
+ {
+  "to": "cloudlogs/beats/azure/auditlogs.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/azure/auditlogs/test/auditlogs.log",
+  "note": "Elastic beats test log (Azure Monitor)",
+  "sha256": "ea5eff811b4ac6f48ca60ab55f9e0dae635cbd7ab37ea6f8749cf9e7ff0a269d",
+  "size": 1099
+ },
+ {
+  "to": "cloudlogs/beats/azure/activitylogs.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/azure/activitylogs/test/activitylogs.log",
+  "note": "Elastic beats test log (Azure Monitor)",
+  "sha256": "cd2b08c7ac3975fd0438acc1c44df5e999d69862d4650ddeff3a7efd0a9c03dd",
+  "size": 1940
+ },
+ {
+  "to": "cloudlogs/beats/azure/activitylogs_identity.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/azure/activitylogs/test/activitylogs_identity.log",
+  "note": "Elastic beats test log (Azure Monitor)",
+  "sha256": "abe47f805ea5839ea89c53591eeebd2954c5e87eb3df5979768b5f3a2e67213b",
+  "size": 5591
+ },
+ {
+  "to": "cloudlogs/beats/gcp/audit-log-entries.json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/gcp/audit/test/audit-log-entries.json.log",
+  "note": "Elastic beats test log",
+  "sha256": "46b36c11355183e25feff18633e149b5886648c13a1b1c8352d8210a4bb7ba91",
+  "size": 15340
+ },
+ {
+  "to": "cloudlogs/beats/o365/01-exchange-admin.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/o365/audit/test/01-exchange-admin.log",
+  "note": "Elastic beats test log (Management Activity API)",
+  "sha256": "32cd38454c553dd8a293ab92ef88a922bf7bd55a299a64e7cf70d0a6c3d0a98d",
+  "size": 146472
+ },
+ {
+  "to": "cloudlogs/beats/o365/02-exchange-item.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/o365/audit/test/02-exchange-item.log",
+  "note": "Elastic beats test log (Management Activity API)",
+  "sha256": "508815670c9b0c7d7ac7530b46882d196dab0e0c2320d9497927636982b9ceeb",
+  "size": 12073
+ },
+ {
+  "to": "cloudlogs/beats/o365/08-azuread-users.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/o365/audit/test/08-azuread-users.log",
+  "note": "Elastic beats test log (Management Activity API)",
+  "sha256": "eb12dec1f916dff60de36a4f51801de968d00eae23c47e0375a5b8fc32ea9de7",
+  "size": 44936
+ },
+ {
+  "to": "cloudlogs/beats/o365/15-azuread-sts-logon.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/o365/audit/test/15-azuread-sts-logon.log",
+  "note": "Elastic beats test log (Management Activity API)",
+  "sha256": "703c7a5f7b8bb60b0ea5a663cbad3fa6b316033218da81bfb67fc2b79eab8361",
+  "size": 97581
+ },
+ {
+  "to": "cloudlogs/beats/o365/04-sharepoint.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/o365/audit/test/04-sharepoint.log",
+  "note": "Elastic beats test log (Management Activity API)",
+  "sha256": "c71bd00dbf80f81838fe3934640909ecbca4c636adaf59d16abeb421dceb951e",
+  "size": 3472
+ },
+ {
+  "to": "cloudlogs/beats/o365/25-ms-teams.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/o365/audit/test/25-ms-teams.log",
+  "note": "Elastic beats test log (Management Activity API)",
+  "sha256": "4f22ebd5b5fe0aa348c6b4d9a9c4f7a1c49d2a20c047ab15d5e4693c365147a1",
+  "size": 1959
+ },
+ {
+  "to": "cloudlogs/beats/okta/okta-system-test.json.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/filebeat/module/okta/system/test/okta-system-test.json.log",
+  "note": "Elastic beats test log",
+  "sha256": "6843183a94de9f5b11f5c87a432539742593cda1fa1f14dc3b9a42f631e58265",
+  "size": 19949
+ },
+ {
+  "to": "cloudlogs/plaso/aws_cloudtrail.jsonl",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/jsonl/aws_cloudtrail.jsonl",
+  "note": "plaso test data",
+  "sha256": "3ff219b4c3ac819891506665de40373373c1edb41cf827c8e5409c22f805e217",
+  "size": 13060
+ },
+ {
+  "to": "cloudlogs/plaso/azure_activity_log.jsonl",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/jsonl/azure_activity_log.jsonl",
+  "note": "plaso test data",
+  "sha256": "ac993ed68fe298765872d1e5c56a59f3bee028e4c5773f25f4546650ff44d47f",
+  "size": 13563
+ },
+ {
+  "to": "cloudlogs/plaso/gcp_logging.jsonl",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/jsonl/gcp_logging.jsonl",
+  "note": "plaso test data",
+  "sha256": "028852c61f98fc63e39b3f17f19ab3bbaec4837b386dfcd3c811fab43042ca9b",
+  "size": 21883
+ },
+ {
+  "to": "cloudlogs/plaso/microsoft_audit_log.jsonl",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/jsonl/microsoft_audit_log.jsonl",
+  "note": "plaso test data",
+  "sha256": "d9b3f230989b63055441e46b48d8aedbae377305448a8d4189e83eb84b1bd890",
+  "size": 3006
+ },
+ {
+  "to": "cloudlogs/otrf/ec2_proxy_s3_exfiltration.zip",
+  "url": "https://raw.githubusercontent.com/OTRF/Security-Datasets/master/datasets/atomic/aws/collection/ec2_proxy_s3_exfiltration.zip",
+  "unpack": "zip",
+  "note": "OTRF Security-Datasets: CloudTrail",
+  "sha256": "83cc349afa5672ae46fc38a824946b470f2f3fa39f22889b59dce9fda43fe74d",
+  "size": 14725
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/create_nginx_pod_privileged.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/create_nginx_pod_privileged.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "9721a50c6bbe5175132451c7c2cb7630e87dbf2fc7e0db4bd7e5477589ab74cf",
+  "size": 3356
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/exec_pod.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/exec_pod.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "56ff2b96b885f633fe35bb7273950e92d3f414cfd03bf7e1a02a7e3e20bc1a7f",
+  "size": 871
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/attach_pod.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/attach_pod.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "68064afdb27b7a62b864af4a587442c72fc61a69f809c9b56ffda39bdf921c5a",
+  "size": 848
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/create_cluster_role_wildcard_resources.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/create_cluster_role_wildcard_resources.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "06e38ed76add33bd66052ab1d61531495f2a64688e8f3f25bed0138ba14ffb6d",
+  "size": 2016
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/create_cluster_role_write_privileges.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/create_cluster_role_write_privileges.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "820d9eb111f8bad5bdb20d25735194045f0822f061a754cb2d0e414cc37439fd",
+  "size": 2014
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/create_nginx_pod_unprivileged.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/create_nginx_pod_unprivileged.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "4b3890f45fd010a7ffdd203cfa0a18c987af77798af1c4cc83c4271f58200ec3",
+  "size": 3280
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/create_nginx_pod_hostnetwork.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/create_nginx_pod_hostnetwork.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "e98646103b0881c789a3fae1762d3bbcae1c19854b6c82a4b293e9f68a2bcee2",
+  "size": 3284
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/attach_cluster_admin_role.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/attach_cluster_admin_role.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "c971d94bff606eaab56226d88bdcf23622394d2add19f8951af3f9414c746493",
+  "size": 1907
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/create_serviceaccount_kube_system_namespace.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/create_serviceaccount_kube_system_namespace.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "94c42ea47af2e87234527bd7ac1ecbb8a067ddba3326f4e88758590890463a77",
+  "size": 850
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/create_kube_system_secret.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/create_kube_system_secret.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "0c597fd26b0d21e853ab33acb29f8371754a8a690c088e041756fa86f1dde98b",
+  "size": 729
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/create_service_account_token_secret.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/create_service_account_token_secret.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "4c8c71d6b5ec9b35ac73ded661faaf71f5d52314bd0fec153173d25d3b28fe1f",
+  "size": 919
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/create_secret.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/create_secret.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "b2e1cbce5cf4857fda309085b5e285255d46821143567a90816d62071281a73b",
+  "size": 726
+ },
+ {
+  "to": "cloudlogs/falco_k8s_audit/anonymous_creates_namespace_foo.json",
+  "url": "https://raw.githubusercontent.com/falcosecurity/falco/0.30.0/test/trace_files/k8s_audit/anonymous_creates_namespace_foo.json",
+  "note": "falco 0.30.0 test trace: Kubernetes audit events",
+  "sha256": "0fe3bd0e3c423febda3c74fd2feed2b776cc1ff9eb5c51b1102b0715ae719fbb",
+  "size": 857
+ },
+ {
+  "to": "cloud_container/gcr/hello-world-v25.tar",
+  "url": "https://raw.githubusercontent.com/google/go-containerregistry/main/pkg/v1/tarball/testdata/hello-world-v25.tar",
+  "note": "go-containerregistry test image (docker save form)",
+  "sha256": "487f5ad2ace32507803def7613d21b81886dbf1a89c3abd6ee37aef63fae86b7",
+  "size": 20480
+ },
+ {
+  "to": "cloud_container/gcr/test_image_1.tar",
+  "url": "https://raw.githubusercontent.com/google/go-containerregistry/main/pkg/v1/tarball/testdata/test_image_1.tar",
+  "note": "go-containerregistry test image (docker save form)",
+  "sha256": "d7c6f714b51ed5fa83fe3dbf9b520650a1d9a68114de6bb736aa49063981cfaa",
+  "size": 20480
+ },
+ {
+  "to": "cloud_container/gcr/test_bundle.tar",
+  "url": "https://raw.githubusercontent.com/google/go-containerregistry/main/pkg/v1/tarball/testdata/test_bundle.tar",
+  "note": "go-containerregistry test image (docker save form)",
+  "sha256": "5289df2015ed5af4a2ac381386cceba85425b3e328594aee78992f3e7ce0d45e",
+  "size": 40960
+ },
+ {
+  "to": "cloud_container/gcr/whiteout_image.tar",
+  "url": "https://raw.githubusercontent.com/google/go-containerregistry/main/pkg/v1/mutate/testdata/whiteout_image.tar",
+  "note": "go-containerregistry test image (docker save form)",
+  "sha256": "32bca9d1c437ceeb883fba123f4c820795b102325943ed61b4fa3682674a1499",
+  "size": 51200
+ },
+ {
+  "to": "cloud_container/gcr/overwritten_file.tar",
+  "url": "https://raw.githubusercontent.com/google/go-containerregistry/main/pkg/v1/mutate/testdata/overwritten_file.tar",
+  "note": "go-containerregistry test image (docker save form)",
+  "sha256": "912e73ff0adacb9745629f69ffa4d2c22d66901b8b80113996f9bec890e72573",
+  "size": 51200
+ },
+ {
+  "to": "cloud_container/gcr/source_image.tar",
+  "url": "https://raw.githubusercontent.com/google/go-containerregistry/main/pkg/v1/mutate/testdata/source_image.tar",
+  "note": "go-containerregistry test image (docker save form)",
+  "sha256": "9d5756dab05699bec24939f9e0324c385a095b75544b27422f0e51a011d6343d",
+  "size": 20480
+ },
+ {
+  "to": "cloud_container/gcr/oci_one_image/index.json",
+  "url": "https://raw.githubusercontent.com/google/go-containerregistry/main/pkg/v1/layout/testdata/test_index_one_image/index.json",
+  "note": "go-containerregistry OCI layout",
+  "sha256": "3d6a884d52c8fcb60b40b462028f600a3f1f7c1fa6da25e85d211025fbf5e7c4",
+  "size": 186
+ },
+ {
+  "to": "cloud_container/gcr/oci_one_image/oci-layout",
+  "url": "https://raw.githubusercontent.com/google/go-containerregistry/main/pkg/v1/layout/testdata/test_index_one_image/oci-layout",
+  "note": "go-containerregistry OCI layout",
+  "sha256": "0cdedc0869d60bb59e3dde736f996025e70318180587e049cfa22f80d67aa8e5",
+  "size": 31
+ },
+ {
+  "to": "cloud_container/terraform/roundtrip__v4-simple.in.tfstate",
+  "url": "https://raw.githubusercontent.com/hashicorp/terraform/main/internal/states/statefile/testdata/roundtrip/v4-simple.in.tfstate",
+  "note": "Terraform's own test state",
+  "sha256": "37a0dfed8e714dc56bfd8c24289be8c22abfd385dfa452109df9423ae4b1f213",
+  "size": 1770
+ },
+ {
+  "to": "cloud_container/terraform/roundtrip__v4-modules.in.tfstate",
+  "url": "https://raw.githubusercontent.com/hashicorp/terraform/main/internal/states/statefile/testdata/roundtrip/v4-modules.in.tfstate",
+  "note": "Terraform's own test state",
+  "sha256": "c87e422b9c4190e835daf835681ff716c66af538920d7699617d6e92b4b3fd5d",
+  "size": 2014
+ },
+ {
+  "to": "cloud_container/terraform/roundtrip__v3-simple.in.tfstate",
+  "url": "https://raw.githubusercontent.com/hashicorp/terraform/main/internal/states/statefile/testdata/roundtrip/v3-simple.in.tfstate",
+  "note": "Terraform's own test state",
+  "sha256": "ee263d01b2085d9c5f607cdc79aa67dec0b43333644854413e2d49757ddd6014",
+  "size": 3149
+ },
+ {
+  "to": "cloud_container/terraform/state-list-nested-modules__terraform.tfstate",
+  "url": "https://raw.githubusercontent.com/hashicorp/terraform/main/internal/command/testdata/state-list-nested-modules/terraform.tfstate",
+  "note": "Terraform's own test state",
+  "sha256": "5f6547eeffa6d41b11a1697e5e44e6e4f4a958b153f612b9cbd9342f9e30f40d",
+  "size": 2594
+ },
+ {
+  "to": "cloud_container/terraform/fully_populated_complex_update__terraform.tfstate",
+  "url": "https://raw.githubusercontent.com/hashicorp/terraform/main/testing/equivalence-tests/tests/fully_populated_complex_update/terraform.tfstate",
+  "note": "Terraform's own test state",
+  "sha256": "c82414effe2ce0ef7f3055603f48843327e618007c1f143a2138e11e4415beef",
+  "size": 17408
+ },
+ {
+  "to": "cloud_container/plaso_docker/config.json",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/docker/containers/e7d0b7ea5ccf08366e2b0c8afa2318674e8aefe802315378125d2bb83fe3110c/config.json",
+  "note": "plaso test data: a Docker container config",
+  "sha256": "decff6bb853507934c523ecb6def719ac56c983740892492f65f5db7ef740c9e",
+  "size": 2552
+ },
+ {
+  "to": "edr_persistence/otrf/empire_persistence_registry_modification_run_keys_elevated_user.zip",
+  "url": "https://raw.githubusercontent.com/OTRF/Security-Datasets/master/datasets/atomic/windows/persistence/host/empire_persistence_registry_modification_run_keys_elevated_user.zip",
+  "unpack": "zip",
+  "note": "OTRF Security-Datasets (Mordor): Windows events as JSON lines",
+  "sha256": "2809354d679025859d723be3ceb1e2c9f9e5dde2ebec5bbea7c398e165a9b67d",
+  "size": 102384
+ },
+ {
+  "to": "edr_persistence/otrf/empire_schtasks_creation_standard_user.zip",
+  "url": "https://raw.githubusercontent.com/OTRF/Security-Datasets/master/datasets/atomic/windows/persistence/host/empire_schtasks_creation_standard_user.zip",
+  "unpack": "zip",
+  "note": "OTRF Security-Datasets (Mordor): Windows events as JSON lines",
+  "sha256": "b073a18420c90394cd2b6ad7589c78d90eba32dc155ed04b12ac824a8fc591b4",
+  "size": 263732
+ },
+ {
+  "to": "edr_persistence/otrf/cmd_userinitmprlogonscript_batch.zip",
+  "url": "https://raw.githubusercontent.com/OTRF/Security-Datasets/master/datasets/atomic/windows/persistence/host/cmd_userinitmprlogonscript_batch.zip",
+  "unpack": "zip",
+  "note": "OTRF Security-Datasets (Mordor): Windows events as JSON lines",
+  "sha256": "53a01d6976b7567a2464628d850c51cc48b1a91a932cd2b0e110a510bcedf858",
+  "size": 12864
+ },
+ {
+  "to": "edr_persistence/otrf/empire_launcher_vbs.zip",
+  "url": "https://raw.githubusercontent.com/OTRF/Security-Datasets/master/datasets/atomic/windows/execution/host/empire_launcher_vbs.zip",
+  "unpack": "zip",
+  "note": "OTRF Security-Datasets (Mordor): Windows events as JSON lines",
+  "sha256": "812da270cf8cda6f1948fb6275410f15dc1794d0bd6b623c9c25b2518285019c",
+  "size": 313016
+ },
+ {
+  "to": "edr_persistence/otrf/psh_lsass_memory_dump_comsvcs.zip",
+  "url": "https://raw.githubusercontent.com/OTRF/Security-Datasets/master/datasets/atomic/windows/credential_access/host/psh_lsass_memory_dump_comsvcs.zip",
+  "unpack": "zip",
+  "note": "OTRF Security-Datasets (Mordor): Windows events as JSON lines",
+  "sha256": "0af9e920220d746432f0972be83ad057629695540aecd68c15869d190786e1ae",
+  "size": 17957
+ },
+ {
+  "to": "edr_persistence/otrf/cmd_bitsadmin_download_psh_script.zip",
+  "url": "https://raw.githubusercontent.com/OTRF/Security-Datasets/master/datasets/atomic/windows/defense_evasion/host/cmd_bitsadmin_download_psh_script.zip",
+  "unpack": "zip",
+  "note": "OTRF Security-Datasets (Mordor): Windows events as JSON lines",
+  "sha256": "8fb7bc9f3d82f672dc39a55e50006137aa540c4a9860acdcc5d08a4fd609b594",
+  "size": 51563
+ },
+ {
+  "to": "edr_persistence/otrf/covenant_persistwmi.tar.gz",
+  "url": "https://raw.githubusercontent.com/OTRF/Security-Datasets/master/datasets/atomic/windows/persistence/host/covenant_persistwmi.tar.gz",
+  "unpack": "tgz",
+  "note": "OTRF Security-Datasets (Mordor)",
+  "sha256": "cd8494b66d250044917dd10132be310fb40b113c09abc01e82b3e9c22d22c4a3",
+  "size": 98339
+ },
+ {
+  "to": "edr_persistence/otrf/covenant_persiststartup.tar.gz",
+  "url": "https://raw.githubusercontent.com/OTRF/Security-Datasets/master/datasets/atomic/windows/persistence/host/covenant_persiststartup.tar.gz",
+  "unpack": "tgz",
+  "note": "OTRF Security-Datasets (Mordor)",
+  "sha256": "d91406f011e0181c58746df35854ca947413ba0f707439632122843b0d06c749",
+  "size": 105962
+ },
+ {
+  "to": "edr_persistence/ctf2024_nightmare/logs-parts1-5.zip",
+  "repo": "Huntress-CTF-2024/forensics/nightmare_on_hunt_street_COMPLETED/logs-parts1-5.zip",
+  "unpack": "zip_evtx",
+  "note": "Huntress CTF 2024, Nightmare on Hunt Street (answers in the write-up)",
+  "sha256": "9c41270027093e8d46b8acf6c7cfbc052b9a786b7315af26ed2d0d4dbbdde139",
+  "size": 90786
+ },
+ {
+  "to": "edr_persistence/ctf2024_little_shop/little_shop_of_hashes_logs.zip",
+  "repo": "Huntress-CTF-2024/forensics/little_shop_of_hashes_COMPLETED/little_shop_of_hashes_logs.zip",
+  "unpack": "zip_evtx",
+  "note": "Huntress CTF 2024, Little Shop of Hashes",
+  "sha256": "129cfadc98bd0ce75023116396fb7d8b6f815187d6b49c7e20600299a6cff4c4",
+  "size": 123204
+ },
+ {
+  "to": "edr_persistence/ctf2025_webshellz/Sysmon.evtx",
+  "repo": "CTF-Huntress_2025/day22/webshellz/Sysmon.evtx",
+  "unpack": "evtx_xml",
+  "note": "Huntress CTF 2025 day 22, Webshellz",
+  "sha256": "4087bc27b1ca85e8cb385d593710123a434e9573fbbec45451a009ee3c2d1442",
+  "size": 1118208
+ },
+ {
+  "to": "edr_persistence/ctf2025_webshellz/HTTP.log",
+  "repo": "CTF-Huntress_2025/day22/webshellz/HTTP.log",
+  "note": "Huntress CTF 2025 day 22, Webshellz",
+  "sha256": "1a3b27199605a4d75843b17b85602c572cbf0908be944ba0164656794c6c6457",
+  "size": 5860
+ },
+ {
+  "to": "edr_persistence/plaso/wintask.job",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/wintask.job",
+  "note": "plaso test data",
+  "sha256": "9f7cee1b79a240e2f837e27b1bc50e9e3d9d7b99f1a866f9cfdd18f7927245ac",
+  "size": 896
+ },
+ {
+  "to": "nix_host/beats/auth/auth-ubuntu1204.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/system/auth/test/auth-ubuntu1204.log",
+  "note": "Elastic beats test log",
+  "sha256": "68d07aee983dfb653fa7e9be496e57f8a397df5a0acdddfd507e7374286ff66c",
+  "size": 141895
+ },
+ {
+  "to": "nix_host/beats/auth/secure-rhel7.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/system/auth/test/secure-rhel7.log",
+  "note": "Elastic beats test log",
+  "sha256": "d5668a474cd78681c47553faf8bad5c7892e8b9736f0a8ccf7917f55e735f8fd",
+  "size": 108963
+ },
+ {
+  "to": "nix_host/beats/auth/test.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/system/auth/test/test.log",
+  "note": "Elastic beats test log",
+  "sha256": "f093dfe2e3a11e1750d83aef1566658b6d228e25dd461b04b2be972708f41a45",
+  "size": 1206
+ },
+ {
+  "to": "nix_host/beats/auth/timestamp.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/system/auth/test/timestamp.log",
+  "note": "Elastic beats test log",
+  "sha256": "cf11ab7c6af651b48326b8103b6941962ae40275f4b33638c60a0bbc5e3ac9f3",
+  "size": 187
+ },
+ {
+  "to": "nix_host/beats/auditd/audit-rhel7.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/auditd/log/test/audit-rhel7.log",
+  "note": "Elastic beats test log",
+  "sha256": "5585901ca302a096dbf70ca344542bfbbecc0cb06898c6e16a25306a8387de80",
+  "size": 469124
+ },
+ {
+  "to": "nix_host/beats/auditd/audit-rhel6.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/auditd/log/test/audit-rhel6.log",
+  "note": "Elastic beats test log",
+  "sha256": "8092fdab90a642ae93f16fcc60daebcdf2326ccaa6ab043c8e090263b8597a1e",
+  "size": 2498
+ },
+ {
+  "to": "nix_host/beats/auditd/audit-ubuntu1604.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/auditd/log/test/audit-ubuntu1604.log",
+  "note": "Elastic beats test log",
+  "sha256": "c95805f95b8d8ef3e8484505bc1904615d98e35735bd335e3c2a72b521c4b383",
+  "size": 913
+ },
+ {
+  "to": "nix_host/beats/auditd/execve.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/auditd/log/test/execve.log",
+  "note": "Elastic beats test log",
+  "sha256": "e7cee9cfda9393c2e61b976708a5f595098a135b2f7b84a9a8baceb65c53df52",
+  "size": 11173
+ },
+ {
+  "to": "nix_host/beats/auditd/useradd.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/auditd/log/test/useradd.log",
+  "note": "Elastic beats test log",
+  "sha256": "38e7cedfb9438d574af15e11f2dab77666f42d75dd8ee790d087f10382dad11c",
+  "size": 1618
+ },
+ {
+  "to": "nix_host/beats/auditd/test.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/auditd/log/test/test.log",
+  "note": "Elastic beats test log",
+  "sha256": "27a00de9ad61793253d951e45190f54589f6bed762c3521a17bb8b1164459c16",
+  "size": 3864
+ },
+ {
+  "to": "nix_host/beats/auditd/rare.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/auditd/log/test/rare.log",
+  "note": "Elastic beats test log",
+  "sha256": "14f8aceedc5e38f5671b72244507935622623ff38c7b390f7d985f84e4e4103a",
+  "size": 5942
+ },
+ {
+  "to": "nix_host/beats/auditbeat/sudo.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/auditbeat/module/auditd/testdata/sudo.log",
+  "note": "Elastic auditbeat test data",
+  "sha256": "0d231c473ece1e1e5538e57ba20561c54340fb018df1e706037a28c414542707",
+  "size": 3907
+ },
+ {
+  "to": "nix_host/beats/auditbeat/userlogin.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/auditbeat/module/auditd/testdata/userlogin.log",
+  "note": "Elastic auditbeat test data",
+  "sha256": "d7e152654b9b91e0349889ed32dc3d042519a858efe028b48418f1434100d7ab",
+  "size": 800
+ },
+ {
+  "to": "nix_host/beats/auditbeat/passwd.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/auditbeat/module/auditd/testdata/passwd.log",
+  "note": "Elastic auditbeat test data",
+  "sha256": "c071e4695afa05f2db415f40d92a1a3c264b96f97ec6fd639a9a77759da7508c",
+  "size": 842
+ },
+ {
+  "to": "nix_host/beats/auditbeat/sudo-asuser.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/auditbeat/module/auditd/testdata/sudo-asuser.log",
+  "note": "Elastic auditbeat test data",
+  "sha256": "a665d7b0b2441a7692d803b63d8d13569fa97b6006a2ab4481ea07541e6dc12c",
+  "size": 957
+ },
+ {
+  "to": "nix_host/beats/login/wtmp",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/auditbeat/module/system/login/testdata/wtmp",
+  "note": "Elastic auditbeat login test data",
+  "sha256": "a7336cc1ebd80de55410801dc2ef57460639ecfa5efd29929cfcfe5797677a27",
+  "size": 384
+ },
+ {
+  "to": "nix_host/beats/login/btmp.amd",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/x-pack/auditbeat/module/system/login/testdata/btmp.amd",
+  "note": "Elastic auditbeat login test data",
+  "sha256": "be98414aa0df1dbae1f3e8caaef31c8b97dc262a9f48bf7da0a4441bbc31bc89",
+  "size": 1536
+ },
+ {
+  "to": "nix_host/beats/journald/corner-cases.json",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/input/journald/pkg/journalctl/testdata/corner-cases.json",
+  "note": "Elastic beats journald test data",
+  "sha256": "e67c531e16aea9551bb1a66bff46b920f96b1be53ebf5640d80dd56022dff720",
+  "size": 15180
+ },
+ {
+  "to": "nix_host/beats/journald/sample-journal-event.json",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/input/journald/pkg/journalctl/testdata/sample-journal-event.json",
+  "note": "Elastic beats journald test data",
+  "sha256": "2801e3d1016d25f310f510f55b693071747415de4a07b6f588813249ba58eab9",
+  "size": 1387
+ },
+ {
+  "to": "nix_host/beats/journald/journal1.export",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/input/journald/testdata/journal1.export",
+  "note": "Elastic beats journald test data",
+  "sha256": "bce66472c8db09dc8e24849032f6b886e23562700e89b219a2fda6ec4fbd4d55",
+  "size": 6936
+ },
+ {
+  "to": "nix_host/beats/syslog/darwin-syslog.log",
+  "url": "https://raw.githubusercontent.com/elastic/beats/main/filebeat/module/system/syslog/test/darwin-syslog.log",
+  "note": "Elastic beats test log",
+  "sha256": "b323a393d6b4fcc4ed540602f727ba3fe108ebd39099b88ca86eca0db2f3b859",
+  "size": 70525
+ },
+ {
+  "to": "nix_host/plaso/utmp",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/utmp/utmp",
+  "note": "plaso test data",
+  "sha256": "9b716aabb5f3db7554818f896df24fe6db4b984286d9dba44c0ca200396bd796",
+  "size": 5376
+ },
+ {
+  "to": "nix_host/plaso/wtmp.1",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/utmp/wtmp.1",
+  "note": "plaso test data",
+  "sha256": "29e7489c71c8df699f9b34a70f7ee1e649cea2df00598f78793fcdf0fc3bb6be",
+  "size": 1537
+ },
+ {
+  "to": "nix_host/plaso/utmp_x86_64",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/utmp/utmp_x86_64",
+  "note": "plaso test data",
+  "sha256": "f847dcb2c03f3964867ac66266024d12af04af9fa2a995ddb273a48b3f04e244",
+  "size": 2304
+ },
+ {
+  "to": "nix_host/plaso/syslog",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/syslog/syslog",
+  "note": "plaso test data",
+  "sha256": "1f0105612f6ad2d225d6bd9ba631148740e312598878adcd2b74098a3dab50c4",
+  "size": 1509
+ },
+ {
+  "to": "nix_host/plaso/syslog_ssh.log",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/syslog/syslog_ssh.log",
+  "note": "plaso test data",
+  "sha256": "56fd2cdd6ad9bb9296d2b6cada47e7619b078a21eea490bec792b112572fbc59",
+  "size": 1136
+ },
+ {
+  "to": "nix_host/plaso/syslog_sudo.log",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/syslog/syslog_sudo.log",
+  "note": "plaso test data",
+  "sha256": "35c32061a40928d79d21b3e5608b0528f1b4cfbf6bae4dcfa620214232cacf61",
+  "size": 5383
+ },
+ {
+  "to": "nix_host/plaso/syslog_cron.log",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/syslog/syslog_cron.log",
+  "note": "plaso test data",
+  "sha256": "fb6d0c90142e0e02b74449894b43f474ff9b99bbc22bb833486a595046add1b3",
+  "size": 717
+ },
+ {
+  "to": "nix_host/plaso/syslog_rsyslog_SyslogProtocol23Format",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/syslog/syslog_rsyslog_SyslogProtocol23Format",
+  "note": "plaso test data",
+  "sha256": "9d20d8d4d28860306b727a3c3ea0a70b5c51aff5f6226877f0655e1ad4b04e76",
+  "size": 916
+ },
+ {
+  "to": "nix_host/plaso/audit.log",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/audit.log",
+  "note": "plaso test data",
+  "sha256": "586392b594dba5f5447583134e504a41601b717c92e3f84fb0ae258f8a1305c8",
+  "size": 6067
+ },
+ {
+  "to": "nix_host/plaso/audit_enriched.log",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/audit_enriched.log",
+  "note": "plaso test data",
+  "sha256": "cd5b665c56fa474ef502dd7eddf8253e4a5f55a835d917f67f8315ecd6a5f341",
+  "size": 8288
+ },
+ {
+  "to": "nix_host/plaso/bash_history",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/bash_history",
+  "note": "plaso test data",
+  "sha256": "ebba51b0ae5bc730c2623366b9de875dfc69a9c679dca00fe6b85695440a6586",
+  "size": 167
+ },
+ {
+  "to": "nix_host/plaso/zsh_extended_history.txt",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/zsh_extended_history.txt",
+  "note": "plaso test data",
+  "sha256": "264daefbd5c1cdfc7bb443ab4c01be24c01021c7fcb789fd8d019065b6828ebf",
+  "size": 132
+ },
+ {
+  "to": "nix_host/plaso/launchd.plist",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/plist/launchd.plist",
+  "note": "plaso test data",
+  "sha256": "6a5529a6e349c4734059a3769e4fb13ca0902cec20bb3a2585543ce4ecebfa72",
+  "size": 1910
+ },
+ {
+  "to": "nix_host/plaso/launchd.minimal.plist",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/plist/launchd.minimal.plist",
+  "note": "plaso test data",
+  "sha256": "fcb0f0140c4351463c5c0826154c9140bd10e8ed21d5f8039f49969851a617f3",
+  "size": 280
+ },
+ {
+  "to": "nix_host/plaso/NSKeyedArchiver.plist",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/plist/NSKeyedArchiver.plist",
+  "note": "plaso test data",
+  "sha256": "ea172a17301d2eaa7284ca17715044da9723d930f43adc78d8531cd851e1a781",
+  "size": 1452
+ },
+ {
+  "to": "nix_host/plaso/com.apple.loginitems.plist",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/plist/com.apple.loginitems.plist",
+  "note": "plaso test data",
+  "sha256": "c35e31a8a25c61ff0fc3ebac44e949229b4185057f0c11bcc8d3c0db3ff37d22",
+  "size": 651
+ },
+ {
+  "to": "nix_host/plaso/TCC-test.db",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/macos/TCC-test.db",
+  "note": "plaso test data",
+  "sha256": "028e38156a1c2aaa3c50e1b0c0a6a3d2b5071d4e12b2e4b27b7659c9b1ff54f5",
+  "size": 57344
+ },
+ {
+  "to": "nix_host/plaso/quarantine.db",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/sqlite/quarantine.db",
+  "note": "plaso test data",
+  "sha256": "88d5f209cfef106d8e532c00e1aff96275509f4e76d77372d946489d22e93ca4",
+  "size": 24576
+ },
+ {
+  "to": "nix_host/plaso/container-json.log",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/docker/containers/e7d0b7ea5ccf08366e2b0c8afa2318674e8aefe802315378125d2bb83fe3110c/container-json.log",
+  "note": "plaso test data",
+  "sha256": "5a32bec255e9d2c76029ceb129a66475500055e76fdee9c4be6e744ad045ace3",
+  "size": 1465
+ },
+ {
+  "to": "nix_host/plaso/utmpx_mac",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/utmpx_mac",
+  "note": "plaso test data",
+  "sha256": "e70031efe246afed3c2e1d7b8a5cc57aa2574f2547e5977e63bf7b274437e780",
+  "size": 4396
+ },
+ {
+  "to": "nix_host/loghub/OpenSSH_2k.log",
+  "url": "https://raw.githubusercontent.com/logpai/loghub/master/OpenSSH/OpenSSH_2k.log",
+  "note": "loghub: 2,000 lines of a real sshd log",
+  "sha256": "1e4912727fa88245113d41b16a0cd25ceadba7f931e1c406542885b91254264f",
+  "size": 225216
+ },
+ {
+  "to": "nix_host/loghub/Linux_2k.log",
+  "url": "https://raw.githubusercontent.com/logpai/loghub/master/Linux/Linux_2k.log",
+  "note": "loghub: 2,000 lines of a real /var/log/messages",
+  "sha256": "b3e20bc1afe732ab1bf3ed1de4bf9c809e4194e02f7dea911d918e5342e8e173",
+  "size": 216485
+ },
+ {
+  "to": "nix_host/otrf/sh_binary_padding_dd.zip",
+  "url": "https://raw.githubusercontent.com/OTRF/Security-Datasets/master/datasets/atomic/linux/defense_evasion/host/sh_binary_padding_dd.zip",
+  "unpack": "zip",
+  "note": "OTRF Security-Datasets: Linux",
+  "sha256": "dbba0766a0ea4e0e90f1eef8bbe3e2c819d1349a9f9081b6d54fa86ecb1d39bc",
+  "size": 680
+ },
+ {
+  "to": "sqlite_artifacts/plaso/chrome/History",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/chrome/History",
+  "note": "plaso test data",
+  "sha256": "c184fd5fdf72b75c26f8bb816619f04892e776ae6e2f5512f796d9807a12fbb3",
+  "size": 79872
+ },
+ {
+  "to": "sqlite_artifacts/plaso/chrome/History-59.0.3071.86",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/chrome/History-59.0.3071.86",
+  "note": "plaso test data",
+  "sha256": "946338ebab6d11f7520e9fc3186e8834253e0182c06ca3b2ec1b0ccbe1207b69",
+  "size": 114688
+ },
+ {
+  "to": "sqlite_artifacts/plaso/chrome/Cookies-68.0.3440.106",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/chrome/Cookies-68.0.3440.106",
+  "note": "plaso test data",
+  "sha256": "59d1a2c835a5aba67c8e7e31ee853382fcb1b2807ffdad3b79edc53d50acc1e9",
+  "size": 20480
+ },
+ {
+  "to": "sqlite_artifacts/plaso/chrome/cookies.db",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/chrome/cookies.db",
+  "note": "plaso test data",
+  "sha256": "57c81098b475576befa9e11e30b974313ff6bba4976123297d8c4815abaa805f",
+  "size": 169984
+ },
+ {
+  "to": "sqlite_artifacts/plaso/chrome/Web Data",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/chrome/Web Data",
+  "note": "plaso test data",
+  "sha256": "7779fb8b6dab0d38fd41df3dacfd9f5ca96ec1ee5ecece6b9d276a786bc23812",
+  "size": 63488
+ },
+ {
+  "to": "sqlite_artifacts/plaso/chrome/Extension Activity",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/chrome/Extension Activity",
+  "note": "plaso test data",
+  "sha256": "e7a38d5d9281699ba689dc61b697eaef1a66cc94905985d15459018619edb5e4",
+  "size": 28672
+ },
+ {
+  "to": "sqlite_artifacts/plaso/firefox/places.sqlite",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/firefox/places.sqlite",
+  "note": "plaso test data",
+  "sha256": "cd37cc6891ede23c98c6f68395b5aa4c9cc24aff7268d5a6414fab8ae17a4849",
+  "size": 163840
+ },
+ {
+  "to": "sqlite_artifacts/plaso/firefox/places118.sqlite",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/firefox/places118.sqlite",
+  "note": "plaso test data",
+  "sha256": "9c4fea060279998f12d1fdf850b7160a86636b4899fee72bcc96e2e6f7f71831",
+  "size": 5242880
+ },
+ {
+  "to": "sqlite_artifacts/plaso/firefox/firefox_10_cookies.sqlite",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/firefox/firefox_10_cookies.sqlite",
+  "note": "plaso test data",
+  "sha256": "fc6feee4809542a2eb90ef2a33e37a169ba867ad601214cac86258d64c5a8a16",
+  "size": 524288
+ },
+ {
+  "to": "sqlite_artifacts/plaso/firefox/downloads.sqlite",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/firefox/downloads.sqlite",
+  "note": "plaso test data",
+  "sha256": "6fa1cce13bbb3b2a6acca14e75c1d94b32616f557687f5b320738748766d9667",
+  "size": 2048
+ },
+ {
+  "to": "sqlite_artifacts/plaso/safari/History.db",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/safari/History.db",
+  "note": "plaso test data",
+  "sha256": "2e87d99d0bc7765e523ee1250828e82fb350780c0c28020db6bb0b0ce8d3f351",
+  "size": 98304
+ },
+ {
+  "to": "sqlite_artifacts/plaso/sqlite/quarantine.db",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/sqlite/quarantine.db",
+  "note": "plaso test data",
+  "sha256": "88d5f209cfef106d8e532c00e1aff96275509f4e76d77372d946489d22e93ca4",
+  "size": 24576
+ },
+ {
+  "to": "sqlite_artifacts/plaso/sqlite/imessage_chat.db",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/sqlite/imessage_chat.db",
+  "note": "plaso test data",
+  "sha256": "2931db3b556e33728867726f5bfd56464c4c2955cbe2e795660bda2ad631127d",
+  "size": 610304
+ },
+ {
+  "to": "sqlite_artifacts/plaso/wal_database.db",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/wal_database.db",
+  "note": "plaso test data",
+  "sha256": "8a437d48ab5df194ef3545ccdc72c63b894200cba10937656e8fba936d75a7f6",
+  "size": 2048
+ },
+ {
+  "to": "sqlite_artifacts/plaso/wal_database.db-wal",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/wal_database.db-wal",
+  "note": "plaso test data",
+  "sha256": "1d886ad3f5993bc307872349d80f626059e8bbc954d14382768444775992b1f9",
+  "size": 9464
+ },
+ {
+  "to": "sqlite_artifacts/plaso/android/mmssms.db",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/android/mmssms.db",
+  "note": "plaso test data",
+  "sha256": "0e2cadfa9d68fb1769c01ceb5d75e4dfc4872dfdde7c6db37b75e896e31e283f",
+  "size": 102400
+ },
+ {
+  "to": "sqlite_artifacts/plaso/chrome_extensions/apdfllckaahabafndbhieahigkjlhalf",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/chrome_extensions/apdfllckaahabafndbhieahigkjlhalf",
+  "note": "plaso test data",
+  "sha256": "5cc310f4db7702d6fa21558f5e2e46f2779dc64cd9ee2160961c56e16e11849c",
+  "size": 22863
+ },
+ {
+  "to": "sqlite_artifacts/plaso/chrome_extensions/blpcfgokakmgnkcojhhkbfbldkacnbeo",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/chrome_extensions/blpcfgokakmgnkcojhhkbfbldkacnbeo",
+  "note": "plaso test data",
+  "sha256": "b32a74314dfe12a9351cb5f4db0f083aada02d0a4c1e1953749f098a2f73e17e",
+  "size": 24490
+ },
+ {
+  "to": "sqlite_artifacts/plaso/sqlite/skype_main.db",
+  "url": "https://raw.githubusercontent.com/log2timeline/plaso/main/test_data/sqlite/skype_main.db",
+  "note": "plaso test data",
+  "sha256": "fb52eae51d359b2ed060416dcf9725442fa0b495db32972529e9e75b34c533bb",
+  "size": 344064
+ },
+ {
+  "to": "sqlite_artifacts/ctf2024_ancient_fossil/ancient.fossil",
+  "repo": "Huntress-CTF-2024/forensics/ancient_fossil_COMPLETED/ancient.fossil",
+  "note": "Huntress CTF 2024, Ancient Fossil (flag in the write-up)",
+  "sha256": "9823ce3955d38abe999085ea5384330a6c6280f43a634afff5782d478de4aad6",
+  "size": 638976
+ },
+ {
+  "to": "sqlite_artifacts/dfindexeddb/leveldb/create key/000003.log",
+  "url": "https://raw.githubusercontent.com/google/dfindexeddb/main/test_data/leveldb/create key/000003.log",
+  "note": "dfindexeddb test data",
+  "sha256": "8aeeb10c4096d9a27d09c08a89dc70728382651b615ccf2084f7c9427f0d8330",
+  "size": 40
+ },
+ {
+  "to": "sqlite_artifacts/dfindexeddb/leveldb/100k keys delete/000004.log",
+  "url": "https://raw.githubusercontent.com/google/dfindexeddb/main/test_data/leveldb/100k keys delete/000004.log",
+  "note": "dfindexeddb test data",
+  "sha256": "6c87cbabb4c9ef31513fddb4f907a048f573f44e320faded7a20be021bc82d75",
+  "size": 704917
+ },
+ {
+  "to": "sqlite_artifacts/dfindexeddb/leveldb/100k keys delete/000005.ldb",
+  "url": "https://raw.githubusercontent.com/google/dfindexeddb/main/test_data/leveldb/100k keys delete/000005.ldb",
+  "note": "dfindexeddb test data",
+  "sha256": "56d1aa99ac91671c093354fc043e821b864dbf8bbf33f8946a6053a556ef0fbd",
+  "size": 1065807
+ },
+ {
+  "to": "sqlite_artifacts/dfindexeddb/leveldb/100k keys delete/MANIFEST-000002",
+  "url": "https://raw.githubusercontent.com/google/dfindexeddb/main/test_data/leveldb/100k keys delete/MANIFEST-000002",
+  "note": "dfindexeddb test data",
+  "sha256": "53ba718ad89662cb4a7914fe5e2e2245365d58e45717e938a509fed4b6f7dc4f",
+  "size": 99
+ },
+ {
+  "to": "sqlite_artifacts/dfindexeddb/leveldb/100k keys delete/CURRENT",
+  "url": "https://raw.githubusercontent.com/google/dfindexeddb/main/test_data/leveldb/100k keys delete/CURRENT",
+  "note": "dfindexeddb test data",
+  "sha256": "1005a525006f148c86efcbfb36c6eac091b311532448010f70f7de9a68007167",
+  "size": 16
+ },
+ {
+  "to": "sqlite_artifacts/dfindexeddb/indexeddb/chrome/linux_109_64/file__0.indexeddb.leveldb/000003.log",
+  "url": "https://raw.githubusercontent.com/google/dfindexeddb/main/test_data/indexeddb/chrome/linux_109_64/file__0.indexeddb.leveldb/000003.log",
+  "note": "dfindexeddb test data",
+  "sha256": "fc05a476707712619560c44937be4677187f62a875b76bb93b980b369b281328",
+  "size": 4660
+ },
+ {
+  "to": "sqlite_artifacts/dfindexeddb/indexeddb/firefox/650921982Itnsdeetx+eBdD.sqlite",
+  "url": "https://raw.githubusercontent.com/google/dfindexeddb/main/test_data/indexeddb/firefox/650921982Itnsdeetx+eBdD.sqlite",
+  "note": "dfindexeddb test data",
+  "sha256": "ac7d12a6e2c1d14e4cd1e6eac5cf273f05e8365daad144371c6d8f5825b5f724",
+  "size": 65536
+ },
+ {
+  "to": "sqlite_artifacts/dfindexeddb/indexeddb/safari/17.3.1/IndexedDB.sqlite3",
+  "url": "https://raw.githubusercontent.com/google/dfindexeddb/main/test_data/indexeddb/safari/17.3.1/IndexedDB.sqlite3",
+  "note": "dfindexeddb test data",
+  "sha256": "120fdd159b35fb653bb05c0d410186ae5f8af70c8e4e1d5b1631660bb3159d4f",
+  "size": 4096
+ },
+ {
+  "to": "sqlite_artifacts/dfindexeddb/indexeddb/safari/17.3.1/IndexedDB.sqlite3-wal",
+  "url": "https://raw.githubusercontent.com/google/dfindexeddb/main/test_data/indexeddb/safari/17.3.1/IndexedDB.sqlite3-wal",
+  "note": "dfindexeddb test data",
+  "sha256": "220791f63c5a43604bebc49b1e4bd2504275f46ea83cbb73b31c2a3c900c2639",
+  "size": 1343152
+ }
+]

@@ -1,0 +1,29 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-093.
+id = "toolkits.tabular_fit"
+lane = "toolkits"
+entry = "solvers.toolkits.tabular_fit:solve"
+capabilities = ["executes", "ml", "tabular", "regression", "change-point", "fingerprint"]
+inputs = ["ext:.csv", "ext:.tsv", "ext:.npz"]
+needs_tools = []        # CSV/TSV is stdlib only; an NPZ needs numpy and says so (blocked) when it is absent
+cost_class = "cheap"
+status = "active"
+
+[intake]  # B-093: any numeric history + probe table pair, whatever the category; it declines fast
+          # (`none`) when there is no target/probe structure or no exact piecewise-linear fit
+select = "files"
+run = "challenge"
+match = ["ext:.csv", "ext:.tsv", "ext:.npz"]
+timeout = 60
+
+[[routes]]  # a rule/score history across a change, with a table in the delivery
+keywords = ["change point", "changepoint", "rule change", "scoring history", "score history", "linear rule",
+            "linear score", "intercept", "coefficients", "piecewise", "audit probes", "probe rows",
+            "response fingerprint", "reconstruct the current rule"]
+files = ["ext:.csv", "ext:.tsv", "ext:.npz"]
+priority = 64
+
+[[routes]]  # the same words before the files are downloaded (the brief alone)
+category = ["misc", "ml", "programming"]
+keywords = ["change point", "changepoint", "rule change", "scoring history", "reconstruct the current rule",
+            "response fingerprint"]
+priority = 61

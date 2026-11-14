@@ -1,0 +1,2 @@
+# pwntools 4.15.0 excludes unicorn 2.1.4 in its metadata; the master runs both together (its suite passes on them).
+unicorn==2.1.4

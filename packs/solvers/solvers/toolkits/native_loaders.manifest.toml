@@ -1,0 +1,16 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-241.
+# import-only: status is its main public callable, not a contract entry; `ctf run` refuses library engines.
+# It detects the optional full-loader emulators (Qiling, unidbg) and names why one is unavailable; it never
+# installs, imports or starts one. The keyword route surfaces it when a description names one of the loaders.
+id = "toolkits.native_loaders"
+lane = "toolkits"
+entry = "solvers.toolkits.native_loaders:status"
+capabilities = ["library", "emulation"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+keywords = ["unidbg", "qiling"]
+priority = 21

@@ -1,0 +1,11 @@
+# The pack's one flightdeck engine: the whole no-model intake (unpack, sweep, routed engines,
+# decoders) on every challenge. See intake_engine.py.
+id = "solvers.intake"
+entry = "cli:./run-intake"
+tags = ["intake", "unpack", "decode"]
+timeout_seconds = 300
+output = "result"
+
+[[routes]]
+any = true
+priority = 90

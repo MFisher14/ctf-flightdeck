@@ -1,0 +1,30 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-031.
+# capabilities, inputs, needs_tools and cost_class are heuristics: correct them by hand.
+# Regeneration never overwrites this file.
+id = "toolkits.mavlink_link"
+lane = "toolkits"
+entry = "solvers.toolkits.mavlink_link:solve"
+capabilities = ["analysis", "mavlink", "drone", "pcap", "tlog", "signing", "network"]
+inputs = ["ext:.tlog", "name:*.tlog"]
+# No external tool: the dissector, signer and HKDF are pure Python (stdlib hashlib/hmac). The live
+# link opens a socket only when an operator drives LiveLink; it never runs at intake.
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # networking lane: MAVLink captures and live drone links (above the bare-category band)
+category = ["networking"]
+keywords = ["mavlink", "drone", "autopilot", "ardupilot", "px4", "setup_signing", "signed link",
+            "uav", "ground control station", "telemetry link"]
+priority = 63
+
+[[routes]]  # ics lane: MAVLink turns up in OT/UAS challenges too
+category = ["ics"]
+keywords = ["mavlink", "drone", "uav", "autopilot"]
+priority = 63
+
+[intake]  # B-002: dissect every .tlog in the handout at intake (pcaps route by category too)
+select = "files"
+run = "challenge"
+match = ["ext:.tlog", "name:*.tlog"]
+timeout = 60

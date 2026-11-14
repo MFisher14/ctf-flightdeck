@@ -1,0 +1,15 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-216 (binary lane reader generalization).
+# import-only: records is its main public callable, not a contract entry; `ctf run` refuses library engines
+id = "binary.overlay_records"
+lane = "binary"
+entry = "solvers.binary.overlay_records:records"
+capabilities = ["library", "elf", "pe", "macho", "crc"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+category = ["reverse"]
+keywords = ["pe overlay", "elf overlay", "trailer record", "appended overlay"]
+priority = 61

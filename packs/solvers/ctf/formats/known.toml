@@ -1,0 +1,100 @@
+# Known-format fingerprint DB (B-087). Loaded by ctf/formats/known.py and consulted by the B-207
+# format_fingerprint step (ctf.formats.fingerprint.analyze) for a member ctf.formats.identify cannot name.
+#
+# ctf/formats/magic.toml names a format from ONE fixed signature at a fixed offset. This table is for
+# formats that take more than that to recognise: a record geometry (the size is header + N x record +
+# trailer), a signature counted from the END of the file, a file name the format is always stored
+# under, an ascii token in the header, a body that reads as ciphertext. One entry combines several
+# of those signals and names the format plus the PUBLIC REFERENCE to read for its layout, so the
+# layout is looked up instead of searched for.
+#
+# What an entry is NOT: a procedure. It holds no keys, no key derivation and no decryption steps;
+# it says what the bytes most likely are and where the layout is documented. Working from the
+# reference with the inputs a challenge supplies stays a per-challenge step for the agent.
+#
+#   id           unique slug (printed as the lead's ref)
+#   label        one line for people
+#   family       optional grouping (entries of one application's cache share it)
+#   reference    the public reference for the layout: a project, a tool or a specification
+#   basis        where this fingerprint comes from, and how far it was checked
+#   note         optional: what to look at next
+#
+#   signals (declare at least one content signal: magic, ascii or geometry)
+#   magic        [{ at = N, hex = "..." }]: every listed signature must be there; at < 0 counts from
+#                the end of the file; 1..16 bytes each
+#   ascii        tokens (>= 4 characters); one of them inside a printable run of the 64-byte header
+#   names        fnmatch globs on the member's base name, any case
+#   geometry     { header = H, record = R, trailer = T, min_records = 1 }: size == H + N*R + T, N >= min
+#   entropy_min  bits per byte the measured prefix must reach (ciphertext / compressed body)
+#
+#   require      the signals that must ALL hold
+#   support      the signals that are optional; each one that holds raises the score
+#   min_support  how many of `support` must hold (default 0)
+#
+# `require` and `support` together list every declared signal exactly once (both omitted = every
+# signal required). `names` and `entropy` can never carry an entry alone, and a geometry is a
+# 1-in-R coincidence, so an entry whose only required content signal is geometry needs
+# min_support >= 1. Every lead is UNSURE evidence for a human or agent to confirm, never a verdict.
+
+[[format]]
+id = "spotify-offline-keystore"
+label = "Spotify offline cache key store (offline2 layout)"
+family = "spotify-cache"
+reference = "secondfloor (github.com/DavidBuchanan314/secondfloor): a public reader of this cache layout"
+basis = "record geometry and file name as met in the PINK+ 2026 challenge 25 handout (a synthetic cache that carried its own ascii tag in the prefix); stock client files were not examined"
+note = "the body is one authenticated ciphertext; read the reference for the layout and take the inputs it names from the handout (the challenge stated them) rather than searching key derivations blind"
+names = ["offline2", "offline2.*"]
+ascii = ["OFFL2"]
+entropy_min = 7.0
+geometry = { header = 154, record = 36, trailer = 20, min_records = 1 }
+require = ["geometry", "entropy"]
+support = ["names", "ascii"]
+min_support = 1
+
+[[format]]
+id = "spotify-storage-file"
+label = "Spotify cache storage file (content, checksum table, 64-byte trailer)"
+family = "spotify-cache"
+reference = "secondfloor (github.com/DavidBuchanan314/secondfloor): a public reader of this cache layout"
+basis = "trailer layout checked on every readable storage file of the PINK+ 2026 challenge 25 handout; stock client files were not examined"
+note = "the trailer holds the content size and the file id; the content comes first, a table of per-chunk checksums follows it, the trailer is last. A storage file with no readable trailer is still wrapped"
+names = ["*.file"]
+magic = [{ at = -60, hex = "ab337261" }, { at = -28, hex = "ffffffff" }, { at = -16, hex = "00000000000000000000000000000000" }]
+require = ["magic"]
+support = ["names"]
+
+[[format]]
+id = "mozlz4"
+label = "Mozilla LZ4 JSON (session store, bookmark backup, search settings)"
+family = "firefox-profile"
+reference = "the LZ4 block format after an 8-byte magic and a 4-byte little-endian size (python-lz4: lz4.block.decompress)"
+basis = "public Firefox profile format"
+note = "decompresses to JSON: open tabs, closed tabs and form data sit in sessionstore files"
+names = ["*.jsonlz4", "*.mozlz4", "*.baklz4", "*.jsonlz4-*"]
+magic = [{ at = 0, hex = "6d6f7a4c7a343000" }]
+require = ["magic"]
+support = ["names"]
+
+[[format]]
+id = "android-backup"
+label = "Android adb backup (.ab)"
+family = "android"
+reference = "android-backup-extractor (github.com/nelenkov/android-backup-extractor)"
+basis = "public format: four header lines (magic, version, compressed flag, encryption name), then a tar stream, zlib-compressed when the flag is 1"
+note = "the fourth header line says whether it is password-protected (`none` = it is not)"
+names = ["*.ab", "*.adb", "backup.ab"]
+magic = [{ at = 0, hex = "414e44524f4944204241434b55500a" }]
+require = ["magic"]
+support = ["names"]
+
+[[format]]
+id = "leveldb-table"
+label = "LevelDB table file (.ldb / .sst): Chromium and Electron local storage, IndexedDB"
+family = "leveldb"
+reference = "the LevelDB table format (github.com/google/leveldb, doc/table_format.md); plyvel or ccl_chromium_reader read a whole store"
+basis = "public format: the 48-byte footer ends in the table magic"
+note = "one table of a store: read the folder as a whole (the MANIFEST and .log files hold the newest writes)"
+names = ["*.ldb", "*.sst"]
+magic = [{ at = -8, hex = "57fb808b247547db" }]
+require = ["magic"]
+support = ["names"]

@@ -95,8 +95,42 @@ def shell_names(hosts: Mapping[str, str]) -> str:
     )
 
 
+def rotates(every: int) -> str:
+    """What the lane of a challenge whose flag rotates (Challenge.rotates) is told in its brief,
+    in flightdeck's own words: `every` is the board's whole number, nothing else is from it."""
+    return (
+        f"This challenge's flag rotates every {int(every)} seconds, on clock boundaries: a flag is dead once its "
+        "window ends. Fetch the flag immediately before you submit it, script the fetch so that fetching and "
+        "submitting take seconds, and never reuse a flag you fetched earlier. When flightdeck says a flag rotated "
+        "out, fetch a fresh one and submit that."
+    )
+
+
+def rotated_out(flag: str, every: int) -> str:
+    """A note for the lane: its flag was not submitted, because it rotated out first."""
+    return (
+        f"{one(flag, 200)} was not submitted: this challenge's flag rotates every {int(every)} seconds, and that "
+        "one's window was over, or about to end, when its turn came. It was not judged. Fetch a fresh flag now and "
+        "submit it at once."
+    )
+
+
+TOOLKIT = "The player's solver toolkit (the player installed it; its author's words, not the challenge's):"
+
+
+# Said after the fence, in flightdeck's own words, when the board gives a challenge no file
+# and no instance: a lane that waits for a file that is not coming spends its whole budget
+# listing an empty workspace.
+NOTHING_GIVEN = (
+    "This challenge came with no files and no live instance: the description is all there is, and nothing more will "
+    "appear in the workspace while you work. If it can be solved from the description, solve it. If it needs a file or "
+    "a service you were not given, say in one sentence exactly what is missing and stop: do not list the workspace "
+    "again and do not wait."
+)
+
+
 def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "", *, flag_format: str = "",
-          recon: str = "", instance: str = "auto", shell_hosts: Mapping[str, str] | None = None) -> str:
+          recon: str = "", instance: str = "auto", shell_hosts: Mapping[str, str] | None = None, toolkit: str = "") -> str:
     """The first user message: the challenge as the lane should see it.
 
     Everything that comes from the board or the event profile (name, category, file names,
@@ -110,7 +144,10 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
     that the event's rules keep the lane off it (OFF_LIMITS), also when the board lists none:
     a service named only in the description or a file is as much off limits. `shell_hosts`
     (a Docker lane's: DockerWorkspace.shell_hosts) adds shell_names() after the fence, unless
-    the lane is kept off the instance."""
+    the lane is kept off the instance. `toolkit` is the player's solver pack's own note
+    (pack.lane_note: [l1] lane_tools), after the challenge's fence and outside it: the pack is
+    the player's code, never the challenge's. A challenge whose flag rotates (Challenge.rotates)
+    gets rotates() after the fence: how to submit such a flag."""
     shown = ", ".join(one(name, 200) for name in files[:MAX_BRIEF_FILES])
     if len(files) > MAX_BRIEF_FILES:
         shown += f", and {len(files) - MAX_BRIEF_FILES} more (list the workspace to see them)"
@@ -130,10 +167,16 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
         _description(challenge.description),
         FENCE_CLOSE,
     ]
+    if not files and not urls and not off:
+        lines.append(NOTHING_GIVEN)
     if off:
         lines.append(OFF_LIMITS)
     elif shell_hosts:
         lines.append(shell_names(shell_hosts))
+    if challenge.rotates:
+        lines.append(rotates(challenge.rotates))
+    if toolkit.strip():
+        lines += [TOOLKIT, _MARKER.sub(MARKER_REMOVED, toolkit.strip())]
     if recon.strip():
         lines += [FIRST_LOOK, fenced(recon)]
     if approach:

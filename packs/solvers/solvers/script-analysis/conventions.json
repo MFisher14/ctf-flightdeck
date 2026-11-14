@@ -1,0 +1,1200 @@
+{
+  "script.control/vbs.none": {
+    "accepted": "direct",
+    "rejected": [
+      "linear",
+      "straight_line"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Control form': no wrapper around x = Decode_(y) is direct; linear and straight_line rejected",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Result': all 72 VBScript answers accepted on every judged variant of 2026-10-04: base (CORRECT 09:43), time trial attempt 5 (CORRECT 09:58), mastery sets 1 and 2 (CORRECT 10:01)"
+    ]
+  },
+  "script.control/vbs.if": {
+    "accepted": "direct",
+    "rejected": [
+      "if_guard",
+      "if_true",
+      "if_then",
+      "if_once",
+      "guard",
+      "if_block",
+      "conditional"
+    ],
+    "split": false,
+    "evidence": [
+      "solvers/script-analysis/batch_conventions.json vbscript_control.if = direct, with the seven names of '@vif' rejected: learned by timed_ladder.py in time trial attempt 3 (09:55, 2026-10-04)",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Control form': If True Then ... End If around a bare call is layout, so the form is direct",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/batch-verdicts.json names_learned_live.vbscript_control 'If wrapper'"
+    ]
+  },
+  "script.control/vbs.select": {
+    "accepted": "select_case",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Control form': Select Case 1 / Case 1 / Case Else is select_case (10 of the 72 saved specimens)",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Result': all 72 VBScript answers accepted on every judged variant of 2026-10-04: base (CORRECT 09:43), time trial attempt 5 (CORRECT 09:58), mastery sets 1 and 2 (CORRECT 10:01)"
+    ]
+  },
+  "script.control/vbs.do": {
+    "accepted": "do_once",
+    "rejected": [
+      "do_loop",
+      "do_exit",
+      "do_loop_exit"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Control form': Do ... Exit Do / Loop is do_once; do_loop, do_exit and do_loop_exit rejected",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Result': all 72 VBScript answers accepted on every judged variant of 2026-10-04: base (CORRECT 09:43), time trial attempt 5 (CORRECT 09:58), mastery sets 1 and 2 (CORRECT 10:01)"
+    ]
+  },
+  "script.control/vbs.while": {
+    "accepted": "while_once",
+    "rejected": [
+      "while_wend"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Control form': While p < 1 ... Wend is while_once; while_wend rejected",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Result': all 72 VBScript answers accepted on every judged variant of 2026-10-04: base (CORRECT 09:43), time trial attempt 5 (CORRECT 09:58), mastery sets 1 and 2 (CORRECT 10:01)"
+    ]
+  },
+  "script.control/vbs.for": {
+    "accepted": "for_once",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "solvers/script-analysis/batch_conventions.json vbscript_control.for = for_once ('@vfor' has no rejected name): learned by timed_ladder.py in time trial attempt 3 (09:55, 2026-10-04)",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Control form': For p = 0 To 0 ... Next is for_once; the base variant never showed it",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/batch-verdicts.json names_learned_live.vbscript_control 'For ... Next'"
+    ]
+  },
+  "script.control/vbs.on_error": {
+    "accepted": "error_guard",
+    "rejected": [
+      "on_error"
+    ],
+    "split": false,
+    "evidence": [
+      "solvers/script-analysis/batch_conventions.json vbscript_control.on_error = error_guard: learned by timed_ladder.py in time trial attempt 3 (09:55, 2026-10-04)",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Control form': On Error Resume Next ... On Error GoTo 0 is error_guard",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'What went wrong live': the module's first guess on_error was wrong. Recorded in the notes only: '@von_error' in batch_conventions.json holds no single-id rejection for it"
+    ]
+  },
+  "script.control/batch.none": {
+    "accepted": "direct",
+    "rejected": [
+      "linear"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/script-analysis-day-04-shell-contrast/main-probes.jsonl 09:38:09-09:38:11: batch-benign-control, batch-dropper-control and batch-launcher-control = direct accepted, one id per request",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/batch-verdicts.json variant x (Day 4 base): linear rejected for benign, dropper and launcher"
+    ]
+  },
+  "script.control/batch.goto": {
+    "accepted": "goto_dispatch",
+    "rejected": [
+      "goto_label",
+      "goto_once"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/script-analysis-day-04-shell-contrast/main-probes.jsonl 09:38:12: batch-uploader-control goto_once incorrect, goto_dispatch accepted; 09:42:31: batch-relay-control goto_dispatch accepted",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/batch-verdicts.json variant x (Day 4 base): goto_label rejected for uploader and relay"
+    ]
+  },
+  "script.control/batch.call": {
+    "accepted": "call_subroutine",
+    "rejected": [
+      "call_label",
+      "call_once"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/script-analysis-day-04-shell-contrast/main-probes.jsonl 09:38:13-09:38:14: batch-chain-control call_once incorrect, call_subroutine accepted",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/batch-verdicts.json variant x (Day 4 base): call_label rejected for chain"
+    ]
+  },
+  "script.control/batch.for_l": {
+    "accepted": "call_subroutine",
+    "rejected": [
+      "for_l",
+      "for_once",
+      "for_loop",
+      "for_l_loop",
+      "for_single",
+      "for_l_once",
+      "for_single_pass",
+      "single_pass_for",
+      "for_counter",
+      "for_range",
+      "counted_loop",
+      "loop_once",
+      "for_call",
+      "for_subroutine",
+      "for_dispatch",
+      "single_iteration_for",
+      "for_l_single",
+      "for_one",
+      "for_l_call",
+      "one_pass_for",
+      "for_one_pass",
+      "loop_subroutine"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/script-analysis-day-04-shell-contrast/batch-verdicts.json variant x (Day 4 base), stager: for /l (1,1,1) do call :HUNTRESS_RECOVER is call_subroutine (the loop is not named); 22 names rejected",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/main-probes.jsonl 09:38:11 and 09:42:32-09:42:45: 21 of those names answered incorrect on batch-stager-control, one id per request",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/batch-verdicts.json names_learned_live.control 'for /l (1,1,1) do call :HUNTRESS_RECOVER'"
+    ]
+  },
+  "script.control/batch.errorlevel": {
+    "accepted": "errorlevel_guard",
+    "rejected": [
+      "direct",
+      "if_errorlevel"
+    ],
+    "split": false,
+    "evidence": [
+      "solvers/script-analysis/batch_conventions.json control.errorlevel = errorlevel_guard, with direct and if_errorlevel in '@errorlevel': learned by timed_ladder.py live on 2026-10-04",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/batch-verdicts.json time_trial/x (attempt 1, 09:47): direct and if_errorlevel rejected for uploader; time_trial/x2 (attempt 2, 09:53): errorlevel_guard accepted on two specimens",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes.md 'Batch control': ver >nul then if errorlevel 1 exit /b 1 is errorlevel_guard"
+    ]
+  },
+  "script.control/batch.if_defined": {
+    "accepted": "if_guard",
+    "rejected": [
+      "direct",
+      "if_defined",
+      "defined_guard",
+      "defined_check",
+      "defined_gate",
+      "if_defined_set",
+      "defined_branch"
+    ],
+    "split": false,
+    "evidence": [
+      "solvers/script-analysis/batch_conventions.json control.if_defined = if_guard, with the seven names of '@if_defined' rejected: learned by timed_ladder.py live on 2026-10-04",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/batch-verdicts.json time_trial/x2 (attempt 2, 09:53): if_guard accepted on one specimen; rejected_names_for_if_defined lists the seven",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes.md 'Batch control': if defined HUNTRESS_READY <join> is if_guard"
+    ]
+  },
+  "script.attack/js": {
+    "accepted": "T1059.007",
+    "rejected": [
+      "T1218.010",
+      "T1059.001"
+    ],
+    "split": false,
+    "evidence": [
+      "solvers/script-analysis/jscript.py ATTACK_BY_ROLE comment: launcher and staged_chain take T1059.007 whatever binary or next-stage language the plan names; T1218.010 (a regsvr32.exe launcher) and T1059.001 (a chain handing off to PowerShell) were judged incorrect",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes.md 'Technique': launcher and staged_chain use the script's own interpreter; accepted on every judged variant of 2026-10-04: base (CORRECT 09:43), time trial attempt 5 (CORRECT 09:58), mastery sets 1 and 2 (CORRECT 10:01)"
+    ]
+  },
+  "script.attack/cmd": {
+    "accepted": "T1059.003",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "solvers/script-analysis/batch.py ATTACK comment: one technique per role, all confirmed on the Day 4 base; launcher and staged_chain are T1059.003 whatever the adapter or next stage",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes.md 'Technique'; relay-handoff.cmd is a staged_chain of the Day 4 base; accepted on every judged variant of 2026-10-04: base (CORRECT 09:43), time trial attempt 5 (CORRECT 09:58), mastery sets 1 and 2 (CORRECT 10:01)"
+    ]
+  },
+  "script.attack/bat": {
+    "accepted": "T1059.003",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "the same judged answers as script.attack/cmd: Batch specimens arrive as .cmd or .bat, and in the Day 4 base the launcher (local-dispatch.bat) and a staged_chain (staged-handoff.bat) are .bat files",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes.md 'Technique'; accepted on every judged variant of 2026-10-04: base (CORRECT 09:43), time trial attempt 5 (CORRECT 09:58), mastery sets 1 and 2 (CORRECT 10:01)"
+    ]
+  },
+  "script.attack/vbs": {
+    "accepted": "T1059.005",
+    "rejected": [
+      "T1059.001"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Conventions, all judge-confirmed': launcher and staged_chain are T1059.005 whatever the next stage's language; T1059.001 rejected for the chain that hands off to PowerShell",
+      "challenges/day-04/script-analysis-day-04-shell-contrast/notes-vbscript.md 'Result': all 72 VBScript answers accepted on every judged variant of 2026-10-04: base (CORRECT 09:43), time trial attempt 5 (CORRECT 09:58), mastery sets 1 and 2 (CORRECT 10:01)"
+    ]
+  },
+  "script.attack/py": {
+    "accepted": "T1059.006",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-05T13:03:45Z accepted T1059.006 scope=key attempt=7de979f1-1c54-4fb8-882d-4d8604dfd6dd ids=python-current-pyc-launcher-attack"
+    ]
+  },
+  "script.role/py.decode_configuration+locate_interpreter+dispatch_next_stage": {
+    "accepted": "relay",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-05T13:07:28Z accepted relay scope=key attempt=7de979f1-1c54-4fb8-882d-4d8604dfd6dd ids=python-zipapp-relay-role"
+    ]
+  },
+  "script.attack/py.decode_configuration+locate_interpreter+dispatch_next_stage": {
+    "accepted": "T1059.006",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-05T13:07:29Z accepted T1059.006 scope=key attempt=7de979f1-1c54-4fb8-882d-4d8604dfd6dd ids=python-zipapp-relay-attack"
+    ]
+  },
+  "script.role/py.profile_host+acquire_remote+decode_embedded+write_file+dispatch_process": {
+    "accepted": "staged_chain",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-05T13:07:30Z accepted staged_chain scope=key attempt=7de979f1-1c54-4fb8-882d-4d8604dfd6dd ids=python-py2exe-service-role"
+    ]
+  },
+  "script.attack/py.profile_host+acquire_remote+decode_embedded+write_file+dispatch_process": {
+    "accepted": "T1059.006",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-05T13:07:31Z accepted T1059.006 scope=key attempt=7de979f1-1c54-4fb8-882d-4d8604dfd6dd ids=python-py2exe-service-attack"
+    ]
+  },
+  "script.role/py.collect_local+encode_archive+transmit_remote": {
+    "accepted": "uploader",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-05T13:07:32Z accepted uploader scope=key attempt=7de979f1-1c54-4fb8-882d-4d8604dfd6dd ids=python-pyinstaller-onedir-role"
+    ]
+  },
+  "script.attack/py.collect_local+encode_archive+transmit_remote": {
+    "accepted": "T1041",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-05T13:07:32Z accepted T1041 scope=key attempt=7de979f1-1c54-4fb8-882d-4d8604dfd6dd ids=python-pyinstaller-onedir-attack"
+    ]
+  },
+  "script.role/py.select_fixture_files+transform_copy+write_recovery_note": {
+    "accepted": "impact",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-05T13:07:33Z accepted impact scope=key attempt=7de979f1-1c54-4fb8-882d-4d8604dfd6dd ids=python-cxfreeze-executable-role"
+    ]
+  },
+  "script.attack/py.select_fixture_files+transform_copy+write_recovery_note": {
+    "accepted": "T1486",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-05T13:07:33Z accepted T1486 scope=key attempt=7de979f1-1c54-4fb8-882d-4d8604dfd6dd ids=python-cxfreeze-executable-attack"
+    ]
+  },
+  "script.role/sh.acquire_remote+dispatch_pipe": {
+    "accepted": "stager",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-06T13:00:37Z accepted stager scope=key attempt=4c52380e-b5a3-45e6-a4db-cbd304bf5dd3 ids=bash-stager-role"
+    ]
+  },
+  "script.attack/sh.acquire_remote+dispatch_pipe": {
+    "accepted": "T1105",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-06T13:00:40Z accepted T1105 scope=key attempt=4c52380e-b5a3-45e6-a4db-cbd304bf5dd3 ids=bash-stager-attack"
+    ]
+  },
+  "script.attack/sh": {
+    "accepted": "T1059.004",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-06T13:00:42Z accepted T1059.004 scope=key attempt=4c52380e-b5a3-45e6-a4db-cbd304bf5dd3 ids=bash-launcher-attack"
+    ]
+  },
+  "script.role/sh.profile_host+acquire_remote+write_file+change_mode+dispatch_process": {
+    "accepted": "staged_chain",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-06T13:00:45Z accepted staged_chain scope=key attempt=4c52380e-b5a3-45e6-a4db-cbd304bf5dd3 ids=bash-chain-role"
+    ]
+  },
+  "script.attack/sh.profile_host+acquire_remote+write_file+change_mode+dispatch_process": {
+    "accepted": "T1059.004",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-06T13:00:47Z accepted T1059.004 scope=key attempt=4c52380e-b5a3-45e6-a4db-cbd304bf5dd3 ids=bash-chain-attack"
+    ]
+  },
+  "script.role/mjs.read_file+transmit_remote": {
+    "accepted": "uploader",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-07T13:00:22Z accepted uploader scope=key attempt=8466541f-c122-4267-9cc6-52db3b0a6a6a ids=nodejs-uploader-role"
+    ]
+  },
+  "script.attack/mjs.read_file+transmit_remote": {
+    "accepted": "T1041",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-07T13:00:24Z accepted T1041 scope=key attempt=8466541f-c122-4267-9cc6-52db3b0a6a6a ids=nodejs-uploader-attack"
+    ]
+  },
+  "script.attack/mjs": {
+    "accepted": "T1059.007",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-07T13:00:24Z accepted T1059.007 scope=key attempt=8466541f-c122-4267-9cc6-52db3b0a6a6a ids=nodejs-launcher-attack"
+    ]
+  },
+  "script.role/mjs.profile_host+acquire_remote+write_file+change_mode+dispatch_process": {
+    "accepted": "staged_chain",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-07T13:00:26Z accepted staged_chain scope=key attempt=8466541f-c122-4267-9cc6-52db3b0a6a6a ids=nodejs-chain-role"
+    ]
+  },
+  "script.attack/mjs.profile_host+acquire_remote+write_file+change_mode+dispatch_process": {
+    "accepted": "T1059.007",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-07T13:00:27Z accepted T1059.007 scope=key attempt=8466541f-c122-4267-9cc6-52db3b0a6a6a ids=nodejs-chain-attack"
+    ]
+  },
+  "script.role/sh.recognize_syntax+reconstruct_intent": {
+    "accepted": "advanced_syntax",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-07T13:01:50Z accepted advanced_syntax scope=key attempt=8466541f-c122-4267-9cc6-52db3b0a6a6a ids=bash-advanced-indirect-role"
+    ]
+  },
+  "script.role/mjs.build_schedule+register_descriptor": {
+    "accepted": "persistence_descriptor",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-07T13:01:51Z accepted persistence_descriptor scope=key attempt=8466541f-c122-4267-9cc6-52db3b0a6a6a ids=nodejs-persistence-role"
+    ]
+  },
+  "script.attack/mjs.build_schedule+register_descriptor": {
+    "accepted": "T1053.003",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-07T13:01:52Z accepted T1053.003 scope=key attempt=8466541f-c122-4267-9cc6-52db3b0a6a6a ids=nodejs-persistence-attack"
+    ]
+  },
+  "script.role/lua.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-09T13:00:09Z accepted stated scope=key attempt=bb8893fa-03e9-4590-b95e-f5f88c3f558d ids=host-lua-openresty-lua-role"
+    ]
+  },
+  "script.attack/lua.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-09T13:00:11Z accepted stated scope=key attempt=bb8893fa-03e9-4590-b95e-f5f88c3f558d ids=host-lua-openresty-lua-attack"
+    ]
+  },
+  "script.attack/php": {
+    "accepted": null,
+    "rejected": [
+      "T1059",
+      "T1059.004",
+      "T1059.001",
+      "T1059.003",
+      "T1059.005",
+      "T1059.006",
+      "T1059.007",
+      "T1059.010",
+      "T1059.011",
+      "T1059.002",
+      "T1059.009",
+      "T1059.008"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-12T13:02:30Z rejected T1059 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack",
+      "2026-10-12T13:02:30Z rejected T1059.004 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack",
+      "2026-10-12T13:02:31Z rejected T1059.001 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack",
+      "2026-10-12T13:02:31Z rejected T1059.003 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack",
+      "2026-10-12T13:02:31Z rejected T1059.005 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack",
+      "2026-10-12T13:02:32Z rejected T1059.006 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack",
+      "2026-10-12T13:02:32Z rejected T1059.007 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack",
+      "2026-10-12T13:02:32Z rejected T1059.010 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack",
+      "2026-10-12T13:02:33Z rejected T1059.011 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack",
+      "2026-10-12T13:02:33Z rejected T1059.002 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack",
+      "2026-10-12T13:02:34Z rejected T1059.009 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack",
+      "2026-10-12T13:02:35Z rejected T1059.008 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack"
+    ]
+  },
+  "script.attack/lua": {
+    "accepted": null,
+    "rejected": [
+      "T1059.011",
+      "T1059.001",
+      "T1059.003",
+      "T1059.005",
+      "T1059.006",
+      "T1059.007",
+      "T1059.004",
+      "T1059",
+      "T1059.010",
+      "T1059.002",
+      "T1059.009",
+      "T1059.008"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-12T13:02:35Z rejected T1059.011 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack",
+      "2026-10-12T13:02:36Z rejected T1059.001 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack",
+      "2026-10-12T13:02:36Z rejected T1059.003 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack",
+      "2026-10-12T13:02:37Z rejected T1059.005 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack",
+      "2026-10-12T13:02:37Z rejected T1059.006 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack",
+      "2026-10-12T13:02:37Z rejected T1059.007 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack",
+      "2026-10-12T13:02:38Z rejected T1059.004 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack",
+      "2026-10-12T13:02:38Z rejected T1059 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack",
+      "2026-10-12T13:02:39Z rejected T1059.010 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack",
+      "2026-10-12T13:03:01Z rejected T1059.002 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack",
+      "2026-10-12T13:03:02Z rejected T1059.009 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack",
+      "2026-10-12T13:03:02Z rejected T1059.008 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-lua-benign-utility-attack"
+    ]
+  },
+  "script.attack/mof": {
+    "accepted": null,
+    "rejected": [
+      "T1059.001",
+      "T1059.003",
+      "T1059.005",
+      "T1059.006",
+      "T1059.007",
+      "T1059.004",
+      "T1059",
+      "T1059.010",
+      "T1059.011",
+      "T1059.002",
+      "T1059.009",
+      "T1059.008"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-12T13:03:02Z rejected T1059.001 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack",
+      "2026-10-12T13:03:03Z rejected T1059.003 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack",
+      "2026-10-12T13:03:03Z rejected T1059.005 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack",
+      "2026-10-12T13:03:04Z rejected T1059.006 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack",
+      "2026-10-12T13:03:04Z rejected T1059.007 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack",
+      "2026-10-12T13:03:05Z rejected T1059.004 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack",
+      "2026-10-12T13:03:05Z rejected T1059 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack",
+      "2026-10-12T13:03:06Z rejected T1059.010 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack",
+      "2026-10-12T13:03:06Z rejected T1059.011 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack",
+      "2026-10-12T13:03:07Z rejected T1059.002 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack",
+      "2026-10-12T13:03:07Z rejected T1059.009 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack",
+      "2026-10-12T13:03:07Z rejected T1059.008 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-wmi_mof-benign-utility-attack"
+    ]
+  },
+  "script.attack/ts": {
+    "accepted": null,
+    "rejected": [
+      "T1059.007",
+      "T1059.001",
+      "T1059.003",
+      "T1059.005"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-12T13:03:08Z rejected T1059.007 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-typescript-benign-utility-attack",
+      "2026-10-12T13:03:08Z rejected T1059.001 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-typescript-benign-utility-attack",
+      "2026-10-12T13:03:08Z rejected T1059.003 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-typescript-benign-utility-attack",
+      "2026-10-12T13:03:10Z rejected T1059.005 scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-typescript-benign-utility-attack"
+    ]
+  },
+  "script.attack/v3.differ": {
+    "accepted": "stated",
+    "rejected": [
+      "graph"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-12T13:06:04Z rejected graph scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-uploader-attack",
+      "2026-10-12T13:06:04Z accepted stated scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-uploader-attack"
+    ]
+  },
+  "script.attack/v3.profile_host+decode_configuration+dispatch_language": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-12T13:06:05Z accepted stated scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-downloader-attack"
+    ]
+  },
+  "script.attack/v3.agree": {
+    "accepted": "graph_and_stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-12T13:06:06Z accepted graph_and_stated scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=polyglot-php-benign-utility-attack"
+    ]
+  },
+  "script.attack/graph.build_schedule+register_descriptor": {
+    "accepted": "prior_cron",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-12T13:06:07Z accepted prior_cron scope=key attempt=cf6c33dd-83f0-4664-a688-c1750efcaf43 ids=nodejs-persistence-attack"
+    ]
+  },
+  "script.role/pl.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-15T13:00:08Z accepted stated scope=key attempt=033bb7c9-6c98-4f4c-a9b8-c9e3aafd68d4 ids=host-perl-cgi-perl-role"
+    ]
+  },
+  "script.attack/pl.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-15T13:00:11Z accepted stated scope=key attempt=033bb7c9-6c98-4f4c-a9b8-c9e3aafd68d4 ids=host-perl-cgi-perl-attack"
+    ]
+  },
+  "script.role/rb.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-16T13:00:15Z accepted stated scope=key attempt=cc1b5280-2d20-47b1-bd24-d32dd4483c04 ids=host-ruby-rack-ruby-role"
+    ]
+  },
+  "script.attack/rb.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-16T13:00:16Z accepted stated scope=key attempt=cc1b5280-2d20-47b1-bd24-d32dd4483c04 ids=host-ruby-rack-ruby-attack"
+    ]
+  },
+  "script.role/gs.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-18T13:01:04Z accepted stated scope=key attempt=191131bd-6253-4b42-83e1-73c78d9555c8 ids=host-google-docs-sidebar-google-apps-script-role"
+    ]
+  },
+  "script.attack/gs.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-18T13:01:05Z accepted stated scope=key attempt=191131bd-6253-4b42-83e1-73c78d9555c8 ids=host-google-docs-sidebar-google-apps-script-attack"
+    ]
+  },
+  "script.role/csx.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-19T13:01:03Z accepted stated scope=key attempt=5e05f4d9-a453-487e-9b38-f4318ffd9d8e ids=host-aspx-inline-csharp-csharp-script-role"
+    ]
+  },
+  "script.attack/csx.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-19T13:01:04Z accepted stated scope=key attempt=5e05f4d9-a453-487e-9b38-f4318ffd9d8e ids=host-aspx-inline-csharp-csharp-script-attack"
+    ]
+  },
+  "script.role/groovy.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-21T13:00:05Z accepted stated scope=key attempt=1aa12908-9654-42e5-817e-6aa24ec86347 ids=host-jenkins-pipeline-groovy-role"
+    ]
+  },
+  "script.attack/groovy.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-21T13:00:05Z accepted stated scope=key attempt=1aa12908-9654-42e5-817e-6aa24ec86347 ids=host-jenkins-pipeline-groovy-attack"
+    ]
+  },
+  "script.campaign_token/any.after_first_hyphen": {
+    "accepted": "after_first_hyphen",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:09Z accepted after_first_hyphen scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=jscript-9a6714-campaign-token"
+    ]
+  },
+  "script.url_host/any.hostname": {
+    "accepted": "hostname",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:09Z accepted hostname scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-php-10c7ec-url-host"
+    ]
+  },
+  "script.path_leaf/any.last_segment": {
+    "accepted": "last_segment",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:10Z accepted last_segment scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-php-10c7ec-path-leaf"
+    ]
+  },
+  "script.indicator/any.first_present": {
+    "accepted": "first_present",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:11Z accepted first_present scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=jscript-9a6714-indicator"
+    ]
+  },
+  "script.carrier/py.carrier_chain": {
+    "accepted": "carrier_chain",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:12Z accepted carrier_chain scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=python-737ea4-carrier"
+    ]
+  },
+  "script.obfuscation/py.syntax_obfuscation": {
+    "accepted": "syntax_obfuscation",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:13Z accepted syntax_obfuscation scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=python-737ea4-obfuscation"
+    ]
+  },
+  "script.style/js.joined": {
+    "accepted": "joined_bar",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:13Z accepted joined_bar scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=jscript-9a6714-style"
+    ]
+  },
+  "script.style/batch.expansion#cand#candidates": {
+    "accepted": "expansion_for_indirect",
+    "rejected": [],
+    "split": true,
+    "evidence": [
+      "2026-10-23T13:24:14Z rejected expansion_delayed scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-34c1d9-style",
+      "2026-10-23T13:24:15Z rejected expansion_call_double scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-34c1d9-style",
+      "2026-10-23T13:24:15Z accepted expansion_for_indirect scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-34c1d9-style",
+      "2026-10-23T13:24:15Z split expansion_for_indirect scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-9fe290-style,batch-0292c4-style,batch-1fc58f-style,batch-d8acd3-style,batch-dfbb80-style,batch-a66e24-style,batch-2222ac-style,batch-398c3e-style",
+      "2026-10-23T13:24:16Z accepted expansion_for_indirect scope=batch-9fe290-style attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-9fe290-style",
+      "2026-10-23T13:24:16Z rejected expansion_for_indirect scope=batch-0292c4-style attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-0292c4-style",
+      "2026-10-23T13:24:17Z rejected expansion_delayed scope=batch-0292c4-style attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-0292c4-style",
+      "2026-10-23T13:24:17Z accepted expansion_call_double scope=batch-0292c4-style attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-0292c4-style",
+      "2026-10-23T13:24:17Z rejected expansion_for_indirect scope=batch-1fc58f-style attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-1fc58f-style",
+      "2026-10-23T13:24:18Z rejected expansion_call_double scope=batch-1fc58f-style attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-1fc58f-style",
+      "2026-10-23T13:24:18Z accepted expansion_delayed scope=batch-1fc58f-style attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-1fc58f-style",
+      "2026-10-23T13:24:19Z accepted expansion_for_indirect scope=batch-d8acd3-style attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-d8acd3-style",
+      "2026-10-23T13:24:19Z rejected expansion_for_indirect scope=batch-dfbb80-style attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=batch-dfbb80-style",
+      "2026-10-24T13:00:13Z rejected expansion_for_indirect scope=key attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-de6e35-style",
+      "2026-10-24T13:00:14Z rejected expansion_call_double scope=key attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-de6e35-style",
+      "2026-10-24T13:00:14Z accepted expansion_delayed scope=key attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-de6e35-style",
+      "2026-10-24T13:00:14Z split expansion_delayed scope=key attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-89897a-style,batch-c22cb1-style,batch-8559a1-style,batch-88beba-style,batch-bc9a45-style,batch-d22783-style,batch-41b336-style,batch-460b31-style",
+      "2026-10-24T13:00:15Z rejected expansion_delayed scope=batch-89897a-style attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-89897a-style",
+      "2026-10-24T13:00:15Z accepted expansion_for_indirect scope=batch-89897a-style attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-89897a-style",
+      "2026-10-24T13:00:16Z rejected expansion_delayed scope=batch-c22cb1-style attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-c22cb1-style",
+      "2026-10-24T13:00:16Z accepted expansion_for_indirect scope=batch-c22cb1-style attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-c22cb1-style",
+      "2026-10-24T13:00:16Z accepted expansion_delayed scope=batch-8559a1-style attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-8559a1-style",
+      "2026-10-24T13:00:17Z rejected expansion_delayed scope=batch-88beba-style attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-88beba-style",
+      "2026-10-24T13:00:17Z accepted expansion_for_indirect scope=batch-88beba-style attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-88beba-style",
+      "2026-10-24T13:00:18Z rejected expansion_delayed scope=batch-bc9a45-style attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-bc9a45-style",
+      "2026-10-24T13:00:18Z rejected expansion_for_indirect scope=batch-bc9a45-style attempt=407617ad-2138-40e7-a853-2d1c1bd2d357 ids=batch-bc9a45-style",
+      "2026-10-25T13:00:11Z accepted expansion_delayed scope=key attempt=08f8e549-a4b4-4334-98a0-3d7e58a856fa ids=batch-9c60f7-style",
+      "2026-10-25T13:00:12Z accepted expansion_call_double scope=batch-dbabe8-style attempt=08f8e549-a4b4-4334-98a0-3d7e58a856fa ids=batch-dbabe8-style",
+      "2026-10-25T13:00:12Z accepted expansion_percent scope=batch-5df999-style attempt=08f8e549-a4b4-4334-98a0-3d7e58a856fa ids=batch-5df999-style",
+      "2026-10-25T13:00:12Z accepted expansion_percent scope=batch-4e8f4f-style attempt=08f8e549-a4b4-4334-98a0-3d7e58a856fa ids=batch-4e8f4f-style",
+      "2026-10-25T13:00:13Z accepted expansion_percent scope=batch-57d19b-style attempt=08f8e549-a4b4-4334-98a0-3d7e58a856fa ids=batch-57d19b-style",
+      "2026-10-25T13:00:13Z accepted expansion_for_indirect scope=batch-740cdf-style attempt=08f8e549-a4b4-4334-98a0-3d7e58a856fa ids=batch-740cdf-style",
+      "2026-10-25T13:00:14Z accepted expansion_for_indirect scope=batch-817ca8-style attempt=08f8e549-a4b4-4334-98a0-3d7e58a856fa ids=batch-817ca8-style",
+      "2026-10-25T13:00:15Z accepted expansion_for_indirect scope=batch-d881c6-style attempt=08f8e549-a4b4-4334-98a0-3d7e58a856fa ids=batch-d881c6-style"
+    ],
+    "accepted_names": [
+      "expansion_for_indirect",
+      "expansion_call_double",
+      "expansion_delayed",
+      "expansion_percent"
+    ]
+  },
+  "script.style/vbscript.joined": {
+    "accepted": "joined_bar",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:20Z accepted joined_bar scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=vbscript-c5e912-style"
+    ]
+  },
+  "script.file_path/ahk.one_copy": {
+    "accepted": "as_read",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:20Z accepted as_read scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-auto_hotkey-64f063-file-path"
+    ]
+  },
+  "script.secondary/powershell.scenario_indicator": {
+    "accepted": "by_scenario",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:21Z accepted by_scenario scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=powershell-3bad9c-secondary"
+    ]
+  },
+  "script.tertiary/powershell.scenario_indicator": {
+    "accepted": "by_scenario",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted by_scenario scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=powershell-3bad9c-tertiary"
+    ]
+  },
+  "script.role/mof.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-wmi_mof-9058ac-role,polyglot-wmi_mof-7e28e6-role,polyglot-wmi_mof-ed6708-role,polyglot-wmi_mof-9ae51d-role"
+    ]
+  },
+  "script.attack/mof.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-wmi_mof-9058ac-attack,polyglot-wmi_mof-7e28e6-attack,polyglot-wmi_mof-ed6708-attack,polyglot-wmi_mof-9ae51d-attack"
+    ]
+  },
+  "script.role/ts.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-typescript-0ea0d9-role,polyglot-typescript-744b27-role,polyglot-typescript-3488a0-role,polyglot-typescript-08c56a-role"
+    ]
+  },
+  "script.attack/ts.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-typescript-0ea0d9-attack,polyglot-typescript-744b27-attack,polyglot-typescript-3488a0-attack,polyglot-typescript-08c56a-attack"
+    ]
+  },
+  "script.role/au3.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-autoit-5f7f00-role,polyglot-autoit-24bb6e-role,polyglot-autoit-e0ba4e-role,polyglot-autoit-08e5a2-role"
+    ]
+  },
+  "script.attack/au3.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-autoit-5f7f00-attack,polyglot-autoit-24bb6e-attack,polyglot-autoit-e0ba4e-attack,polyglot-autoit-08e5a2-attack"
+    ]
+  },
+  "script.role/applescript.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-applescript-35b72d-role,polyglot-applescript-848ae7-role,polyglot-applescript-416b97-role,polyglot-applescript-15c08d-role"
+    ]
+  },
+  "script.attack/applescript.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-applescript-35b72d-attack,polyglot-applescript-848ae7-attack,polyglot-applescript-416b97-attack,polyglot-applescript-15c08d-attack"
+    ]
+  },
+  "script.role/proj.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-msbuild_xml-7ddba4-role,polyglot-msbuild_xml-4c26d1-role,polyglot-msbuild_xml-b7b143-role,polyglot-msbuild_xml-d226f4-role"
+    ]
+  },
+  "script.attack/proj.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-msbuild_xml-7ddba4-attack,polyglot-msbuild_xml-4c26d1-attack,polyglot-msbuild_xml-b7b143-attack,polyglot-msbuild_xml-d226f4-attack"
+    ]
+  },
+  "script.role/ahk.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-auto_hotkey-64f063-role,polyglot-auto_hotkey-7c2bb0-role,polyglot-auto_hotkey-5978e0-role,polyglot-auto_hotkey-b3e2ec-role"
+    ]
+  },
+  "script.attack/ahk.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-auto_hotkey-64f063-attack,polyglot-auto_hotkey-7c2bb0-attack,polyglot-auto_hotkey-5978e0-attack,polyglot-auto_hotkey-b3e2ec-attack"
+    ]
+  },
+  "script.role/yml.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-github_actions-ab5a4d-role,polyglot-github_actions-45971a-role,polyglot-github_actions-bc4b0e-role,polyglot-github_actions-841c9d-role"
+    ]
+  },
+  "script.attack/yml.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-github_actions-ab5a4d-attack,polyglot-github_actions-45971a-attack,polyglot-github_actions-bc4b0e-attack,polyglot-github_actions-841c9d-attack"
+    ]
+  },
+  "script.role/nsi.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-nsis-82b981-role,polyglot-nsis-b2dfb5-role,polyglot-nsis-6fa7a3-role,polyglot-nsis-66d365-role"
+    ]
+  },
+  "script.attack/nsi.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-nsis-82b981-attack,polyglot-nsis-b2dfb5-attack,polyglot-nsis-6fa7a3-attack,polyglot-nsis-66d365-attack"
+    ]
+  },
+  "script.role/gd.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-gdscript-a2bd79-role,polyglot-gdscript-f42dff-role,polyglot-gdscript-c02f95-role,polyglot-gdscript-06e33a-role"
+    ]
+  },
+  "script.attack/gd.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:24:22Z accepted stated scope=key attempt=10e1d0fe-5742-4bf7-a257-21375b1f422d ids=polyglot-gdscript-a2bd79-attack,polyglot-gdscript-f42dff-attack,polyglot-gdscript-c02f95-attack,polyglot-gdscript-06e33a-attack"
+    ]
+  },
+  "script.role/jsp.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-24T13:00:09Z accepted stated scope=key attempt=d4dfb544-a1c1-405c-bfcb-b4ad5c46da00 ids=host-jsp-webshell-jsp-role"
+    ]
+  },
+  "script.attack/jsp.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-24T13:00:09Z accepted stated scope=key attempt=d4dfb544-a1c1-405c-bfcb-b4ad5c46da00 ids=host-jsp-webshell-jsp-attack"
+    ]
+  },
+  "script.role/exs.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-25T13:00:07Z accepted stated scope=key attempt=14c70c40-f406-4652-bad0-e6f121eb5642 ids=host-elixir-phoenix-elixir-role"
+    ]
+  },
+  "script.attack/exs.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-25T13:00:07Z accepted stated scope=key attempt=14c70c40-f406-4652-bad0-e6f121eb5642 ids=host-elixir-phoenix-elixir-attack"
+    ]
+  },
+  "script.file_path/escript.one_copy": {
+    "accepted": "as_read",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-26T13:00:06Z accepted as_read scope=key attempt=b6f4323a-7d5e-4eb0-ad54-fa6f917721dc ids=polyglot-erlang-benign-utility-file-path"
+    ]
+  },
+  "script.role/escript.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-26T13:00:14Z accepted stated scope=key attempt=14a441d9-f839-4637-b2d9-95fdcadb6e3b ids=polyglot-erlang-0640aa-role,polyglot-erlang-9d22ec-role,polyglot-erlang-2d7c2a-role,polyglot-erlang-c348b2-role"
+    ]
+  },
+  "script.attack/escript.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-26T13:00:14Z accepted stated scope=key attempt=14a441d9-f839-4637-b2d9-95fdcadb6e3b ids=polyglot-erlang-0640aa-attack,polyglot-erlang-9d22ec-attack,polyglot-erlang-2d7c2a-attack,polyglot-erlang-c348b2-attack"
+    ]
+  },
+  "script.file_path/tf.one_copy": {
+    "accepted": "as_read",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:08Z accepted as_read scope=key attempt=8e8aee63-06e9-4729-862e-df845097b782 ids=polyglot-terraform_hcl-benign-utility-file-path"
+    ]
+  },
+  "script.role/dockerfile.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:16Z accepted stated scope=key attempt=961420c3-97a7-4009-b0a3-9240267d3c3b ids=polyglot-dockerfile-0eac72-role,polyglot-dockerfile-d91631-role,polyglot-dockerfile-d764e9-role,polyglot-dockerfile-e5a7db-role"
+    ]
+  },
+  "script.attack/dockerfile.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:16Z accepted stated scope=key attempt=961420c3-97a7-4009-b0a3-9240267d3c3b ids=polyglot-dockerfile-0eac72-attack,polyglot-dockerfile-d91631-attack,polyglot-dockerfile-d764e9-attack,polyglot-dockerfile-e5a7db-attack"
+    ]
+  },
+  "script.role/tf.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:16Z accepted stated scope=key attempt=961420c3-97a7-4009-b0a3-9240267d3c3b ids=polyglot-terraform_hcl-767e8f-role,polyglot-terraform_hcl-5448a4-role,polyglot-terraform_hcl-445d82-role,polyglot-terraform_hcl-e61285-role"
+    ]
+  },
+  "script.attack/tf.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:16Z accepted stated scope=key attempt=961420c3-97a7-4009-b0a3-9240267d3c3b ids=polyglot-terraform_hcl-767e8f-attack,polyglot-terraform_hcl-5448a4-attack,polyglot-terraform_hcl-445d82-attack,polyglot-terraform_hcl-e61285-attack"
+    ]
+  },
+  "script.role/mk.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:00Z accepted stated scope=key attempt=86420d1c-d794-406d-99fe-d21bbb1f83ce ids=polyglot-makefile-d7e615-role,polyglot-makefile-7aa1b4-role,polyglot-makefile-87bca5-role,polyglot-makefile-8de257-role"
+    ]
+  },
+  "script.attack/mk.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:00Z accepted stated scope=key attempt=86420d1c-d794-406d-99fe-d21bbb1f83ce ids=polyglot-makefile-d7e615-attack,polyglot-makefile-7aa1b4-attack,polyglot-makefile-87bca5-attack,polyglot-makefile-8de257-attack"
+    ]
+  },
+  "script.role/bsh.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:06Z accepted stated scope=key attempt=cea42621-2c7b-4797-9747-8e23bf6bd392 ids=host-jsp-beanshell-beanshell-role"
+    ]
+  },
+  "script.attack/bsh.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:06Z accepted stated scope=key attempt=cea42621-2c7b-4797-9747-8e23bf6bd392 ids=host-jsp-beanshell-beanshell-attack"
+    ]
+  },
+  "script.file_path/bsh.one_copy": {
+    "accepted": "as_read",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:11Z accepted as_read scope=key attempt=02e8e802-7355-48d3-a62c-0b05d6054e97 ids=polyglot-beanshell-fada7b-file-path"
+    ]
+  },
+  "script.path_leaf/bsh.derived_url_leaf": {
+    "accepted": null,
+    "rejected": [
+      "leaf"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:12Z rejected leaf scope=key attempt=02e8e802-7355-48d3-a62c-0b05d6054e97 ids=polyglot-beanshell-fada7b-path-leaf"
+    ]
+  },
+  "script.polyglot-beanshell-736ea1-path-leaf/proposed.02e8e802#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:kv:file_path",
+      "enum:shipped:leaf"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:12Z rejected enum:kv:file_path scope=key attempt=02e8e802-7355-48d3-a62c-0b05d6054e97 ids=polyglot-beanshell-736ea1-path-leaf",
+      "2026-10-30T13:00:12Z rejected enum:shipped:leaf scope=key attempt=02e8e802-7355-48d3-a62c-0b05d6054e97 ids=polyglot-beanshell-736ea1-path-leaf"
+    ]
+  },
+  "script.polyglot-beanshell-af0b73-path-leaf/proposed.02e8e802#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:kv:file_path",
+      "enum:shipped:leaf"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:13Z rejected enum:kv:file_path scope=key attempt=02e8e802-7355-48d3-a62c-0b05d6054e97 ids=polyglot-beanshell-af0b73-path-leaf",
+      "2026-10-30T13:00:13Z rejected enum:shipped:leaf scope=key attempt=02e8e802-7355-48d3-a62c-0b05d6054e97 ids=polyglot-beanshell-af0b73-path-leaf"
+    ]
+  },
+  "script.polyglot-beanshell-3d88e9-path-leaf/proposed.02e8e802#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:shipped:leaf"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:14Z rejected enum:shipped:leaf scope=key attempt=02e8e802-7355-48d3-a62c-0b05d6054e97 ids=polyglot-beanshell-3d88e9-path-leaf"
+    ]
+  },
+  "script.polyglot-beanshell-9a0231-path-leaf/proposed.02e8e802#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:kv:file_path",
+      "enum:shipped:leaf"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:14Z rejected enum:kv:file_path scope=key attempt=02e8e802-7355-48d3-a62c-0b05d6054e97 ids=polyglot-beanshell-9a0231-path-leaf",
+      "2026-10-30T13:00:14Z rejected enum:shipped:leaf scope=key attempt=02e8e802-7355-48d3-a62c-0b05d6054e97 ids=polyglot-beanshell-9a0231-path-leaf"
+    ]
+  },
+  "script.polyglot-csharp_script-3990b6-role/proposed.92f9fe9c#candidates": {
+    "accepted": "enum:benign_utility",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:33Z accepted enum:benign_utility scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-role"
+    ]
+  },
+  "script.polyglot-csharp_script-3990b6-attack/proposed.92f9fe9c#candidates": {
+    "accepted": "enum:attack:benign_none",
+    "rejected": [
+      "enum:attack:command_interpreter"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:34Z rejected enum:attack:command_interpreter scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-attack",
+      "2026-10-30T13:00:34Z accepted enum:attack:benign_none scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-attack"
+    ]
+  },
+  "script.polyglot-csharp_script-3990b6-steps/proposed.92f9fe9c#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:kv:language",
+      "enum:kv:next_language"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:35Z rejected enum:kv:language scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-steps",
+      "2026-10-30T13:00:36Z rejected enum:kv:next_language scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-steps"
+    ]
+  },
+  "script.polyglot-csharp_script-3990b6-stage-count/proposed.92f9fe9c#candidates": {
+    "accepted": "enum:kv:stage_count",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:37Z accepted enum:kv:stage_count scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-stage-count"
+    ]
+  },
+  "script.polyglot-csharp_script-3990b6-stage-profile/proposed.92f9fe9c#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:kv:tion_profile",
+      "enum:kv:stage_count",
+      "enum:kv:language"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:38Z rejected enum:kv:tion_profile scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-stage-profile",
+      "2026-10-30T13:00:39Z rejected enum:kv:stage_count scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-stage-profile",
+      "2026-10-30T13:00:39Z rejected enum:kv:language scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-stage-profile"
+    ]
+  },
+  "script.polyglot-csharp_script-3990b6-obfuscation/proposed.92f9fe9c#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:kv:language",
+      "enum:kv:tion_profile",
+      "enum:kv:next_language"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:40Z rejected enum:kv:language scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-obfuscation",
+      "2026-10-30T13:00:41Z rejected enum:kv:tion_profile scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-obfuscation",
+      "2026-10-30T13:00:42Z rejected enum:kv:next_language scope=key attempt=92f9fe9c-e06e-4445-a688-b48158d6809b ids=set5.polyglot-csharp_script-3990b6-obfuscation"
+    ]
+  },
+  "script.role/xsl.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-31T13:00:09Z accepted stated scope=key attempt=26ee6ee0-c901-479c-b541-3ca0662f0481 ids=polyglot-xslt-b0348a-role,polyglot-xslt-4683b1-role,polyglot-xslt-86f948-role,polyglot-xslt-3f7778-role"
+    ]
+  },
+  "script.attack/xsl.stated_v3": {
+    "accepted": "stated",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-31T13:00:09Z accepted stated scope=key attempt=26ee6ee0-c901-479c-b541-3ca0662f0481 ids=polyglot-xslt-b0348a-attack,polyglot-xslt-4683b1-attack,polyglot-xslt-86f948-attack,polyglot-xslt-3f7778-attack"
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "doc": "B-224 metadata name-alias table. A curated '<unseen property name> -> <registered or grammar name>' map, read by properties_strict.resolve_name() ahead of synonym() and guess(). An entry here lets a known property family absorb a brand-new spelling with one JSON line and no code patch; the reader that answers it is the target's, but the answer stays UNSURE under the asked name's own key (its options carry the reader), so the judge still settles the format. Keys and targets are property names in any spelling (idresolve canonicalises both). The target must resolve to a reader (tests/test_metadata_name_resolver.py checks every entry). The <width>/<form>/collection/platform grammars are handled by resolve_name itself, not listed here; this table is for names those rules do not reach.",
+  "aliases": {
+    "pe.aoe_rva_hex": "pe.address_of_entry_point_rva_hex",
+    "pe.entrypoint_rva_hex": "pe.entry_point_rva",
+    "lnk.target_path_win": "lnk.target_path_windows",
+    "macho.cputype_collection": "macho.cpu_type"
+  }
+}

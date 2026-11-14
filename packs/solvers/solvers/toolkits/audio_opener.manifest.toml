@@ -1,0 +1,35 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-129.
+# The audio opener: every audio drop (WAV, MP3, FLAC, Ogg, AIFF) decoded to PCM in-process with
+# soundfile (libsndfile; an MP3 needs its MPEG support, else a named failure), then dominant tones
+# and their keying, Morse (signal_stego_depth.decode_morse_tone on the 1/3/7 lattice), DTMF, the
+# ID3 / RIFF INFO / Vorbis tags, and the EXIF text of sibling images. Prints a triage, then a
+# SolverResult line.
+id = "toolkits.audio_opener"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/audio_opener.py"
+capabilities = ["executes", "cli", "audio", "mp3", "morse", "dtmf", "tones", "id3", "exif"]
+inputs = ["magic:RIFF", "magic:ID3", "magic:fLaC", "magic:OggS", "ext:.mp3", "ext:.wav", "ext:.flac", "ext:.ogg"]
+needs_tools = ["py:numpy", "py:soundfile"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-129: compressed audio drops (WAV keeps the line-code adapter's file route)
+files = ["ext:.mp3", "magic:ID3", "ext:.ogg", "magic:OggS", "ext:.flac", "magic:fLaC"]
+priority = 29
+
+[[routes]]  # B-129: the words of a keyed-tone brief
+keywords = ["morse", "dits", "dots and dashes", "beeping", "beeps", "dtmf", "touch tone", "dial tones", "cassette"]
+priority = 63
+
+[intake]  # B-129: run at intake on any audio file in the handout (unpacked archive members included)
+select = "files"
+run = "folder"
+match = ["magic:RIFF", "magic:ID3", "magic:fLaC", "magic:OggS", "magic:FORM", "magic:0xfffb",
+         "magic:0xfffa", "magic:0xfff3", "magic:0xfff2", "magic:0xffe3",
+         "magic:0xffe2", "ext:.mp3", "ext:.wav", "ext:.flac", "ext:.ogg", "ext:.oga", "ext:.aif",
+         "ext:.aiff"]
+args = ["{folder}"]
+timeout = 60
+# soundfile loads libsndfile through ctypes, which the hook-only guard refuses: run it only under the
+# OS network sandbox (where children and ctypes are allowed), like the engines that start programs.
+spawns = true

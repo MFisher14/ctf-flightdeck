@@ -69,7 +69,11 @@ def tracked_markdown() -> list[Path]:
     listing = subprocess.run([git, "ls-files", "-z", "--", "*.md"], cwd=REPO, env=env, capture_output=True, timeout=60)
     assert listing.returncode == 0, f"git ls-files failed in {REPO}: {listing.stderr.decode('utf-8', 'replace').strip()}"
     paths = [REPO / os.fsdecode(name) for name in listing.stdout.split(b"\0") if name]
-    return sorted(path for path in paths if path.is_file())
+    # the solver pack's own pages are exported from its master as they are (packs/solvers/maint/export.py),
+    # except the ones this repository writes: its README and the lanes' note
+    exported = REPO / "packs" / "solvers"
+    ours = {exported / "README.md", exported / "flightdeck" / "LANE.md"}
+    return sorted(path for path in paths if path.is_file() and (exported not in path.parents or path in ours))
 
 
 def test_a_pipe_in_a_code_span_of_a_table_row_is_found():

@@ -1,0 +1,43 @@
+{
+  "expansion": {
+    "percent": "delayed"
+  },
+  "control": {
+    "errorlevel": "errorlevel_guard",
+    "if_defined": "if_guard"
+  },
+  "rejected": {
+    "@percent": [
+      "percent"
+    ],
+    "@errorlevel": [
+      "direct",
+      "if_errorlevel"
+    ],
+    "@if_defined": [
+      "direct",
+      "if_defined",
+      "defined_guard",
+      "defined_check",
+      "defined_gate",
+      "if_defined_set",
+      "defined_branch"
+    ],
+    "@von_error": [],
+    "@vif": [
+      "if_guard",
+      "if_true",
+      "if_then",
+      "if_once",
+      "guard",
+      "if_block",
+      "conditional"
+    ],
+    "@vfor": []
+  },
+  "vbscript_control": {
+    "on_error": "error_guard",
+    "if": "direct",
+    "for": "for_once"
+  }
+}

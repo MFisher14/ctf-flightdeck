@@ -1,0 +1,20 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-157.
+# The general lattice and polynomial-ideal service: LLL/BKZ, Groebner bases, varieties, elimination,
+# resultants, roots and Coppersmith small roots as JSON jobs on a named backend (python, a local sage,
+# or the pinned ctf-sage image). needs_tools is empty on purpose: the python backend always runs, and
+# an absent optional backend (py:fpylll, sage, image:ctf-sage:<v>) is reported per job as `blocked`
+# with needs_tool, never installed or substituted.
+id = "common.algebra_service"
+lane = "common"
+entry = "cli:python solvers/common/algebra_service.py"
+capabilities = ["analysis", "cli", "legacy-output", "documented", "lattice", "bkz", "groebner", "polynomial-ideal", "sage"]
+inputs = []
+needs_tools = []
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # B-157: a crypto brief that needs an ideal or a Sage-grade reduction
+category = ["crypto"]
+keywords = ["groebner", "gröbner", "polynomial ideal", "polynomial system", "elimination ideal", "resultant",
+            "multivariate", "sagemath", ".sage", "lattice reduction"]
+priority = 62

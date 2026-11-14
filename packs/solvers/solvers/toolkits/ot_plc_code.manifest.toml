@@ -1,0 +1,17 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-160 (hard tail).
+# experimental: the opcode table ships empty (no reference pair exists), so today this engine reports
+# compiled PLC logic as opaque, with the named reason and the human step. It is not a disassembler.
+# solve() returns a SolverResult (blocked while nothing can be read). The operator tool (--listing,
+# --table-status, --verify-pairs) is the same file run as a script.
+id = "toolkits.ot_plc_code"
+lane = "toolkits"
+entry = "solvers.toolkits.ot_plc_code:solve"
+capabilities = ["analysis", "s7"]
+inputs = ["magic:pp", "ext:.app"]
+needs_tools = []
+cost_class = "cheap"
+status = "experimental"
+
+[[routes]]  # B-160: "can the compiled logic be read?" Below the MC7 / CODESYS inventories (61, 62).
+keywords = ["mc7 disassembl", "plc disassembl", "codesys disassembl", "plc bytecode", "compiled plc", "decompile plc", "disassemble plc"]
+priority = 59

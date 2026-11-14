@@ -1,0 +1,33 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-132.
+# TI-Nspire documents (.tns, magic *TIMLP): the members of the zip variant (deflate, and TI's encrypted
+# method 13 with its TIXC token stream), index lists decoded through a sibling document's string, and
+# Graphs & Geometry pages rendered to PNG. tesseract reads the rendering when it is installed; it is not
+# in needs_tools, because everything but that reading works without it (the result says OCR was not run).
+# For the same reason `spawns` is false: under intake's audit-hook guard (no OS sandbox) the engine still
+# runs, the guard refuses the one tesseract call, and the result says so.
+id = "toolkits.tns_nspire"
+lane = "toolkits"
+entry = "solvers.toolkits.tns_nspire:solve"
+capabilities = ["executes", "tns", "ti-nspire", "calculator", "container", "decrypt", "geometry", "render", "ocr"]
+inputs = ["magic:*TIMLP", "ext:.tns"]
+needs_tools = ["py:Cryptodome"]
+# Pillow is not a need either: without it the engine still reads every member, decodes index lists and
+# marks page text as a possible decoy (a page it cannot draw is `blocked` with py:PIL named), and an
+# engine skipped for a missing need would leave intake with only the sweep's view of the page.
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-132: no other engine opens this container, so a .tns in any category comes here first
+files = ["magic:*TIMLP", "ext:.tns"]
+priority = 64
+
+[[routes]]  # B-132: a brief that names the calculator or its file type
+keywords = ["ti-nspire", "nspire", ".tns"]
+priority = 62
+
+[intake]  # B-132: run at intake on any TI-Nspire document, so no model is spawned to unpack, decrypt or draw one
+select = "files"
+run = "challenge"
+match = ["magic:*TIMLP"]
+timeout = 45
+spawns = false

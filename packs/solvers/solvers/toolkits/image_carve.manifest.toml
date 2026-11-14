@@ -1,0 +1,25 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-030.
+id = "toolkits.image_carve"
+lane = "toolkits"
+entry = "solvers.toolkits.image_carve:solve"
+capabilities = ["executes", "acropalypse", "png", "bmp", "lsb", "carve", "fragments", "ocr", "stego"]
+inputs = ["magic:\u0089PNG", "magic:BM", "ext:.bmp", "ext:.img", "ext:.dd", "ext:.raw", "ext:.bin", "ext:.dump"]
+needs_tools = ["py:numpy", "py:PIL"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-030: every PNG and BMP, whatever the category (aCropalypse tail, LSB payloads, appended archives)
+files = ["magic:\u0089PNG", "magic:BM", "ext:.bmp"]
+priority = 30
+
+[[routes]]  # B-030: the words of a cropped-screenshot or chip-off carving brief
+keywords = ["acropalypse", "cropped screenshot", "cropped image", "chip-off", "allocation tables", "carved out by hand",
+            "fragmented png", "out of order sectors"]
+priority = 64
+
+[intake]  # B-030: run at intake on any PNG, BMP or raw dump, so no model is spawned for these
+select = "files"
+run = "challenge"
+match = ["magic:\u0089PNG", "magic:BM", "ext:.bmp", "ext:.img", "ext:.dd", "ext:.raw", "ext:.bin", "ext:.dump"]
+timeout = 60
+spawns = true

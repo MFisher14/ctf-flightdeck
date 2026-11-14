@@ -1,0 +1,21 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-103.
+# The live "rebuild the calendar" engine: start the per-team instance through the B-003 slot ledger
+# (or take --opt target=URL), GET /brief and /case.ics through the scope-locked WebClient, expand
+# with toolkits.ical_expand, map brief + expansion to the attestation (pluggable; `auto` reads only
+# structured JSON and returns `unsure` when an unstated rule would change the answer), and POST it to
+# /attest only when the mapping is confident and rules.web_state_changing allows it.
+# No [intake] table: it contacts a live target, and intake denies engines the network.
+id = "toolkits.ical_attest"
+lane = "toolkits"
+entry = "solvers.toolkits.ical_attest:solve"
+capabilities = ["executes", "live", "icalendar", "rfc5545", "calendar", "attestation", "instance"]
+inputs = []
+needs_tools = ["py:dateutil"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # the brief + calendar + attest handshake of a container challenge
+category = ["misc", "web"]
+keywords = ["case.ics", "icalendar", ".ics file", "post /attest", "recurrence-id", "rrule",
+            "calendar reconciliation", "rebuild the activations"]
+priority = 66

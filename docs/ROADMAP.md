@@ -3,6 +3,61 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Released: 0.4.0, M6 the solver pack and the first run (2026-11-13)
+
+The author's own solvers and the pipeline he won events with come into flightdeck (D24; P29 to
+P44 in [DECISIONS.md](DECISIONS.md); [SOLVERS.md](SOLVERS.md) says how to use the pack).
+
+Built:
+
+- **The solver pack, as an optional install.** `packs/solvers/` in this repository, never in the
+  PyPI package: `flightdeck pack install` fetches it, builds its Python environment and its
+  Docker image, and writes it into the config. Its whole no-model intake runs on every
+  challenge as one engine: recursive unpack, flag search under layered encodings, some 800
+  analysis engines routed by category and file type, decoders. Only a flag it can show the
+  source of is handed over as a flag.
+- **The pack as the lanes' toolkit** (`[l1] lane_tools`): every lane's brief says how to call
+  the engines and read the category playbooks, and Docker lanes run in the pack's image.
+- **From the pack's pipeline, into flightdeck's own** (each a proposal in DECISIONS, P33 to P44):
+  - a flag CTFd rate-limited without checking it is waited out and sent again (P33);
+  - the wrong-answer stop (P34); `/note`, a note for every lane (P35);
+  - instances on demand: a challenge's own container started through a CTFd container plugin
+    before a lane works it, renewed, and stopped on the solve (P36);
+  - flag variants within a budget, off by default (P37);
+  - a second and a third opinion on a timer under autopilot, off by default (P38);
+  - rotating flags (P39);
+  - the host governor: no new lane while the machine is over a limit (P40);
+  - doctor names the pack's missing tools (P41);
+  - the Game Master platform: pull, answers, the solved list (P42);
+  - what the lanes of one challenge share, and series chaining (P43, P44).
+- **From playing it** (the mock, then a real event from the README): `/config` in the console
+  for the lane limit and auto approve (P45); `flightdeck start`, one command that sets an event
+  up and plays it, and `flightdeck play FOLDER` with no `--event` (P46); an empty board
+  you fill from the console with `/new`, or with `flightdeck add` (P47); pasted screenshots and
+  `/attach` (P48); an event's VPN file kept and connected (P49); the opening menu
+  and the welcome screen (P50).
+- **The pack's own suite** runs in its folder (`packs/solvers/README.md`); the tests of the
+  master repository's layout that the export leaves behind are listed and deselected, never
+  counted as passed.
+
+Known limits of what was ported, each said where it applies:
+
+- The Game Master adapter and the `ctfd_docker` plugin shape were built against fakes and have
+  not met a real service; `docker_per_team` is the plugin shape seen working at an event.
+- Instances are started in the queue's order, not highest value first, and a Docker lane whose
+  instance came back at another address must be killed and queued again.
+- Rotating-flag windows are counted on this machine's clock, not the platform's.
+- The governor reads load, memory and disk; the pack's battery, thermal and cross-harness leases
+  are not taken. Its Linux memory reading was tested through a fake host only.
+- Flag variants never restore case from the challenge's own text (that would let challenge text
+  choose what is sent).
+- The pack's series engine (it computes a follow-up's answer from a sibling's saved certificate
+  or favicon) stays an engine of the pack; flightdeck links the siblings and shares their files.
+
+Not ported, because flightdeck has its own: the dispatcher, the board watcher, budgets and the
+ledger, the leftovers reaper, writeups. Not portable: what drives the Claude Code and Codex
+harnesses (launchers, permission profiles, worktrees, build lanes).
+
 ## Released: 0.3.0, M5 Autopilot (2026-11-12)
 
 Engage autopilot and flightdeck runs the event end to end while you are away; take the controls

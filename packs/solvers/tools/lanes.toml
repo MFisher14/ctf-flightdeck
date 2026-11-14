@@ -1,0 +1,43 @@
+# Per-lane extras for the lane env-check (B-188, `python -m ctf toolchain envcheck <lane>`). The check
+# already reads every third-party import of a lane's engines from their source; this file adds what
+# agents in that lane reach for by hand, so a fresh agent finds it before it needs it.
+#
+#   [lane.<solvers lane>]
+#   modules   top-level import names that must be findable in the venv (required)
+#   bins      programs that must be on PATH or in the venv's bin folder (required)
+#   assets    tools/assets.toml names that must resolve (required)
+#   image     the tools/images.toml image for what the host does not carry (shown by the check)
+#   note      why
+
+[lane.binary]
+modules = ["capstone", "lief", "pefile", "unicorn", "elftools", "pwn"]
+image = "toolkit"
+note = "Huntress agents hit ModuleNotFoundError for capstone/lief/pefile/unicorn before real work"
+
+[lane.toolkits]
+modules = ["Crypto", "gmpy2", "sympy", "z3", "capstone", "scapy"]
+assets = ["rockyou"]
+image = "toolkit"
+note = "hashcrack reads rockyou through $ROCKYOU; tshark, zsteg and a working 7z2john are in ctf-toolkit:1"
+
+[lane.common]
+modules = ["Crypto", "gmpy2", "sympy"]
+image = "sage-10.7"
+note = "crypto engines; heavy number theory goes to a tagged Sage image (`ctf toolchain versions <dir>`)"
+
+[lane.metadata-forensics]
+modules = ["PIL", "exifread"]
+image = "toolkit"
+
+[lane.web]
+modules = ["requests", "bs4"]
+
+[lane.mobile-android]
+image = "toolkit"
+
+[lane.script-analysis]
+modules = ["oletools"]
+image = "toolkit"
+
+[lane.warmups]
+modules = ["Crypto"]

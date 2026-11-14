@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 from ctf_flightdeck import cli
 from ctf_flightdeck.agent.workspace import docker_unavailable
 from ctf_flightdeck.config import ConfigError, load_config
+from ctf_flightdeck.hardware import GIB
 from ctf_flightdeck.lane import IMAGE
 from ctf_flightdeck.setup import Answers, Check, doctor, render, report, write_config
 from l1_kit import docker_not_run
@@ -149,7 +150,8 @@ def test_init_at_a_terminal_asks_again_after_an_answer_it_cannot_use(tmp_path, m
     assert "Error: model id 2 repeats model id 1; give each model once" in result.output
     assert "Error: give docker (a container per lane) or host (lanes on this machine)" in result.output
     assert result.output.count("Runtime: docker (a container per lane) or host (lanes run as you, and can read your files and keys)") == 2
-    assert "Provider: openrouter, anthropic, openai, ollama (or local), mlx or custom [openrouter]:" in result.output
+    assert "Which model API do the lanes use?" in result.output and "  2  anthropic " in result.output
+    assert "Your choice [1]:" in result.output and "Lanes use local." in result.output
 
 
 def test_init_at_a_terminal_asks_again_for_a_custom_api_and_never_shows_a_key_typed_as_its_variable(tmp_path, monkeypatch):
@@ -498,7 +500,8 @@ def test_doctor_checks_the_l1_pack_when_the_config_names_one(tmp_path):
         assert check.ok is ok and detail in check.detail
     path = tmp_path / "none.toml"
     path.write_text(base)
-    assert not [c for c in doctor(path, environ={}) if c.name == "l1 pack"]  # no pack: nothing to check
+    (check,) = [c for c in doctor(path, environ={}) if c.name == "l1 pack"]  # no pack: said, with how to get one
+    assert check.ok and check.detail.startswith("none") and "flightdeck pack install" in check.detail
 
 
 def test_doctor_never_prints_a_credential_carried_in_the_base_url(tmp_path):
@@ -703,3 +706,148 @@ def test_doctor_says_a_phones_width_gets_the_compact_layout_and_what_that_leaves
         "each character more); team mode's key line, with c claim, needs 182 columns; the console still works smaller",
     ]
     assert "the compact layout" not in terminal_check(tmp_path, monkeypatch, (65, 40))[0]
+
+
+# ---------------------------------------------------------------------- the pack's tools
+
+
+def tools_config(tmp_path, *, runtime: str, tools: str = '["tshark", "binwalk", "upx"]', l1_image: str | None = "demo-pack:1"):
+    """A config whose pack lists `tools` (a TOML list; None: no `tools` key), and the pack."""
+    from l1_kit import python_engine
+
+    pack = tmp_path / "pack"
+    python_engine(pack, "reader", "def solve(d):\n    pass\n")
+    (pack / "pack.toml").write_text('name = "demo-pack"\n' + (f"tools = {tools}\n" if tools is not None else ""))
+    path = tmp_path / "tools.toml"
+    image = f'image = "{l1_image}"\n' if l1_image else ""
+    path.write_text(f'[api]\nkey_env = ""\n[models]\nladder = ["m"]\n[lanes]\nruntime = "{runtime}"\nimage = "lane:1"\n'
+                    f'[l1]\npack = "{pack}"\n{image if runtime == "docker" else ""}')
+    return path, pack
+
+
+def pack_tools(checks) -> list[Check]:
+    return [c for c in checks if c.name == "pack tools"]
+
+
+def test_doctor_names_the_pack_tools_missing_on_path_for_host_lanes_as_a_warning(tmp_path):
+    from test_pack import program
+
+    path, pack = tools_config(tmp_path, runtime="host")
+    program(tmp_path / "bin", "tshark")
+    environ = {"PATH": os.pathsep.join([".", str(tmp_path / "bin")])}
+    (check,) = pack_tools(doctor(path, environ=environ))
+    assert (check.ok, check.essential) == (False, False)
+    assert check.detail == "not on PATH: binwalk upx (2 of the 3 programs the pack's engines call)"
+    assert check.fix == "install them (an engine that needs a missing one says so and does not run; the rest work)"
+    text, status = report([check])
+    assert status == 0 and text.startswith("warn pack tools: " + check.detail + "\n     fix: " + check.fix + "\n")  # never fails doctor
+    for name in ("binwalk", "upx"):
+        program(tmp_path / "bin", name)
+    (check,) = pack_tools(doctor(path, environ=environ))
+    assert check.ok and check.detail == "all 3 programs the pack's engines call are on PATH"
+
+
+def test_doctor_has_no_pack_tools_line_for_a_pack_that_lists_none_and_warns_of_a_pack_toml_it_cannot_read(tmp_path):
+    path, pack = tools_config(tmp_path, runtime="host", tools=None)
+    assert pack_tools(doctor(path, environ={})) == []
+    (pack / "pack.toml").write_text('name = "demo-pack"\ntools = ["/bin/sh"]\n')
+    (check,) = pack_tools(doctor(path, environ={}))
+    assert not check.ok and not check.essential and "tools[0] (/bin/sh) must be a program's name" in check.detail
+    bare = tmp_path / "bare.toml"
+    bare.write_text('[api]\nkey_env = ""\n[models]\nladder = ["m"]\n[lanes]\nruntime = "host"\n')
+    assert pack_tools(doctor(bare, environ={})) == []  # no pack: nothing to look up
+
+
+def test_doctor_looks_the_pack_tools_up_inside_the_pack_image_for_docker_lanes(tmp_path, monkeypatch):
+    from test_pack import docker_calls, program, stand_in_docker
+
+    path, _ = tools_config(tmp_path, runtime="docker")
+    docker = stand_in_docker(tmp_path, monkeypatch, images=("lane:1", "demo-pack:1"), has=("tshark", "upx"))
+    program(tmp_path / "host-bin", "binwalk")  # on this machine only: the engines do not run here
+    (check,) = pack_tools(doctor(path, environ={"PATH": str(tmp_path / "host-bin")}))
+    assert (check.ok, check.essential) == (False, False)
+    assert check.detail == "not in the pack image demo-pack:1: binwalk (1 of the 3 programs the pack's engines call)"
+    runs = [call for call in docker_calls(docker) if call[0] == "run"]
+    assert len(runs) == 1 and runs[0][:9] == ["run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "bash", "demo-pack:1"]
+    program(docker / "image-bin", "binwalk")
+    (check,) = pack_tools(doctor(path, environ={}))
+    assert check.ok and check.detail == "all 3 programs the pack's engines call are in the pack image demo-pack:1"
+
+
+def test_doctor_says_when_the_image_is_absent_or_docker_is_down_and_guesses_nothing_about_the_tools(tmp_path, monkeypatch):
+    from test_pack import docker_calls, stand_in_docker
+
+    path, _ = tools_config(tmp_path, runtime="docker")
+    docker = stand_in_docker(tmp_path, monkeypatch, images=("lane:1",), has=("tshark", "binwalk", "upx"))
+    (check,) = pack_tools(doctor(path, environ={}))
+    assert (check.ok, check.essential) == (False, False)
+    assert check.detail == ("not looked up: the pack image demo-pack:1 is not on this machine, so which of the 3 programs the "
+                            "pack's engines call it has is not known")
+    assert check.fix == "`flightdeck pack image` builds it"
+    assert not [call for call in docker_calls(docker) if call[0] == "run"]  # an absent image is never run, so never pulled
+    monkeypatch.setenv("PATH", str(tmp_path / "no-docker-here"))
+    (check,) = pack_tools(doctor(path, environ={}))
+    assert not check.ok and not check.essential and "missing" not in check.detail and "not in" not in check.detail
+    assert check.detail == ("not looked up: Docker is not running, so the pack image demo-pack:1 cannot be asked which of the "
+                            "3 programs the pack's engines call it has")
+
+
+def test_doctor_looks_in_the_lane_image_when_the_config_names_no_pack_image(tmp_path, monkeypatch):
+    from test_pack import stand_in_docker
+
+    path, _ = tools_config(tmp_path, runtime="docker", l1_image=None)
+    stand_in_docker(tmp_path, monkeypatch, images=("lane:1",), has=("tshark",))
+    (check,) = pack_tools(doctor(path, environ={}))
+    assert check.detail == ("not in the lane image lane:1 (no [l1] image: engines run in it): binwalk upx (2 of the 3 programs "
+                            "the pack's engines call)")
+
+
+# ---------------------------------------------------------------------- doctor's host line
+
+
+def test_doctors_host_line_gives_the_readings_and_is_a_warning_naming_the_limit_that_binds(tmp_path):
+    from ctf_flightdeck.config import load_config
+    from ctf_flightdeck.setup import _host_check
+    from test_governor import reading
+
+    path = tmp_path / "c.toml"
+    path.write_text('[api]\nkey_env = ""\n[models]\nladder = ["m"]\n[lanes]\nruntime = "host"\n')
+    cfg = load_config(path)
+    calm = _host_check(cfg, {}, reading())
+    assert (calm.name, calm.ok, calm.essential) == ("host", True, False)
+    assert calm.detail == ("load 0.5 per CPU (8 CPUs), 8.0 GiB of RAM available, 50.0 GiB free on the disk at /runs; "
+                           "within the [governor] limits, so a run holds no lane back")
+    busy = _host_check(cfg, {}, reading(load=80.0, disk=GIB))
+    assert (busy.ok, busy.essential) == (False, False)
+    assert busy.detail.endswith("; over a limit now: load 10.0 per CPU (80.0 on 8 CPUs) is over max_load_per_cpu 3; "
+                                "1.0 GiB free on the disk at /runs is under min_free_disk_mb 10240")
+    assert "one lane at a time" in busy.fix and "[governor]" in busy.fix
+    text, status = report([busy])
+    assert status == 0 and text.startswith("warn host: load 10.0 per CPU")  # a busy machine never fails doctor
+    unread = _host_check(None, {}, reading(ram=None, why="vm_stat is not on PATH"))  # no config: the default limits
+    assert unread.ok and "available RAM not read (vm_stat is not on PATH)" in unread.detail
+    path.write_text(path.read_text() + "[governor]\nenabled = false\n")
+    off = _host_check(load_config(path), {}, reading(load=80.0))
+    assert off.ok and off.detail.endswith("the governor is off ([governor] enabled = false): no lane is held back for these")
+
+
+def test_doctor_reads_the_host_where_the_configs_runs_go_and_puts_the_line_after_the_machine(tmp_path, monkeypatch):
+    from ctf_flightdeck import governor
+    from test_governor import reading
+
+    asked = []
+
+    def fake_probe(path, host=None, **readers):
+        asked.append(path)
+        return reading(ram=GIB)
+
+    monkeypatch.setattr(governor, "probe", fake_probe)
+    path = tmp_path / "c.toml"
+    path.write_text(f'[api]\nkey_env = ""\n[models]\nladder = ["m"]\n[lanes]\nruntime = "host"\n[run]\ndir = "{tmp_path / "runs"}"\n')
+    checks = doctor(path, environ={})
+    names = [c.name for c in checks]
+    assert names[names.index("machine") + 1] == "host" and names.count("host") == 1
+    host = checks[names.index("host")]
+    assert asked == [tmp_path / "runs"]
+    assert not host.ok and not host.essential and "1.0 GiB of RAM available is under min_free_ram_mb 2048" in host.detail
+    assert [c.name for c in doctor(tmp_path / "absent.toml", environ={})].count("host") == 1  # with no config too

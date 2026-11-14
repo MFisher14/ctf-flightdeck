@@ -1,0 +1,45 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-167.
+# B-167: Python / JVM bytecode recovery + a packer-unpack set, run in the sandbox at intake.
+id = "binary.sandbox_recover"
+lane = "binary"
+entry = "solvers.binary.sandbox_recover:solve"
+# analysis class tag (reports recovered source / unpacked members and scans them for the flag), with
+# the formats it recovers as topic flags. It runs decompilers / upx in the Docker sandbox, so spawns.
+capabilities = ["analysis", "decompile", "unpack", "python", "jvm", "bytecode", "upx", "pyinstaller", "reverse"]
+inputs = ["magic:0xcafebabe", "ext:.pyc", "ext:.pyo", "ext:.class", "ext:.jar", "ext:.war",
+          "magic:PK", "magic:0x7f454c46", "magic:MZ"]
+# needs_tools is intentionally empty: the backends (pycdc / pycdas / decompyle3, cfr / vineflower, upx) live in
+# the Docker sandbox image, not the venv/PATH, and are alternatives (a hard needs_tools would require
+# ALL of them). The engine detects a down sandbox or a missing tool itself and returns a loud, named
+# `blocked` (no silent fallback). The tools are a Dockerfile.2 + rebuild human step (build log).
+needs_tools = []
+cost_class = "heavy"
+status = "active"
+
+[[routes]]  # reverse lane: recovered Python/JVM source and unpacked images feed B-024/B-025/B-026.
+# File matchers keep this route specific to the formats the engine recovers (and distinct from the
+# bare-category reverse routes), so it is scored only when such a sample is in the handout.
+category = ["reverse"]
+files = ["magic:0xcafebabe", "ext:.pyc", "ext:.pyo", "ext:.class", "ext:.jar", "ext:.war"]
+priority = 38
+
+[[routes]]  # packed/interpreted pwn samples (a .pyc challenge, a UPX-packed binary) are recovered too
+category = ["pwn"]
+files = ["magic:0xcafebabe", "ext:.pyc", "ext:.pyo", "ext:.class", "ext:.jar"]
+priority = 40
+
+[intake]  # B-002 input adapter: recover every .pyc / Java .class/.jar / PyInstaller executable and unpack
+# every UPX-packed executable in the handout at intake, in the sandbox. select = "files" triggers the
+# challenge-level run when any such file is present; solve() then sniffs each file precisely and recovers
+# it. A native stub's compressed inner image (zlib / gzip / bzip2 / xz, AP32 aPLib) is unpacked in memory
+# by packer_unpack, with no sandbox. timeout stays above the engine's own OVERALL_BUDGET (240 s), which
+# it holds itself.
+# On macOS the OS network guard denies a guarded engine the Docker socket, so at intake this engine
+# reports `blocked` naming that; run it outside the guard with `python -m ctf run binary.sandbox_recover`.
+select = "files"
+run = "challenge"
+match = ["magic:0xcafebabe", "ext:.pyc", "ext:.pyo", "ext:.class", "ext:.jar", "ext:.war",
+         "magic:PK", "magic:0x7f454c46", "magic:MZ",
+         "magic:0xfeedface", "magic:0xfeedfacf", "magic:0xcefaedfe", "magic:0xcffaedfe"]
+timeout = 300
+spawns = true

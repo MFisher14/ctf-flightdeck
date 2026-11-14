@@ -11,6 +11,13 @@ Rules the deck enforces:
   rest wait in the queue, which drains as lanes finish, except while it is held
   (hold_queue: a failure every lane would hit) until the player lifts the hold
   (release_hold);
+- before a queued lane starts, the start gate is asked (start_gate: the run's host governor,
+  governor.py): while it names a limit no new lane starts, the queue stays as it is and the
+  lanes at work carry on, none stopped or paused. It is no hold: nothing is asked of the
+  player, autopilot stays engaged, and lanes start again when the gate clears (at the next
+  lane's end, or when the run asks again: recheck_starts). One warning says when starts begin
+  to be held and why, one when they are no longer. With no lane active the gate is not asked:
+  one lane always starts;
 - a candidate flag must match the flag format; with submit policy "confirm" it waits
   for the player's approval, with "auto" it is submitted at once;
 - a board's verifier answers at once (an answers file, or never: the player submits by
@@ -31,6 +38,19 @@ Rules the deck enforces:
   again (then it is parked for the player to queue). A flag the platform did not check for
   want of tries is never taken for wrong, nor put to the player to submit by hand: the
   platform checks no more flags for it, by hand either;
+- a challenge whose flag rotates (Challenge.rotates: every that many seconds, on clock
+  boundaries) has windows, counted on this machine's clock (the deck's `wall`, Unix time:
+  window number = time // rotates; a platform whose clock differs from this machine's has
+  its boundaries that much earlier or later, and flightdeck does not know by how much). A
+  flag of it is never sent in a later window than the one a lane claimed it in (it waited
+  for the player's approval, stood in line behind another flag of the challenge, or behind
+  the submitter's other flags: rotated, platform_rotated), nor within ROTATE_MARGIN seconds
+  of its window's end (it would die on the way). Instead of going out it is dropped: each
+  open lane that sent it is told it rotated out and to fetch and submit a fresh one
+  (LaneDriver.rotated), a warning says so, and nothing is recorded as wrong, so the same
+  flag claimed again is a new claim. A flag of it judged wrong is remembered as not the
+  flag like any other, but the first ROTATING_MISSES of them do not count toward the
+  wrong-answer stop (wrong_flags): a miss there is usually a rotation, not a guess;
 - approvals queue up per lane (a flag goes first) and none is ever dropped;
 - a lane at 80% of a cap gets a budget alert, and at 100% it waits for approval;
 - a lane that gave up while a flag of it waits is open only for that flag's answer: it takes
@@ -49,7 +69,20 @@ Rules the deck enforces:
 - once the run is closing (close(): the player quit), its lanes stop at once without ending
   (each driver is told to stop its lane before close() returns), nothing raises an alert,
   asks the player or starts a lane, and what a lane reports counts its spend only, as after
-  a lane's end.
+  a lane's end;
+- flag variants (DeckConfig.variant_tries, 0: none): when the platform judges a flag wrong (its
+  answer through platform_verdict, or the board's answers file; never the player's word, a
+  decline or an answer that is no verdict), the deck proposes the next-ranked other spelling
+  of it (flagvariants.variants: the case, a doubled wrapper, leet...) that is not known not to
+  be the flag and neither waits nor is on its way, on the lane that sent the flag (the first
+  sender still open), as a candidate through _candidate: every rule above holds for it as for a
+  flag the lane claims, so it is sent only where such a flag would be. It waits for the player
+  where the flag it comes from went out on the player's yes, and where the challenge's
+  description holds it. At most `variant_tries` are proposed per challenge in a run, one at a
+  time: the next only once the platform judged the one before wrong. A wrong variant is a
+  wrong flag (it counts for wrong_stop), and a right one solves the challenge. The lane's
+  transcript, the approval and the submit event (`variant_of`, `variant_changes`) say which
+  flag it is a variant of and what changed. See _variant.
 
 Call the deck only from the thread that created it (see core/driver.py).
 """
@@ -58,10 +91,11 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, replace
 
-from .. import fmt
+from .. import flagvariants, fmt
 from ..text import untrusted
 from .attention import ALERT_URGENCY, attention_key
 from .driver import Clock, LaneDriver, Submitter, TurnReport, Verifier, spend_only
@@ -104,11 +138,16 @@ from .model import (
     LaneState,
     Pending,
     PendingKind,
+    SUBMIT_POLICIES,
     Suggestion,
+    UNLIMITED_LANES,
+    lanes_text,
 )
 
 BUDGET_WARN = 0.8  # fraction of a cap that raises the budget alert
 BUDGET_RAISE = 1.5  # approving more budget multiplies the caps by this
+ROTATE_MARGIN = 8.0  # seconds: a rotating flag is not sent this close to its window's end (at most half the window)
+ROTATING_MISSES = 6  # wrong flags at a rotating challenge that do not count toward the wrong-answer stop
 ACTORS = {Actor.PLAYER: "the player", Actor.AUTOPILOT: "autopilot"}  # who an intervention can be by, as texts say it
 BY_RULE = (Escalate, Fork, Kill, Redirect, Pause, Queue, Approve)  # what autopilot may do (an Approve: a lane's budget request only)
 
@@ -126,11 +165,22 @@ class QueueEntry:
     dollar_cap: float | None = None
 
 
+MAX_STANDING = 12  # notes for every lane kept for lanes started later (Deck.tell_all)
 REJECTED = "rejected by the platform"
 SAID_REJECTED = "the player said the platform rejected it"
 DECLINED = "the player declined to submit it"
 NOT_FLAG_RANK = {DECLINED: 1, SAID_REJECTED: 2, REJECTED: 3}  # how sure: a stronger reason is kept
 OUT_OF_TRIES = "out of tries: the platform checks no more flags for it"  # a blocked challenge's note, once none are left
+
+
+@dataclass(frozen=True)
+class _VariantOf:
+    """A flag the deck proposed as a variant: of which flag (one the platform rejected), and
+    what differs (flagvariants' labels, and the same in words)."""
+
+    of: str
+    changes: tuple[str, ...]
+    what: str
 
 
 @dataclass
@@ -162,19 +212,25 @@ def _tries_text(ch: Challenge) -> str:
 
 
 def _submit_detail(ch: Challenge, flag: str) -> str:
-    """What a flag's approval says: the flag, and the tries left when they are counted."""
-    tries = _tries_text(ch)
-    return f"submit {flag}" + (f" ({tries})" if tries else "")
+    """What a flag's approval says: the flag, the tries left when they are counted, and that
+    it rotates when it does."""
+    said = [_tries_text(ch)] + ([f"it rotates every {ch.rotates} s: it only goes out in the window it was found in"] if ch.rotates else [])
+    said = [text for text in said if text]
+    return f"submit {flag}" + (f" ({'; '.join(said)})" if said else "")
 
 
 class Deck:
     def __init__(
         self, config: DeckConfig, driver: LaneDriver, clock: Clock, verify: Verifier, *,
-        submitter: Submitter | None = None,
+        submitter: Submitter | None = None, wall: Callable[[], float] = time.time,
     ) -> None:
         """`verify` checks a flag at once (an answers file, or never: the player submits by
         hand). With a `submitter` (a platform over the network) the deck never calls it: a
-        flag goes to the submitter, and its answer comes back through platform_verdict()."""
+        flag goes to the submitter, and its answer comes back through platform_verdict().
+        `wall`: this machine's clock, in Unix seconds, for the windows of rotating flags only
+        (`clock` counts from the run's start, and a window is a time of day)."""
+        self.wall = wall
+        self._claimed: dict[tuple[str, str], float] = {}  # (challenge id, flag) of a rotating challenge -> when a lane last claimed it (wall)
         self.config = config
         self.driver = driver
         self.clock = clock
@@ -188,14 +244,24 @@ class Deck:
         self._listeners: list[Callable[[Event], None]] = []
         self._lane_seq = 0
         self._start_errors: dict[int, str] = {}  # id(queue entry) -> why its lane could not start
+        self._accepted: dict[str, str] = {}  # a flag the platform (or the player) called right -> the challenge it solved
+        self.waits: dict[str, str] = {}  # challenge id -> why no lane starts on it yet (wait_for): its instance is not up
+        self.standing: list[str] = []  # the player's notes for every lane (tell_all): a lane started later reads them at its start
         self._not_flags: dict[str, dict[str, str]] = {}  # challenge id -> flag -> why it is known not to be the flag
         self._spent: set[str] = set()  # challenges out of tries: closed until tries come back (_out_of_tries)
         self._answered: dict[str, float] = {}  # challenge id -> when the platform last answered one of its flags
         self.held = ""  # why no more lanes start (hold_queue), "" while they do
+        # asked before a queued lane starts: why none should now ("" to start), or None for no gate
+        self.start_gate: Callable[[], str] | None = None
+        self.gated = ""  # why the start gate holds new lanes back now, "" while it does not
         self._ended_by_hold: list[str] = []  # lanes that what the hold is about ended: release_hold queues their challenges again
         self.closing = False  # the run is closing (close()): its lanes stop without ending
         self.autopilot = None  # the run's autopilot (autopilot.Autopilot sets it), if it has one: its `guarding` is read here
         self._by = Actor.PLAYER  # who the intervention being applied is by (apply)
+        self._variants: dict[str, dict[str, _VariantOf]] = {}  # challenge id -> flag the deck proposed as a variant -> of what
+        self._variant_roots: dict[str, list[str]] = {}  # challenge id -> flags the platform rejected that variants come from, newest last
+        self._variant_count: dict[str, int] = {}  # challenge id -> variants proposed in this run (DeckConfig.variant_tries caps it)
+        self._ranked: dict[str, tuple[flagvariants.Variant, ...]] = {}  # a rejected flag -> its ranked variants
         self._kept: set[tuple[str, str]] = set()  # (challenge id, flag) autopilot's last-try rule made wait: said once
         self.listener_errors: list[str] = []  # listeners that raised (shown when the run ends)
         self._warning_listener_failure = False
@@ -263,6 +329,111 @@ class Deck:
         """Why `flag` is known not to be the flag of that challenge (rejected, or declined by
         the player), or None."""
         return self._not_flags.get(challenge_id, {}).get(flag)
+
+    def set_max_lanes(self, most: int) -> Outcome:
+        """The player changes how many lanes run at once, for the rest of the run (/config
+        lanes): UNLIMITED_LANES for no limit. Never more than the event's rules allow
+        (DeckConfig.lanes_ceiling). Raising it starts queued lanes in the new slots; lowering
+        it stops no lane: the ones that run go on, and no new one starts until fewer run."""
+        self._on_thread("set_max_lanes")
+        if isinstance(most, bool) or not isinstance(most, int) or most < 1:
+            return Outcome(False, "The number of lanes must be a whole number, 1 or more, or 'unlimited'")
+        most = min(most, UNLIMITED_LANES)
+        ceiling = self.config.lanes_ceiling
+        if ceiling is not None and most > ceiling:
+            return Outcome(False, f"The event's rules allow at most {ceiling} lane{'s' if ceiling != 1 else ''} at once (rules.max_lanes)")
+        before = self.config.max_lanes
+        if most == before:
+            return Outcome(True, f"Lanes at once: {lanes_text(most)} already")
+        self.config = replace(self.config, max_lanes=most)
+        self._emit(EventKind.WARNING, f"the player set lanes at once to {lanes_text(most)} (it was {lanes_text(before)})",
+                   data={"config": "max_lanes", "max_lanes": most, "was": before})
+        self._fill()
+        running = len(self.active_lanes())
+        over = f"; {running} run now and go on, and no new lane starts until fewer than {most} run" if running > most else ""
+        return Outcome(True, f"Lanes at once: {lanes_text(most)} for the rest of this run{over}")
+
+    def set_submit(self, policy: str) -> Outcome:
+        """The player switches auto approve on or off for the rest of the run (/config submit):
+        "auto" sends a flag a lane claims at once, with every exception auto submit has
+        (counted tries, the wrong-answer stop, a flag the challenge's own text holds);
+        "confirm" makes every flag wait again. Never looser than the event's rules
+        (DeckConfig.submit_ceiling). Flags already waiting keep waiting: they are the player's."""
+        self._on_thread("set_submit")
+        if policy not in SUBMIT_POLICIES:
+            return Outcome(False, f"Submit is one of: {', '.join(SUBMIT_POLICIES)}")
+        if policy == "auto" and self.config.submit_ceiling != "auto":
+            return Outcome(False, "The event's rules do not let flightdeck submit flags by itself, so every flag waits for you")
+        before = self.config.submit
+        if policy == before:
+            return Outcome(True, f"Submit is {policy} already")
+        self.config = replace(self.config, submit=policy)
+        self._emit(EventKind.WARNING, f"the player set submit to {policy} (it was {before})", data={"config": "submit", "submit": policy, "was": before})
+        if policy == "auto":
+            waiting = sum(1 for lane in self.lanes.values() if not lane.finished
+                          for p in ([lane.pending] if lane.pending else []) + lane.waiting if p.kind is PendingKind.SUBMIT)
+            rest = f"; the {waiting} waiting now still wait for you (A approves them all)" if waiting else ""
+            return Outcome(True, f"Auto approve is on: a flag a lane submits goes at once, for the rest of this run{rest}")
+        return Outcome(True, "Auto approve is off: every flag waits for your approval")
+
+    def wait_for(self, challenge_id: str, why: str) -> None:
+        """No lane starts on that challenge until ready() is called for it: something outside
+        the deck must come first (the platform starting its instance). Its queued lanes keep
+        their places, and the lanes behind them start meanwhile. Lanes already on it go on."""
+        self._on_thread("wait_for")
+        self.waits[challenge_id] = why
+        ch = self.challenges.get(challenge_id)
+        if ch is not None and not ch.closed and not ch.note:
+            ch.note = why  # what the board says of it while it waits
+
+    def ready(self, challenge_id: str) -> None:
+        """What a challenge waited for is there: its queued lanes may start, in the free slots."""
+        self._on_thread("ready")
+        why = self.waits.pop(challenge_id, None)
+        if why is not None:
+            ch = self.challenges.get(challenge_id)
+            if ch is not None and ch.note == why:
+                ch.note = ""
+            self._fill()
+
+    def wrong_flags(self, challenge_id: str) -> int:
+        """How many flags of that challenge count as wrong answers in this run (the wrong-answer
+        stop reads it): those judged wrong by the platform, or by the player's word after a
+        hand submit. A flag the player only declined is not one. At a challenge whose flag
+        rotates, the first ROTATING_MISSES judged wrong are not counted (a flag that died on
+        the way is no guess); every one after them is."""
+        wrong = sum(1 for why in self._not_flags.get(challenge_id, {}).values() if why in (REJECTED, SAID_REJECTED))
+        ch = self.challenges.get(challenge_id)
+        return max(0, wrong - ROTATING_MISSES) if ch is not None and ch.rotates else wrong
+
+    def rotated(self, challenge_id: str, flag: str) -> str:
+        """Why `flag`, as a lane last claimed it, would be dead if it went to the platform now
+        ("" when it would not, and for a challenge whose flag does not rotate): this is a
+        later window than the one it was claimed in, or its window ends within the margin
+        (ROTATE_MARGIN seconds, at most half a window). Windows are counted on this machine's
+        clock (`wall`)."""
+        ch = self.challenges[challenge_id]
+        every = ch.rotates
+        if not every:
+            return ""
+        now = self.wall()
+        claimed = self._claimed.get((challenge_id, flag), now)
+        if claimed // every != now // every:
+            return f"it was found in an earlier {every}-second window"
+        left = every - now % every
+        if left < min(ROTATE_MARGIN, every / 2):
+            return f"its {every}-second window ends in {left:.0f} s, before the platform would have it"
+        return ""
+
+    def variant_of(self, challenge_id: str, flag: str) -> tuple[str, str] | None:
+        """When the deck proposed `flag` as a variant at that challenge: the flag it is a
+        variant of (one the platform rejected) and what changed, in words. Else None."""
+        variant = self._variants.get(challenge_id, {}).get(flag)
+        return None if variant is None else (variant.of, variant.what)
+
+    def variants_tried(self, challenge_id: str) -> int:
+        """How many variants the deck proposed at that challenge in this run."""
+        return self._variant_count.get(challenge_id, 0)
 
     def submitting(self, challenge_id: str) -> tuple[tuple[str, str], ...]:
         """The flags of that challenge on their way to the platform (with a submitter), whose
@@ -446,13 +617,15 @@ class Deck:
                 self._note(lane, f"submitted {flag}: {'correct' if ok else 'incorrect'}")
                 self._emit(EventKind.SUBMIT, f"{lane.id} submitted {flag} for {ch.name}: {'correct' if ok else 'incorrect'} "
                            f"(it was solved meanwhile)", lane.id, ch.id,
-                           data={"flag": flag, "correct": ok, "by": "platform", "solved_meanwhile": True, **extra})
+                           data={"flag": flag, "correct": ok, "by": "platform", "solved_meanwhile": True,
+                                 **self._variant_data(ch.id, flag), **extra})
                 if not ok:
                     self._remember_not_flag(ch.id, flag, REJECTED)
         elif ok is None:
             self._no_verdict(sent, ch, detail)
         else:
-            self._verdict(lane, flag, ok, by="platform", data=extra)
+            self._verdict(lane, flag, ok, by="platform", data=extra, approved=sent.approved,
+                          also=[self.lanes[i] for i in sent.lanes[1:]])
             if not ok:
                 for other in (self.lanes[i] for i in sent.lanes[1:]):  # the lanes that sent it after the first
                     if not other.finished:
@@ -799,6 +972,39 @@ class Deck:
         self._note(lane, text, Actor.PLAYER, ActionKind.MESSAGE)
         return Outcome(True, f"{lane.id} reads it on its next turn")
 
+    def _tell(self, lane: Lane, text: str) -> None:
+        """One of the player's notes for every lane, to this lane: read on its next turn."""
+        lane.hints.append(text)
+        self.driver.hint(lane, text)
+        self._note(lane, text, Actor.PLAYER, ActionKind.MESSAGE)
+
+    def tell_all(self, text: str) -> Outcome:
+        """The player's note for every lane (an organizer's ruling, a handout that was replaced,
+        a format everyone gets wrong): each open lane that still takes turns reads it on its
+        next turn, and every lane started later in this run reads it at its start. It changes
+        no lane's course (no alert is cleared: it is not about one lane). A lane in the
+        player's hands, or one that only waits for its flag's answer, is passed over and
+        counted. At most MAX_STANDING notes are kept for later lanes: each is in the context
+        of every lane from then on."""
+        self._on_thread("tell_all")
+        text = text.strip()
+        if not text:
+            return Outcome(False, "Empty note; nothing sent")
+        if len(self.standing) >= MAX_STANDING:
+            return Outcome(False, f"{MAX_STANDING} notes for every lane are standing already; a lane's own message (h) still works")
+        self.standing.append(text)
+        told = passed = 0
+        for lane in list(self.lanes.values()):
+            if lane.finished:
+                continue
+            if lane.state is LaneState.TAKEOVER or lane.gave_up_later:
+                passed += 1
+                continue
+            self._tell(lane, text)
+            told += 1
+        rest = f"; {passed} passed over (in your hands, or waiting only for a flag's answer)" if passed else ""
+        return Outcome(True, f"{told} lane{'s' if told != 1 else ''} read it on their next turn, and every lane started later{rest}")
+
     def _redirect(self, lane: Lane, text: str) -> Outcome:
         if not text:
             return Outcome(False, "Empty plan; nothing changed")
@@ -830,6 +1036,9 @@ class Deck:
             if self.held:  # no lane starts until the player lifts the hold, whatever slots are free
                 self._note(lane, f"fork queued first ({model}): the queue is held", self._by)
                 return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue, which is held: {self.held}")
+            if self.gated and len(self.active_lanes()) < self.config.max_lanes:  # a free slot the start gate keeps empty
+                self._note(lane, f"fork queued first ({model}): no new lane starts for now", self._by)
+                return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue; no new lane starts for now: {self.gated}")
             self._note(lane, f"fork queued first ({model}): all {self.config.max_lanes} lanes busy", self._by)
             return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue; all {self.config.max_lanes} lanes are busy")
         self._note(lane, f"forked to {started.id} ({model})", self._by)
@@ -920,9 +1129,15 @@ class Deck:
             return Outcome(True, f"{pending.flag} accepted: {ch.name} solved by {lane.id}")
         if pending.kind is PendingKind.SUBMIT:
             assert pending.flag is not None
+            late = self.rotated(ch.id, pending.flag)
+            if late:  # it rotated out while it waited: nothing goes out, by hand either
+                self._resolve(lane)
+                self._rotated_out([lane], ch, pending.flag, late)
+                return Outcome(False, f"Not sent: {pending.flag} rotated out ({late}); {lane.id} was told to fetch a fresh "
+                                      "one and submit that")
             if self.submitter is not None:  # a platform over the network: its answer comes later
                 return self._send(lane, pending.flag, approved=pending)
-            verdict = self._submit(lane, pending.flag)
+            verdict = self._submit(lane, pending.flag, approved=True)
             if verdict is None:
                 return Outcome(True, f"Submit {pending.flag} on the platform, then: a accepted, d rejected")
             if verdict:
@@ -1168,11 +1383,53 @@ class Deck:
             if not lane.finished:
                 self.driver.stop(lane)
 
+    def recheck_starts(self) -> None:
+        """Ask the start gate again, and start the queued lanes it now lets start. What sets
+        the gate calls this when its answer may have changed (the run's governor tick): a lane
+        that ends asks by itself. While starts are held it asks with nothing queued too, so
+        the warning that they are no longer held is not left waiting for a queue."""
+        self._on_thread("recheck_starts")
+        if self.closing:
+            return
+        if self.gated:
+            self._gate_holds()
+        self._fill()
+
+    def _gate_holds(self) -> bool:
+        """Whether the start gate holds new lanes back now. Its answer is kept (gated), with a
+        warning when starts begin to be held (the gate's reason) and one when they are no
+        longer: never one per time it is asked, nor one for a reason that changed meanwhile."""
+        reason = self.start_gate() if self.start_gate is not None else ""
+        if not isinstance(reason, str):
+            raise TypeError(f"the start gate must answer with a string (\"\" to start), not {type(reason).__name__}")
+        was, self.gated = self.gated, reason
+        if reason and not was:
+            self._emit(
+                EventKind.WARNING,
+                f"no new lane starts for now: {reason}; the lanes at work carry on, and queued lanes start by "
+                "themselves once this machine is back within the limit ([governor] in your config)",
+                data={"gated": True, "reason": reason},
+            )
+        elif was and not reason:
+            self._emit(
+                EventKind.WARNING,
+                f"queued lanes start again: this machine is back within its limits (it was: {was})",
+                data={"gated": False, "reason": was},
+            )
+        return bool(reason)
+
     def _fill(self) -> None:
         """Start queued lanes while there are free slots (none while the queue is held, or the
-        run is closing)."""
+        run is closing), each after the start gate was asked, unless no lane is active."""
         while self.queue and not self.held and not self.closing and len(self.active_lanes()) < self.config.max_lanes:
-            entry = self.queue.pop(0)
+            # a challenge that waits for something outside the deck (its instance on the platform)
+            # is passed over, not waited behind: the next one in the queue starts
+            at = next((i for i, queued in enumerate(self.queue) if queued.challenge not in self.waits), None)
+            if at is None:
+                break
+            if self.active_lanes() and self._gate_holds():
+                return
+            entry = self.queue.pop(at)
             ch = self.challenges[entry.challenge]
             if self._workable(ch):
                 self._start(entry, ch)
@@ -1247,6 +1504,8 @@ class Deck:
             ch.id,
             data={"model": lane.model, "parent": entry.parent, "attempt": entry.attempt, "approach": entry.approach},
         )
+        for text in self.standing:  # what the player told every lane before this one started
+            self._tell(lane, text)
         return lane
 
     def _finish(self, lane: Lane, state: LaneState, result: str, then: ChallengeStatus = ChallengeStatus.PARKED) -> None:
@@ -1353,6 +1612,9 @@ class Deck:
             answers = (Suggestion("a", "Accepted"), Suggestion("d", "Rejected"))
         else:
             reason = f"Candidate {pending.flag} matches the flag format."
+            variant = self.variant_of(lane.challenge_id, pending.flag or "")
+            if variant is not None:
+                reason += f" It is flightdeck's variant of {variant[0]}, which the platform rejected ({variant[1]})."
             tries = _tries_text(self.challenges[lane.challenge_id])
             if tries:
                 reason += f" The platform counts the tries at this challenge's flag: {tries}."
@@ -1371,47 +1633,70 @@ class Deck:
             self._tell_not_flag(lane, flag, why)
             return
         self._note(lane, f"candidate flag {flag}")
+        ch = self.challenges[lane.challenge_id]
+        if ch.rotates:
+            self._claimed[(ch.id, flag)] = self.wall()  # claimed (again) now: the window it must go out in
         queued = ([lane.pending] if lane.pending else []) + lane.waiting
         if any(p.flag == flag for p in queued):
             return  # already waiting
         if self._on_its_way(lane, flag):
             return
-        ch = self.challenges[lane.challenge_id]
+        if self.config.submit == "auto" and claimed and (late := self.rotated(ch.id, flag)):
+            self._rotated_out([lane], ch, flag, late)  # too close to its window's end: it would die on the way
+            return
         if self.config.submit == "auto" and claimed and self.submitter is None:
             self._submit(lane, flag)  # an answers file checks it, or the player submits it by hand: no try is spent
             return
         if self.config.submit == "auto" and claimed and not self.config.holds(ch):
-            if not self._keeps_last_try(ch):
+            wrong = self.wrong_flags(ch.id)
+            solved = self._accepted.get(flag)
+            if solved is not None and solved != ch.id:
+                # the flag of another challenge (a series sibling's files hold it, say): it is
+                # almost never this one's too, and a wrong try costs, so the player decides
+                other = self.challenges.get(solved)
+                self._note(lane, f"{flag} is the flag that solved {other.name if other is not None else solved}, so it waits for you here")
+            elif self.config.wrong_stop and wrong >= self.config.wrong_stop:
+                # the wrong-answer stop: a lane that keeps guessing is not left to spray the platform
+                self._note(lane, f"{wrong} flags were wrong at {ch.name}, so {flag} waits for you (wrong_stop {self.config.wrong_stop})")
+            elif not self._keeps_last_try(ch):
                 self._send(lane, flag)
                 return
-            self._last_try_waits(lane, ch, flag)  # autopilot's guard: it waits for the player, as below
+            else:
+                self._last_try_waits(lane, ch, flag)  # autopilot's guard: it waits for the player, as below
         # under auto, a match scraped from text the lane read (a decoy flag.txt, an example
         # in a comment) waits for the player: a wrong try can cost a CTFd attempt. So does
         # every flag of a challenge whose tries the platform counts: flightdeck never spends
         # one of them on its own.
-        self._ask(lane, Pending(PendingKind.SUBMIT, _submit_detail(ch, flag), flag=flag))
+        self._ask(lane, Pending(PendingKind.SUBMIT, self._detail(ch, flag), flag=flag))
 
-    def _submit(self, lane: Lane, flag: str) -> bool | None:
+    def _submit(self, lane: Lane, flag: str, *, approved: bool = False) -> bool | None:
         """Submit through the board. None: the board cannot check flags, so the player
-        submits by hand and confirms (the flag's approval becomes a confirmation)."""
+        submits by hand and confirms (the flag's approval becomes a confirmation).
+        `approved`: it goes on the player's yes (else on its own, under auto)."""
         ch = self.challenges[lane.challenge_id]
         ok = self.verify(ch.id, flag)
         if ok is None:
-            confirm = Pending(PendingKind.CONFIRM, f"did the platform accept {flag}? (you submit it)", flag=flag)
+            confirm = Pending(PendingKind.CONFIRM, f"did the platform accept {flag}? (you submit it)" + self._variant_text(ch.id, flag), flag=flag)
             if lane.pending is not None and lane.pending.flag == flag:
                 lane.pending = replace(confirm, at=self.now)
                 self._became_current(lane)
             else:
                 self._ask(lane, confirm)
             return None
-        self._verdict(lane, flag, ok, by="platform")
+        self._verdict(lane, flag, ok, by="platform", approved=approved)
         return ok
 
-    def _verdict(self, lane: Lane, flag: str, ok: bool, *, by: str, data: dict[str, object] | None = None) -> None:
+    def _verdict(
+        self, lane: Lane, flag: str, ok: bool, *, by: str, data: dict[str, object] | None = None,
+        approved: bool = False, also: Sequence[Lane] = (),
+    ) -> None:
         """A flag was right or wrong (the platform said, or the player for a hand submit). The
         lane may have ended before the platform's answer came: a right flag still solves the
         challenge, credited to it, and a wrong one is still known wrong. `data`: more for the
-        submit event (the platform's words, the tries it said are left)."""
+        submit event (the platform's words, the tries it said are left). A flag the deck
+        proposed as a variant says so in the event (`variant_of`, `variant_changes`). After
+        the platform's wrong, the next variant may be proposed (_variant): `approved` says the
+        flag went out on the player's yes, `also` names the other lanes that sent it."""
         ch = self.challenges[lane.challenge_id]
         self._note(lane, f"submitted {flag}: {'correct' if ok else 'incorrect'}" + (" (you said so)" if by == "player" else ""))
         self._emit(
@@ -1419,7 +1704,7 @@ class Deck:
             f"{lane.id} submitted {flag} for {ch.name}: {'correct' if ok else 'incorrect'}",
             lane.id,
             ch.id,
-            data={"flag": flag, "correct": ok, "by": by, **(data or {})},
+            data={"flag": flag, "correct": ok, "by": by, **self._variant_data(ch.id, flag), **(data or {})},
         )
         if not ok:
             self._remember_not_flag(ch.id, flag, REJECTED if by == "platform" else SAID_REJECTED)
@@ -1430,8 +1715,11 @@ class Deck:
                     self._sync_flag_alert(lane)
                 self.driver.rejected(lane, flag)
             self._drop_known_wrong(lane, flag)
+            if by == "platform":  # before the lane ends for having given up: a variant of its flag keeps it open
+                self._variant(ch, flag, [lane, *also], approved=approved)
             self._end_if_gave_up(lane)
             return
+        self._accepted.setdefault(flag, ch.id)
         ch.status = ChallengeStatus.SOLVED
         ch.solved_by = lane.id
         ch.solves += 1
@@ -1503,7 +1791,8 @@ class Deck:
         lanes = [self.lanes[lane_id] for lane_id in item.lanes]
         for lane in lanes:
             self._note(lane, f"no verdict from the platform on {item.flag}: {detail or 'no reason given'}")
-        confirm = Pending(PendingKind.CONFIRM, f"did the platform accept {item.flag}? (you submit it)", flag=item.flag)
+        confirm = Pending(PendingKind.CONFIRM, f"did the platform accept {item.flag}? (you submit it)" + self._variant_text(ch.id, item.flag),
+                          flag=item.flag)
         holders, others = self._back_to_player(item, confirm)
         for lane in others:
             self._end_if_gave_up(lane)
@@ -1579,12 +1868,59 @@ class Deck:
                     self._tell_not_flag(lane, item.flag, known)
                     ending.append(lane)
         for item, why in back:
-            ending += self._back_to_player(item, Pending(PendingKind.SUBMIT, _submit_detail(ch, item.flag), flag=item.flag), why)[1]
+            ending += self._back_to_player(item, Pending(PendingKind.SUBMIT, self._detail(ch, item.flag), flag=item.flag), why)[1]
         for lane in ending:
             self._end_if_gave_up(lane)
-        line = self._lines.get(ch.id)
-        if line and not line[0].sent:
-            self._hand_over(ch)
+        while (line := self._lines.get(ch.id)) and not line[0].sent:
+            item = line[0]
+            late = self.rotated(ch.id, item.flag)
+            if not late:
+                self._hand_over(ch)
+                break
+            line.remove(item)  # it rotated out while it stood in line: the one behind it has its turn
+            if not line:
+                del self._lines[ch.id]
+            self._rotated_out([self.lanes[i] for i in item.lanes], ch, item.flag, late)
+
+    def platform_rotated(self, lane_id: str, flag: str) -> None:
+        """The submitter did not send a flag it took for `lane_id` (the one on its way now):
+        the flag rotated out while it waited there (behind other challenges' flags, or for a
+        rate limit to pass: `rotated` said so when asked). As when it rotates out in the
+        deck: its lanes are told to fetch a fresh one, nothing is recorded as wrong, and the
+        challenge's next flag has its turn."""
+        self._on_thread("platform_rotated")
+        lane = self.lanes[lane_id]
+        ch = self.challenges[lane.challenge_id]
+        line = self._lines.get(ch.id, [])
+        if not line or not line[0].sent or line[0].lane != lane_id or line[0].flag != flag:
+            raise ValueError(f"no flag of {lane_id} is on its way to the platform as {flag!r}")
+        late = self.rotated(ch.id, flag)
+        if not late:
+            raise ValueError(f"{flag!r} has not rotated out: it is still to be sent for {lane_id}")
+        sent = line.pop(0)
+        if not line:
+            del self._lines[ch.id]
+        self._rotated_out([self.lanes[i] for i in sent.lanes], ch, flag, late)
+        self._next_to_platform(ch, False)  # judged or not, the platform is answering: the next flag goes as after a verdict
+
+    def _rotated_out(self, lanes: Sequence[Lane], ch: Challenge, flag: str, why: str) -> None:
+        """`flag` of a rotating challenge does not go out (`why`: rotated): each open lane of
+        `lanes` is told to fetch and submit a fresh one, a warning says so, and nothing is
+        remembered as wrong. A lane that had given up and waited only for this flag ends."""
+        self._claimed.pop((ch.id, flag), None)
+        told = [lane for lane in lanes if not lane.finished]
+        for lane in told:
+            self._note(lane, f"not sent: {flag} rotated out ({why}); told to fetch a fresh flag and submit that")
+            self.driver.rotated(lane, flag, ch.rotates)
+        who = f"; {', '.join(lane.id for lane in told)} was told to fetch a fresh one" if told else ""
+        self._emit(
+            EventKind.WARNING,
+            f"not sent: {flag} for {ch.name} rotated out ({why}){who}. Nothing is counted as wrong",
+            lanes[0].id if lanes else None, ch.id,
+            data={"rotated_out": True, "flag": flag, "rotates": ch.rotates, "lanes": [lane.id for lane in lanes]},
+        )
+        for lane in told:
+            self._end_if_gave_up(lane)
 
     def _keeps_last_try(self, ch: Challenge) -> bool:
         """Autopilot guards the run, and a flag for `ch` would spend the last try the platform
@@ -1612,6 +1948,113 @@ class Deck:
             f"autopilot never spends a challenge's last try: {flag} for {ch.name} waits for you on {lane.id} ({tries})",
             lane.id, ch.id, data={"autopilot": "last_try", "flag": flag, "tries_left": ch.tries_left},
         )
+
+    # ------------------------------------------------------------------ flag variants
+
+    def _variant(self, ch: Challenge, flag: str, lanes: Sequence[Lane], *, approved: bool) -> None:
+        """The platform judged `flag` wrong at `ch` (never the player's word): propose the next
+        variant, if DeckConfig.variant_tries allows one. `lanes`: the lanes that sent `flag`,
+        the first sender first. `approved`: `flag` went out on the player's yes.
+
+        Nothing is proposed: with variant_tries 0; once the run is closing; on a challenge
+        that is solved or out of tries; once `variant_tries` variants were proposed at the
+        challenge in this run (a proposed one counts, sent or not); while a variant the deck
+        proposed at the challenge still waits for the player or for the platform's answer
+        (one at a time).
+
+        Which one: the first variant, in rank order (flagvariants.variants), of the flag the
+        chain is about: `flag`, or when `flag` is itself a variant the flag it came from, so a
+        list is carried on and a variant never gets variants of its own. When that list is
+        used up, the lists of the challenge's other rejected flags, the newest first. A
+        variant known not to be the flag (rejected or declined, by any lane), one that waits
+        for the player on a lane of the challenge and one on its way to the platform are
+        passed over: so a variant two flags share, or one a lane claimed itself, is never
+        proposed twice.
+
+        Where: on the first of `lanes` still open (one that gave up and only waits for its
+        flag's answer is: the variant keeps it open as its own flag would). With none open
+        nothing is proposed, since nothing of an ended lane goes to the platform, and a
+        warning names the variant so the player can submit it by hand.
+
+        How: as a candidate through _candidate, so every rule on a lane's own flag holds: the
+        submit policy, counted tries, the wrong-answer stop, autopilot's last-try guard, one
+        flag at a time per challenge. It goes as a flag the lane claims, except that it waits
+        for the player when `flag` went out on the player's yes (what needed a yes is not
+        followed by a send without one) and when the challenge's description holds it (a
+        planted flag waits, as agent/driver.py has it for a lane's own)."""
+        tries = self.config.variant_tries
+        if not tries or self.closing or ch.closed or ch.id in self._spent or ch.tries_left == 0:
+            return
+        proposed = self._variants.setdefault(ch.id, {})
+        root = proposed[flag].of if flag in proposed else flag
+        roots = self._variant_roots.setdefault(ch.id, [])
+        if root in roots:
+            roots.remove(root)
+        roots.append(root)
+        count = self._variant_count.get(ch.id, 0)
+        if count >= tries or any(self._flag_open(ch, each) for each in proposed):
+            return
+        pick = next(
+            ((of, variant) for of in reversed(roots) for variant in self._ranked_variants(of)
+             if self.not_flag(ch.id, variant.value) is None and not self._flag_open(ch, variant.value)),
+            None,
+        )
+        if pick is None:
+            return
+        of, variant = pick
+        lane = next((each for each in lanes if not each.finished), None)
+        if lane is None:
+            ids = ", ".join(each.id for each in lanes)
+            self._emit(
+                EventKind.WARNING,
+                f"{flag} was wrong for {ch.name}, and no variant is tried: {ids} has ended. The next one would be "
+                f"{variant.value} ({variant.what}): submit it by hand if you think it is the flag",
+                challenge=ch.id,
+                data={"variant": variant.value, "variant_of": of, "variant_changes": list(variant.changes),
+                      "lanes": [each.id for each in lanes]},
+            )
+            return
+        proposed[variant.value] = _VariantOf(of, variant.changes, variant.what)
+        self._variant_count[ch.id] = count + 1
+        waits = ""
+        if self.config.submit == "auto":
+            if approved:
+                waits = f"; it waits for you, as {flag} went out on your yes"
+            elif variant.value in ch.description:
+                waits = "; it waits for you: the challenge's description holds it"
+        self._note(lane, f"variant {count + 1} of {tries} at {ch.name}: trying {variant.value}, a variant of {of}, which the "
+                         f"platform rejected ({variant.what}){waits}")
+        self._candidate(lane, variant.value, claimed=not waits)
+
+    def _ranked_variants(self, flag: str) -> tuple[flagvariants.Variant, ...]:
+        """The ranked variants of a rejected flag under the run's flag format, worked out once."""
+        if flag not in self._ranked:
+            self._ranked[flag] = flagvariants.variants(flag, self.config.flag_format)
+        return self._ranked[flag]
+
+    def _flag_open(self, ch: Challenge, flag: str) -> bool:
+        """`flag` waits for the player on a lane of `ch`, or is on its way to the platform for it."""
+        if any(item.flag == flag for item in self._lines.get(ch.id, ())):
+            return True
+        return any(
+            pending.kind in FLAG_PENDING and pending.flag == flag
+            for lane in self.lanes_on(ch.id) for pending in [lane.pending, *lane.waiting] if pending is not None
+        )
+
+    def _variant_text(self, challenge_id: str, flag: str) -> str:
+        """What an approval adds for a flag the deck proposed as a variant; "" for any other."""
+        variant = self._variants.get(challenge_id, {}).get(flag)
+        return f"; flightdeck's variant of {variant.of}, which the platform rejected: {variant.what}" if variant is not None else ""
+
+    def _variant_data(self, challenge_id: str, flag: str) -> dict[str, object]:
+        """What an event adds for a flag the deck proposed as a variant; nothing for any other."""
+        variant = self._variants.get(challenge_id, {}).get(flag)
+        return {"variant_of": variant.of, "variant_changes": list(variant.changes)} if variant is not None else {}
+
+    def _detail(self, ch: Challenge, flag: str) -> str:
+        """What a flag's approval says: the flag, the tries left when they are counted, and for
+        a variant the deck proposed, of which flag and what changed."""
+        return _submit_detail(ch, flag) + self._variant_text(ch.id, flag)
 
     def _leave_line(self, lane: Lane) -> None:
         """An ended lane's flags still waiting their turn for the platform do not go out (one
@@ -1649,7 +2092,7 @@ class Deck:
         for lane in self.lanes_on(ch.id):
             for pending in [lane.pending, *lane.waiting]:
                 if pending is not None and pending.kind is PendingKind.SUBMIT and pending.flag is not None:
-                    pending.detail = _submit_detail(ch, pending.flag)
+                    pending.detail = self._detail(ch, pending.flag)
             self._sync_flag_alert(lane)
 
     def _out_of_tries(self, ch: Challenge, *, flag: str | None = None, detail: str = "", before_run: bool = False) -> None:

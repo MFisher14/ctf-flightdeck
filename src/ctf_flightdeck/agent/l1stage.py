@@ -60,9 +60,11 @@ class L1Stage:
     concurrency: int = 4
     image: str | None = None  # lanes run in Docker: each engine runs in a container of this image; None: on this machine
     pack: Path | None = None  # the pack's folder, as its manifests were read from it: mounted read-only in each container
+    engine_image: str | None = None  # the image of an engine's container when it is not the lane image ([l1] image); the fence's proxies stay on `image`
     labels: Mapping[str, str] = field(default_factory=dict)  # on each engine's container: the run's (leftovers.labels())
     record: ProcessRecord | None = None  # the run's record of process groups: an engine on this machine is in it while it runs
     urls: Mapping[str, Sequence[str]] = field(default_factory=dict)  # challenge id -> its live instance: what online engines in Docker reach
+    toolkit: str = ""  # [l1] lane_tools: the pack's note for a lane's brief (pack.lane_note); "": lanes are not told of the pack
 
     def __post_init__(self) -> None:
         if self.image is not None and self.pack is None:
@@ -108,7 +110,7 @@ class L1Stage:
 
     def containers(self, lane: str, network: str) -> WorkspaceFactory:
         """Makes each engine's container for a lane, on `network`."""
-        image, pack = self.image, self.pack
+        image, pack = self.engine_image or self.image, self.pack
         assert image is not None and pack is not None
 
         def factory(engine_id: str, root: Path, handout: Path) -> EngineContainer:

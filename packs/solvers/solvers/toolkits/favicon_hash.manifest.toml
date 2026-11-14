@@ -1,0 +1,24 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-089.
+# capabilities, inputs, needs_tools and cost_class are heuristics: correct them by hand.
+# Regeneration never overwrites this file.
+id = "toolkits.favicon_hash"
+lane = "toolkits"
+entry = "cli:python solvers/toolkits/favicon_hash.py"
+capabilities = ["executes", "cli", "osint", "favicon", "hash", "shodan"]
+inputs = ["ext:.ico", "magic:0x00000100", "name:favicon*"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # osint: a favicon/icon handout to fingerprint the way scan engines index it
+category = ["osint"]
+keywords = ["favicon", "icon_hash", "shodan", "icon hash", "mmh3", "murmurhash"]
+priority = 62
+
+[intake]  # B-089: hash every handout icon at intake, offline (the fetch half is `python -m ctf favicon`)
+select = "files"
+run = "per-file"
+match = ["ext:.ico", "magic:0x00000100", "name:favicon*"]
+args = ["{file}", "--out", "{out}"]
+max_files = 4
+timeout = 20

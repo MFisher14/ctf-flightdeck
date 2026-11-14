@@ -1,0 +1,20 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). B-215, hand-written.
+# The resumable key-search harness: a frozen job (candidate banks x templates x derivations), an exact
+# verifier and a chunk ledger under <workdir>/keysearch/<id>/. It extends the B-074 password lane: banks
+# draw on harvest, the archive-password store and the hashcrack wordlist; a zip hit goes to the store.
+# The CLI is `python -m ctf keysearch` (ctf/cli/keysearch.py) or this script. No [intake] table: a
+# search needs a spec the agent writes (what the key is derived from), so it never runs unattended.
+id = "common.keysearch"
+lane = "common"
+entry = "cli:python solvers/common/keysearch.py"
+capabilities = ["executes", "cli", "kdf", "aes", "zip", "bruteforce", "resumable"]
+inputs = []
+needs_tools = ["py:Crypto"]
+cost_class = "heavy"
+status = "active"
+
+[[routes]]  # the brief says the key is derived (from a password, a SID, a hostname...) and must be found
+category = ["crypto", "reverse", "forensics"]
+keywords = ["key derivation", "derived key", "derive the key", "pbkdf2", "kdf", "key search",
+            "brute-force the key", "bruteforce the key"]
+priority = 61

@@ -1,0 +1,30 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-126.
+id = "toolkits.render_ocr_sweep"
+lane = "toolkits"
+entry = "solvers.toolkits.render_ocr_sweep:solve"
+capabilities = ["executes", "stego", "spectrogram", "audio", "wav", "bitplane", "lsb", "ocr", "png", "bmp", "rot13"]
+inputs = ["magic:RIFF", "ext:.wav", "magic:\u0089PNG", "magic:BM", "ext:.bmp", "ext:.tif", "ext:.tiff", "ext:.ppm"]
+needs_tools = ["py:numpy", "py:scipy", "py:PIL"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-126: every WAV, whatever the category: the spectrogram is read to Nyquist (phasmophobia sat at 8-11 kHz)
+files = ["magic:RIFF", "ext:.wav"]
+priority = 31
+
+[[routes]]  # B-126: every PNG and BMP: bits 0-2 of each channel rendered and read (after image_carve 30, carve_stego 29)
+files = ["magic:\u0089PNG", "magic:BM", "ext:.bmp"]
+priority = 28
+
+[[routes]]  # B-126: a brief that names the technique, and only that. Everyday words (whisper, portrait, painting,
+# "hidden inside it") put this engine first for web, pwn and osint briefs with no media, so they are not here: the
+# file routes above already bring it to any WAV, PNG or BMP whatever the brief says.
+keywords = ["spectrogram", "bit plane", "bitplane", "bit-plane"]
+priority = 63
+
+[intake]  # B-126: run at intake on any WAV, PNG or BMP, so no model is spawned to render a spectrogram or a plane
+select = "files"
+run = "challenge"
+match = ["magic:RIFF", "ext:.wav", "magic:\u0089PNG", "magic:BM", "ext:.bmp"]
+timeout = 60
+spawns = true

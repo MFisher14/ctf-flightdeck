@@ -1,0 +1,17 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-246 (CRC-gated transform widening of the
+# HCFG reader). The CLI prints every CRC-valid container of a sample with hcfg.containers(others=True), which
+# reads these families behind the header's CRC-32; hcfg.py calls the module as a library.
+id = "binary.crc_transforms"
+lane = "binary"
+entry = "cli:python solvers/binary/crc_transforms.py"
+capabilities = ["analysis", "cli", "legacy-output", "crc", "xor", "chacha20", "salsa20", "prng", "lz", "rle"]
+inputs = []
+needs_tools = ["py:Cryptodome"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+category = ["reverse"]
+keywords = ["hcfg chacha", "hcfg prng keystream", "hcfg lznt1", "hcfg lzss", "crc-gated transform",
+            "config xor rotate", "config rle"]
+priority = 60

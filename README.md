@@ -48,33 +48,55 @@ shell.
 - **Learns from each run.** A report of where lanes stalled and which interventions helped,
   writeup drafts, and the list of challenges your solvers missed.
 
-> **Status: v0.3.0 (alpha).** See the
+> **Status: v0.4.0 (alpha).** See the
 > [changelog](https://github.com/MFisher14/ctf-flightdeck/blob/main/CHANGELOG.md) and the
 > [roadmap](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/ROADMAP.md).
 
 ## Quickstart
 
-Needs Python 3.12+ on macOS or Linux (Windows through WSL). Docker is recommended.
+Needs Python 3.12+ on macOS or Linux (Windows through WSL). Docker is recommended. Install with
+`pipx` or `uv`, whichever you have; the optional solver pack needs `uv` and `git` either way.
 
 ```sh
-pipx install ctf-flightdeck   # or: uv tool install ctf-flightdeck
+pipx install ctf-flightdeck   # or: uv tool install ctf-flightdeck   (from a clone: uv tool install .)
 flightdeck init               # a few questions; writes your config and names the key it needs
 flightdeck image build        # once, for Docker lanes (about 700 MB)
+flightdeck pack install       # optional, needs uv: some 800 no-model solvers that run first
 flightdeck doctor             # checks everything and says how to fix each problem
 flightdeck practice           # 14 small practice challenges, on your model
 ```
 
-Then play a real board:
+Then just run it:
 
 ```sh
-flightdeck play ~/ctf/some-board                      # a folder of challenges
-flightdeck play ~/ctf/event-board --event event.toml  # a CTFd event, by its rules
-flightdeck play ~/ctf/event-board --event event.toml --autopilot --budget-dollars 20   # while you sleep
+flightdeck
 ```
 
+It opens on flightdeck's home screen: resume an event you played before, start a new one, the
+practice set, or a demo. Starting one is a form on that screen (the event's name, its site, your
+access token, its VPN file); it makes the event's folder and launches. Your first console opens
+on a welcome screen that says what you are looking at and the three keys you need.
+
+The same things by name, for a script or a habit:
+
+```sh
+flightdeck start                                                    # set up an event and play it
+flightdeck play ~/ctf/example-ctf                                   # an event you set up before
+flightdeck play ~/ctf/example-ctf --autopilot --budget-dollars 20   # Autopilot, inside a run budget
+flightdeck play ~/ctf/some-board                                    # or any folder of challenges
+```
+
+`--autopilot` needs Docker lanes and a run budget. A model on your own machine has no price, so
+give its budget in tokens (`--budget-tokens`). Autopilot loosens no rule: where `event.toml` says
+`confirm`, flags and live instances still wait for you
+([Autopilot](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/GUIDE.md#autopilot)).
+
+Already installed? `uv tool upgrade ctf-flightdeck` (or `pipx upgrade ctf-flightdeck`) gets the
+newest release; `flightdeck --version` says which you have. Your config and keys stay as they are.
+
 `practice` and `play` spend money on your model API unless the model runs on your machine. Each
-lane stops and asks you at $2 or 400,000 tokens by default. Stuck? Run `flightdeck` on its own
-and it says what to do next.
+lane stops and asks you at $2 or 400,000 tokens by default. Stuck? `flightdeck doctor` checks your
+setup and says how to fix each problem.
 
 **Everything else is in the
 [player's guide](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/GUIDE.md):** models

@@ -1,0 +1,3060 @@
+{
+ "files": [
+  {
+   "kit": "network",
+   "name": "echo_chamber.pcap",
+   "repo": "ctf2024",
+   "path": "scripting/echo_chamber_COMPLETED/echo_chamber.pcap",
+   "note": "Huntress 2024 Echo Chamber: flag one byte per ICMP echo, repeated",
+   "sha256": "0e752f0701f549767333abd5457ff46eeda98ad7d6d29cffe499372bf8b51732"
+  },
+  {
+   "kit": "network",
+   "name": "keyboard_junkie.pcap",
+   "repo": "ctf2024",
+   "path": "forensics/keyboard_junkie_COMPLETED/keyboard_junkie",
+   "note": "Huntress 2024 Keyboard Junkie: USB keyboard capture (usbmon)",
+   "sha256": "388685e8131076b18ee5e598bc7937e4989cda477fd8a3b1171db36ef1cd00ad"
+  },
+  {
+   "kit": "network",
+   "name": "bussing_around.pcapng",
+   "repo": "ctf2025",
+   "path": "day18/BussingAround/bussing_around.pcapng",
+   "note": "Huntress 2025 Bussing Around: Modbus/TCP register writes",
+   "sha256": "61f9cc0be4ad1e7719f073c7aafce2a1aba0847aecf567e892fa8e8a2eadd26f"
+  },
+  {
+   "kit": "network",
+   "name": "telnet-cooked.pcap",
+   "url": "https://wiki.wireshark.org/uploads/__moin_import__/attachments/SampleCaptures/telnet-cooked.pcap",
+   "note": "Wireshark sample: Telnet login, cooked mode",
+   "sha256": "ae870805f1e5f6a2621b1f6e1e0229b47cc96d917f42c215acbcfcd46f9d72fc"
+  },
+  {
+   "kit": "network",
+   "name": "smtp.pcap",
+   "url": "https://wiki.wireshark.org/uploads/__moin_import__/attachments/SampleCaptures/smtp.pcap",
+   "note": "Wireshark sample: one SMTP session",
+   "sha256": "17ad230db1b6fd5dd18eb311092df1cf6eb162054bdb47697b89bef5a86a47ab"
+  },
+  {
+   "kit": "network",
+   "name": "dhcp.pcap",
+   "url": "https://wiki.wireshark.org/uploads/__moin_import__/attachments/SampleCaptures/dhcp.pcap",
+   "note": "Wireshark sample: DHCP discover/offer/request/ack",
+   "sha256": "2471b5420bdac826eecf8f61a2bbb4a3eb20dbfab7c02ff2be502f349f368214"
+  },
+  {
+   "kit": "network",
+   "name": "dns.cap",
+   "url": "https://wiki.wireshark.org/uploads/__moin_import__/attachments/SampleCaptures/dns.cap",
+   "note": "Wireshark sample: DNS queries of several types",
+   "sha256": "041eeb6f98bb398f1ee8b09651b5b5a84f6a62639f95bf226f9e7b77355d9f28"
+  },
+  {
+   "kit": "network",
+   "name": "tls12-dsb.pcapng",
+   "url": "https://gitlab.com/wireshark/wireshark/-/raw/master/test/captures/tls12-dsb.pcapng",
+   "note": "Wireshark test capture: TLS 1.2 with the key log embedded (DSB)",
+   "sha256": "d6034147bd02a206cca5d335d11c1292e7ed44a42d58f342c05bbd31318f81d8"
+  },
+  {
+   "kit": "network",
+   "name": "http-brotli.pcapng",
+   "url": "https://gitlab.com/wireshark/wireshark/-/raw/master/test/captures/http-brotli.pcapng",
+   "note": "Wireshark test capture: HTTP with a brotli body",
+   "sha256": "dc3957f2348adc8f148cd776bef9e4bc2b3d062edc1b2aedc7c2a2b92b60b055"
+  },
+  {
+   "kit": "network",
+   "name": "dpkt-http.pcap",
+   "github": "kbandla/dpkt",
+   "rev": "4f8958eb4b375b38d0ab6ffadf2da9b24395394d",
+   "path": "examples/data/http.pcap",
+   "note": "dpkt example capture",
+   "sha256": "25a72bdf10339f2c29916920c8b9501d294923108de8f29b19aba7cc001ab60d"
+  },
+  {
+   "kit": "network",
+   "name": "dpkt-dns_icmp.pcap",
+   "github": "kbandla/dpkt",
+   "rev": "4f8958eb4b375b38d0ab6ffadf2da9b24395394d",
+   "path": "examples/data/dns_icmp.pcap",
+   "note": "dpkt example capture",
+   "sha256": "8879f4a48b7cb3f586211d760cdec5fac802f9bd78f4937e36f000c6eb651aa6"
+  },
+  {
+   "kit": "network",
+   "name": "dpkt-truncated_dns.pcap",
+   "github": "kbandla/dpkt",
+   "rev": "4f8958eb4b375b38d0ab6ffadf2da9b24395394d",
+   "path": "examples/data/truncated_dns.pcap",
+   "note": "dpkt example capture",
+   "sha256": "a5a9ca5b2e8177838593435a6e116303286634a6160f4c8a8f6fb29bff43836f"
+  },
+  {
+   "kit": "network",
+   "name": "scapy-http_content_length.pcap",
+   "github": "secdev/scapy",
+   "rev": "d1bbdafc177fdb9bc7cef32c6fe5167d57c11217",
+   "path": "test/pcaps/http_content_length.pcap",
+   "note": "scapy test capture",
+   "sha256": "584bb26f32c629e3f1659951b0b6742a78fad70c7518a5816cfe1e8518643094"
+  },
+  {
+   "kit": "network",
+   "name": "scapy-http_chunk.pcap.gz",
+   "github": "secdev/scapy",
+   "rev": "d1bbdafc177fdb9bc7cef32c6fe5167d57c11217",
+   "path": "test/pcaps/http_chunk.pcap.gz",
+   "note": "scapy test capture",
+   "sha256": "d724491ae0e62bf89be538d26bba7eefee1bd5caffcd5ebe1da02e0f258d2cf2"
+  },
+  {
+   "kit": "network",
+   "name": "scapy-tls_tcp_frag_withnss.pcap.gz",
+   "github": "secdev/scapy",
+   "rev": "d1bbdafc177fdb9bc7cef32c6fe5167d57c11217",
+   "path": "test/pcaps/tls_tcp_frag_withnss.pcap.gz",
+   "note": "scapy test capture",
+   "sha256": "84c5ef63d22c8d871c47273e282af9de2a831b0a409237422315a3455589abf9"
+  },
+  {
+   "kit": "network",
+   "name": "scapy-ssh_ed25519.pcap",
+   "github": "secdev/scapy",
+   "rev": "d1bbdafc177fdb9bc7cef32c6fe5167d57c11217",
+   "path": "test/pcaps/ssh_ed25519.pcap",
+   "note": "scapy test capture",
+   "sha256": "df3906a5dc09a70f8d7cddd9367a270f05189299bb017c291ea81188ba7b4b6c"
+  },
+  {
+   "kit": "network",
+   "name": "scapy-macos.pcapng.gz",
+   "github": "secdev/scapy",
+   "rev": "d1bbdafc177fdb9bc7cef32c6fe5167d57c11217",
+   "path": "test/pcaps/macos.pcapng.gz",
+   "note": "scapy test capture",
+   "sha256": "b61b98a27425a4c2d03dee6681c6355825aa21041f29a36b06a8c2a954385141"
+  },
+  {
+   "kit": "network",
+   "name": "scapy-http2_h2c.pcap",
+   "github": "secdev/scapy",
+   "rev": "d1bbdafc177fdb9bc7cef32c6fe5167d57c11217",
+   "path": "test/pcaps/http2_h2c.pcap",
+   "note": "scapy test capture",
+   "sha256": "2b56dec940106df358ed3c9b0892f86efb53bfa9eac17377a29b4b8b44b2b239"
+  },
+  {
+   "kit": "network",
+   "name": "scapy-http_compressed.pcap",
+   "github": "secdev/scapy",
+   "rev": "d1bbdafc177fdb9bc7cef32c6fe5167d57c11217",
+   "path": "test/pcaps/http_compressed.pcap",
+   "note": "scapy test capture",
+   "sha256": "fc9f4ecb0e3df2ea82887dfcdb21906ee393e2bccc94faa713b00c7c9c5c308f"
+  },
+  {
+   "kit": "network",
+   "name": "scapy-tls_new-session-ticket.pcap",
+   "github": "secdev/scapy",
+   "rev": "d1bbdafc177fdb9bc7cef32c6fe5167d57c11217",
+   "path": "test/pcaps/tls_new-session-ticket.pcap",
+   "note": "scapy test capture",
+   "sha256": "c7903d639faf000368656dc73b44eb8bbc3a5399de5db30596b6e907b11af10e"
+  },
+  {
+   "kit": "email",
+   "name": "ftm-email-1.eml",
+   "repo": "ctf2025",
+   "path": "day21/follow_the_money/email 1 - FTM.eml",
+   "note": "Huntress 2025 Follow The Money: the bank thread, mail 1",
+   "sha256": "287d87598ac103373b4423d12ab2ad093dcba641f990ad3957c44691051c8f3e"
+  },
+  {
+   "kit": "email",
+   "name": "ftm-email-2.eml",
+   "repo": "ctf2025",
+   "path": "day21/follow_the_money/email 2 - FTM.eml",
+   "note": "Huntress 2025 Follow The Money: the bank thread, mail 2",
+   "sha256": "0dc175572838cb4c1242ebe991dada9ead3c105116475112ecf5bbc8cb5858b5"
+  },
+  {
+   "kit": "email",
+   "name": "ftm-email-3.eml",
+   "repo": "ctf2025",
+   "path": "day21/follow_the_money/email 3 - FTM.eml",
+   "note": "Huntress 2025 Follow The Money: the bank thread, mail 3",
+   "sha256": "bfc5a792d1161965a5615eeac0d2e943563311ba73c450b360c16a921133d639"
+  },
+  {
+   "kit": "email",
+   "name": "ftm-email-4.eml",
+   "repo": "ctf2025",
+   "path": "day21/follow_the_money/email 4 - FTM.eml",
+   "note": "Huntress 2025 Follow The Money: the bank thread, mail 4",
+   "sha256": "3c333d4944fca1aade5eb80f81a2d593a3f9c686bf4cf7c9f9ff1279999592a1"
+  },
+  {
+   "kit": "email",
+   "name": "ftm-email-5.eml",
+   "repo": "ctf2025",
+   "path": "day21/follow_the_money/email 5 - FTM.eml",
+   "note": "Huntress 2025 Follow The Money: the bank thread, mail 5",
+   "sha256": "8c0c9315c1e2fe2be8638fb595341784592fd4efe6da305d94022488c6521af4"
+  },
+  {
+   "kit": "email",
+   "name": "ran_somewhere.eml",
+   "repo": "ctf2024",
+   "path": "osint/ran_somewhere_COMPLETED/ran_somewhere.eml",
+   "note": "Huntress 2024 Ran Somewhere: ransom note mail with three attachments",
+   "sha256": "ebfcbf2e32a3f41d64512245e374e87921be15a28bb467c1b6f033416889dfea"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_test_1.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_test_1",
+   "note": "mail-parser test mail",
+   "sha256": "b7883d1cfdaff2b05ad54842f4bdfc59ef5d76aa6387bd2dbdaeceddc6d97d6a"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_test_3.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_test_3",
+   "note": "mail-parser test mail",
+   "sha256": "07945c6dcdee743cc843f5b8fd41e338e62c1781a52e2fd36cf019a29eb5a2a6"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_test_7.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_test_7",
+   "note": "mail-parser test mail",
+   "sha256": "04feb2ba606e85931c8e82bcd03f7305add1858b614769f8480ad8b75d55f9f8"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_test_8.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_test_8",
+   "note": "mail-parser test mail",
+   "sha256": "d848558cbcbd310fb2a60c1e925dd4be656a55ae801b37d4065fdf442335b03b"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_test_9.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_test_9",
+   "note": "mail-parser test mail",
+   "sha256": "e0984326c6260ba2347042add2f670382cb449f63d081d6edadee7dca8b35e57"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_test_12.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_test_12",
+   "note": "mail-parser test mail",
+   "sha256": "df75861851d704eb3aeb8db9b64cb8db5b963e53a44e7c7da794bf29e9f34d69"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_test_14.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_test_14",
+   "note": "mail-parser test mail",
+   "sha256": "9e48472c464b368562b8fcc238d612733398876c2c2673f84014dc08be36ee4e"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_test_16.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_test_16",
+   "note": "mail-parser test mail",
+   "sha256": "534720c59f139a0c128e15d49dd0b453c1e6a1ca578fc18901b360aad0f0581c"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_test_17.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_test_17",
+   "note": "mail-parser test mail",
+   "sha256": "861bc133481479b884cd3d769a9ac017c40fea3d11f583b04e71c68804d9e49a"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_test_18.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_test_18",
+   "note": "mail-parser test mail",
+   "sha256": "22679c63ee14f7b8b28d587367ef66d74a96d3b0240c16a41fd3bc9606e739a9"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_test_19.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_test_19",
+   "note": "mail-parser test mail",
+   "sha256": "edc0eee403a141c53e567d9089244e432a66329dc7ed079f8707e812156438fa"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_malformed_2.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_malformed_2",
+   "note": "mail-parser test mail",
+   "sha256": "f2fcdf6366ade5d846e6e209c6a137d8f976ff0715a6190bfc2847f2b0309879"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_malformed_3.eml",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_malformed_3",
+   "note": "mail-parser test mail",
+   "sha256": "bbeb05efe0e926fe45a9866eb5c0f8251669bb8f0290195926f159001b8d5ef6"
+  },
+  {
+   "kit": "email",
+   "name": "mailparser-mail_outlook_1.msg",
+   "github": "SpamScope/mail-parser",
+   "rev": "798712ce46d65d5d0a49232948b3e6a146f172b0",
+   "path": "tests/mails/mail_outlook_1",
+   "note": "mail-parser test mail",
+   "sha256": "5b8dc2ab80a35f2ff3a93d49ffddcb8d103ade180bca0a865c6a00f6b17a3909"
+  },
+  {
+   "kit": "email",
+   "name": "extractmsg-unicode.msg",
+   "github": "TeamMsgExtractor/msg-extractor",
+   "rev": "18172ea4730fcfef6edaa0bd20e7a9c64bea20b9",
+   "path": "example-msg-files/unicode.msg",
+   "note": "extract-msg example message",
+   "sha256": "3c67dc70854b994e469fc14496d23bf778e718831806ebafc72436c840439f9c"
+  },
+  {
+   "kit": "email",
+   "name": "extractmsg-multi-to.msg",
+   "github": "TeamMsgExtractor/msg-extractor",
+   "rev": "18172ea4730fcfef6edaa0bd20e7a9c64bea20b9",
+   "path": "example-msg-files/multi-to.msg",
+   "note": "extract-msg example message",
+   "sha256": "3d5dd27a6705a0a5d3627d33f788e0b520d1d0c1ae0ad8f3a75044e734fabbe1"
+  },
+  {
+   "kit": "email",
+   "name": "extractmsg-strangeDate.msg",
+   "github": "TeamMsgExtractor/msg-extractor",
+   "rev": "18172ea4730fcfef6edaa0bd20e7a9c64bea20b9",
+   "path": "example-msg-files/strangeDate.msg",
+   "note": "extract-msg example message",
+   "sha256": "9676ca02b32c15bf47bcf4295131d807a2729c2d1cddc53c4d40b57aa6c6d32b"
+  },
+  {
+   "kit": "email",
+   "name": "extractmsg-unicode-header.msg",
+   "github": "TeamMsgExtractor/msg-extractor",
+   "rev": "18172ea4730fcfef6edaa0bd20e7a9c64bea20b9",
+   "path": "example-msg-files/unicode-header.msg",
+   "note": "extract-msg example message",
+   "sha256": "fe13d8dfba467cd1a6dbc538bef43fccc8ac3fcdcba46cfda1fc15b72fe18a7f"
+  },
+  {
+   "kit": "email",
+   "name": "cpython-msg_01.eml",
+   "github": "python/cpython",
+   "rev": "2cd747b89bd5e0ad06edc506bb62a7c5e40e02cc",
+   "path": "Lib/test/test_email/data/msg_01.txt",
+   "note": "CPython email test message",
+   "sha256": "c15a3a17f6b65e9c51c58ed3a79d12bc517f867321ed118e5dc7b5c3a1ed7d4b"
+  },
+  {
+   "kit": "email",
+   "name": "cpython-msg_02.eml",
+   "github": "python/cpython",
+   "rev": "2cd747b89bd5e0ad06edc506bb62a7c5e40e02cc",
+   "path": "Lib/test/test_email/data/msg_02.txt",
+   "note": "CPython email test message",
+   "sha256": "05d5e533f5e590d9ee2c7692d26dc87ccbf381f4831cca3362baf596691a55bb"
+  },
+  {
+   "kit": "email",
+   "name": "cpython-msg_12.eml",
+   "github": "python/cpython",
+   "rev": "2cd747b89bd5e0ad06edc506bb62a7c5e40e02cc",
+   "path": "Lib/test/test_email/data/msg_12.txt",
+   "note": "CPython email test message",
+   "sha256": "449711060a7ec45e0a4bfbd5d497d069676cbf31f77f3385d3e166795e79deaa"
+  },
+  {
+   "kit": "email",
+   "name": "cpython-msg_16.eml",
+   "github": "python/cpython",
+   "rev": "2cd747b89bd5e0ad06edc506bb62a7c5e40e02cc",
+   "path": "Lib/test/test_email/data/msg_16.txt",
+   "note": "CPython email test message",
+   "sha256": "fbb4ae9e31ddd26e43b7c051041bb3d9d6bebd418a858da67268920bc672afb9"
+  },
+  {
+   "kit": "email",
+   "name": "cpython-msg_29.eml",
+   "github": "python/cpython",
+   "rev": "2cd747b89bd5e0ad06edc506bb62a7c5e40e02cc",
+   "path": "Lib/test/test_email/data/msg_29.txt",
+   "note": "CPython email test message",
+   "sha256": "fe19e3503f22da78a9920c4831a4fa121410ff76430dc10fdd81144ddbdddb01"
+  },
+  {
+   "kit": "email",
+   "name": "cpython-msg_35.eml",
+   "github": "python/cpython",
+   "rev": "2cd747b89bd5e0ad06edc506bb62a7c5e40e02cc",
+   "path": "Lib/test/test_email/data/msg_35.txt",
+   "note": "CPython email test message",
+   "sha256": "352627d5f72f49c830f9366bbd071b4095a3f9c98df4a0f425d4c3d6ea969079"
+  },
+  {
+   "kit": "email",
+   "name": "cpython-msg_43.eml",
+   "github": "python/cpython",
+   "rev": "2cd747b89bd5e0ad06edc506bb62a7c5e40e02cc",
+   "path": "Lib/test/test_email/data/msg_43.txt",
+   "note": "CPython email test message",
+   "sha256": "045797ff45987136a2a5712f8f8310710e0944e4b4547bab2dc99933edd1bc9a"
+  },
+  {
+   "kit": "email",
+   "name": "cpython-msg_44.eml",
+   "github": "python/cpython",
+   "rev": "2cd747b89bd5e0ad06edc506bb62a7c5e40e02cc",
+   "path": "Lib/test/test_email/data/msg_44.txt",
+   "note": "CPython email test message",
+   "sha256": "67f41bd0b0ac605c5431ad8c658c0c8e3c5d766eac8fbb81d51132f9fb818bfc"
+  },
+  {
+   "kit": "email",
+   "name": "cpython-msg_46.eml",
+   "github": "python/cpython",
+   "rev": "2cd747b89bd5e0ad06edc506bb62a7c5e40e02cc",
+   "path": "Lib/test/test_email/data/msg_46.txt",
+   "note": "CPython email test message",
+   "sha256": "d92e941be30507b7dd5976f4223f9d01998f1e73262e900e0ed002b0f53dc4b7"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-sample_with_vba.ppt",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/olevba/sample_with_vba.ppt",
+   "note": "oletools test file (olevba)",
+   "sha256": "618644f5fe56d83b13cbc0f95f944a88617ab096088fbfcc52d395ef84424ea4"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-excel4_sample_macro.xls",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/excel4-macros/excel4_sample_macro.xls",
+   "note": "oletools test file (excel4-macros)",
+   "sha256": "97cabe9cbd3337de8f7cb66730b035fd45bb8bf843296452405532193f11a575"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-excel4_sample_macro.xlsm",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/excel4-macros/excel4_sample_macro.xlsm",
+   "note": "oletools test file (excel4-macros)",
+   "sha256": "3f16769b86052ad7f75261664b8433fbec5abad7025271fa95e1b08c81bfa662"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-excel4_sample_macro.xlsb",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/excel4-macros/excel4_sample_macro.xlsb",
+   "note": "oletools test file (excel4-macros)",
+   "sha256": "cba04642a39d6c041645be178e940a59def2ceb2f74048fa14b9d3e24e6acc4f"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-excel4_sample_macro.slk",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/excel4-macros/excel4_sample_macro.slk",
+   "note": "oletools test file (excel4-macros)",
+   "sha256": "4783649b23f2750bdd236689d790a2182f43fca29e4e54e78ddae1664dd6baf6"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-excel4_sample_macro_excel5_format.xls",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/excel4-macros/excel4_sample_macro_excel5_format.xls",
+   "note": "oletools test file (excel4-macros)",
+   "sha256": "7071d6fce643aaa3121de1f71d14418556a3dbc8c4723207873496b6afd369ff"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-dde-test.docx",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/msodde/dde-test.docx",
+   "note": "oletools test file (msodde)",
+   "sha256": "68e116a50d07db92f261c427fc20202bc991d0889b99844b117235aa8bd21548"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-dde-test.docm",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/msodde/dde-test.docm",
+   "note": "oletools test file (msodde)",
+   "sha256": "39dc6bf73368c8a8fc846a02d23245ad61614793568f9806b46e76f772a6ccb3"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-dde-test.xlsx",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/msodde/dde-test.xlsx",
+   "note": "oletools test file (msodde)",
+   "sha256": "359c7c6c830472894a094acb85afcc6ea53e9d23e3e1d858180711abf2fb916a"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-dde-test-from-office2016.doc.zip",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/msodde/dde-test-from-office2016.doc.zip",
+   "note": "oletools test file (msodde)",
+   "sha256": "40d4aead3410195309b445dfcd2488614319b745dc90bee32b748a68c798985e"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-dde-test-from-office2003.doc.zip",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/msodde/dde-test-from-office2003.doc.zip",
+   "note": "oletools test file (msodde)",
+   "sha256": "2ea63a715f5941a04641291eeebc31cb51fd2f0b3b4d403cd7eabb5b93fac4a7"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-dde-in-csv.csv",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/msodde/dde-in-csv.csv",
+   "note": "oletools test file (msodde)",
+   "sha256": "f8043ca569fd67ea76bf06b07567c4f6b4534e548689d40f6c80ddad4ba7fd92"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-dde-in-excel2003.xml",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/msodde/dde-in-excel2003.xml",
+   "note": "oletools test file (msodde)",
+   "sha256": "b39b0863a1af0b1a1b1223c45b7a05deff5f0b605135fb2e0d4035286cc85245"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-harmless-clean.doc",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/msodde/harmless-clean.doc",
+   "note": "oletools test file (msodde)",
+   "sha256": "1bea4b63ac5d6b812c91ab7918a582adb638161c54ab53857fba3685183954af"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-harmless-clean.docx",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/msodde/harmless-clean.docx",
+   "note": "oletools test file (msodde)",
+   "sha256": "9acc24ba003275ec1d2d142374de56df98a3233add32d4d941a45ff5df45f3b7"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-embedded-simple-2007.doc",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/oleobj/embedded-simple-2007.doc",
+   "note": "oletools test file (oleobj)",
+   "sha256": "046d782f71172d119204f9d7be45eb478413da3afbe97af6b787aa5cf6fa25ad"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-embedded-simple-2007.docx",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/oleobj/embedded-simple-2007.docx",
+   "note": "oletools test file (oleobj)",
+   "sha256": "00a2f70b731e340d6173ec7af5c1b2cc141ae3692235fd2e4832444d4da6c4c6"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-embedded-simple-2007.xls",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/oleobj/embedded-simple-2007.xls",
+   "note": "oletools test file (oleobj)",
+   "sha256": "617bde67e666175c4e0a2364be76bd26751bd6f64766716461a87bb10c3b880d"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-embedded-simple-2007.odt",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/oleobj/embedded-simple-2007.odt",
+   "note": "oletools test file (oleobj)",
+   "sha256": "2c953496236695e387ea8067b8db825065d24203d88b9e487579298d70cf7923"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-sample_with_lnk_file.ppt",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/oleobj/sample_with_lnk_file.ppt",
+   "note": "oletools test file (oleobj)",
+   "sha256": "62d42cd09af97b5008875cb72edd2c147f5e85b59202946db80af3d409715295"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-sample_with_external_link_to_doc.xlsx",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/oleobj/external_link/sample_with_external_link_to_doc.xlsx",
+   "note": "oletools test file (oleobj)",
+   "sha256": "9d90b8bda8aaca4d177ac0b5dcc060f2d4cd6864ffe8d226f6575f8870ab2b8a"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-issue_251.rtf",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/rtfobj/issue_251.rtf",
+   "note": "oletools test file (rtfobj)",
+   "sha256": "f7821032aac521b29be502ff0bbd9f16b757a7bb59bf9b98301ee7494c9f7b26"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-issue_185.rtf.zip",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/rtfobj/issue_185.rtf.zip",
+   "note": "oletools test file (rtfobj)",
+   "sha256": "e4ca221b5387fca9a0617b21cc695704f8ba8780c5f15fda8f67109c304d0a56"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-autostart-encrypt-standardpassword.xls",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/encrypted/autostart-encrypt-standardpassword.xls",
+   "note": "oletools test file (encrypted)",
+   "sha256": "607f6f160adfe499195942273d7f66a2feb442aa3e63a988ac2e5bb1dde1ca05"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-autostart-encrypt-standardpassword.xlsm",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/encrypted/autostart-encrypt-standardpassword.xlsm",
+   "note": "oletools test file (encrypted)",
+   "sha256": "70494fcc2d9ddbbe748cdccdcc8a4800f287a73db89f84c90e6599a86bdee0b9"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-encrypted.docx",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/encrypted/encrypted.docx",
+   "note": "oletools test file (encrypted)",
+   "sha256": "539e4557975be726d0fc8d7813dba5470dd703272957b4476296f976b5678900"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-encrypted.doc",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/encrypted/encrypted.doc",
+   "note": "oletools test file (encrypted)",
+   "sha256": "27448002fe365f2297bb76904181c1919b0ac8363be209f748d6b20e5a8b8cce"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-oleform-PR314.docm",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/oleform/oleform-PR314.docm",
+   "note": "oletools test file (oleform)",
+   "sha256": "075069f5d309eeb2b2e65387b6417fd75c7bf8de56e401468146688d82cfb40f"
+  },
+  {
+   "kit": "maldoc",
+   "name": "oletools-RTF-Spec-1.7.rtf",
+   "github": "decalage2/oletools",
+   "rev": "ec10260989dbc48b9109e3d05d22beee19cf2333",
+   "path": "tests/test-data/msodde/RTF-Spec-1.7.rtf",
+   "note": "oletools test file (msodde)",
+   "sha256": "0fa63c8a432a00619f9cbfd734b2b0dce817f576a5ca9c484e51203cdf67596e"
+  },
+  {
+   "kit": "maldoc",
+   "name": "pypdf-minimal-document.pdf",
+   "github": "py-pdf/sample-files",
+   "rev": "02b8203bf416db3dbdb03438bc8278dfcb0555f3",
+   "path": "001-trivial/minimal-document.pdf",
+   "note": "pypdf sample file",
+   "sha256": "f723638db6e763cf4ccadad38a3d38a02d9ecab95dab1f0bbf00e801991b5f92"
+  },
+  {
+   "kit": "maldoc",
+   "name": "pypdf-with-attachment.pdf",
+   "github": "py-pdf/sample-files",
+   "rev": "02b8203bf416db3dbdb03438bc8278dfcb0555f3",
+   "path": "025-attachment/with-attachment.pdf",
+   "note": "pypdf sample file",
+   "sha256": "1c7e5f3bb3bbf9a2424cac84f46b17e5b62af0719d63b445c280c76634b316ba"
+  },
+  {
+   "kit": "maldoc",
+   "name": "pypdf-libreoffice-writer-password.pdf",
+   "github": "py-pdf/sample-files",
+   "rev": "02b8203bf416db3dbdb03438bc8278dfcb0555f3",
+   "path": "005-libreoffice-writer-password/libreoffice-writer-password.pdf",
+   "note": "pypdf sample file",
+   "sha256": "3e333bff0196d0c5320f40cdd1b7a3abd21b316de79de3c0f9083accdaef9358"
+  },
+  {
+   "kit": "maldoc",
+   "name": "pypdf-annotated_pdf.pdf",
+   "github": "py-pdf/sample-files",
+   "rev": "02b8203bf416db3dbdb03438bc8278dfcb0555f3",
+   "path": "024-annotations/annotated_pdf.pdf",
+   "note": "pypdf sample file",
+   "sha256": "c327f921abfba23a5c42d5c429ba99ded1cf5511521003aba6d2aff9c940d9cc"
+  },
+  {
+   "kit": "maldoc",
+   "name": "pypdf-libre-office-link.pdf",
+   "github": "py-pdf/sample-files",
+   "rev": "02b8203bf416db3dbdb03438bc8278dfcb0555f3",
+   "path": "016-libre-office-link/libre-office-link.pdf",
+   "note": "pypdf sample file",
+   "sha256": "bc38b458acd125c09fb7603cf0cca5d8737eea9fe353c2aef2c42b3db9cf9076"
+  },
+  {
+   "kit": "maldoc",
+   "name": "pypdf-pdflatex-forms.pdf",
+   "github": "py-pdf/sample-files",
+   "rev": "02b8203bf416db3dbdb03438bc8278dfcb0555f3",
+   "path": "010-pdflatex-forms/pdflatex-forms.pdf",
+   "note": "pypdf sample file",
+   "sha256": "fc6265298caafffeee9dd2d7f3ae2e53ab9f61ec0561369429d442f731d339da"
+  },
+  {
+   "kit": "maldoc",
+   "name": "pypdf-imagemagick-ASCII85Decode.pdf",
+   "github": "py-pdf/sample-files",
+   "rev": "02b8203bf416db3dbdb03438bc8278dfcb0555f3",
+   "path": "007-imagemagick-images/imagemagick-ASCII85Decode.pdf",
+   "note": "pypdf sample file",
+   "sha256": "99c687865a8c81b11fe2b6be84b4aaf47bf785556d07274debf9bc1e0807ed2f"
+  },
+  {
+   "kit": "maldoc",
+   "name": "pypdf-output_with_metadata_pymupdf.pdf",
+   "github": "py-pdf/sample-files",
+   "rev": "02b8203bf416db3dbdb03438bc8278dfcb0555f3",
+   "path": "020-xmp/output_with_metadata_pymupdf.pdf",
+   "note": "pypdf sample file",
+   "sha256": "8e52052b0d7242a6d3df844e0f24ed3c09ca36440761d1b00f85bbabc15f7369"
+  },
+  {
+   "kit": "maldoc",
+   "name": "lnkparse3-microsoft_example.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/microsoft_example",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "09ac337f52c4c9dc49772e97060145a316cb4af076cfb122fb4a219ecbfbfdd7"
+  },
+  {
+   "kit": "windows",
+   "name": "lnkparse3-microsoft_example.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/microsoft_example",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "09ac337f52c4c9dc49772e97060145a316cb4af076cfb122fb4a219ecbfbfdd7"
+  },
+  {
+   "kit": "maldoc",
+   "name": "lnkparse3-sample.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/sample",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "2dca3f217eaeae27a7f7a0ab6cddbe79699f38036affdb33478f8e0076da9b03"
+  },
+  {
+   "kit": "windows",
+   "name": "lnkparse3-sample.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/sample",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "2dca3f217eaeae27a7f7a0ab6cddbe79699f38036affdb33478f8e0076da9b03"
+  },
+  {
+   "kit": "maldoc",
+   "name": "lnkparse3-network_info.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/network_info",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "7a3db8e134f5fd8a9a06e57ed7cd0f2e9f0bd7c2cd14f5b8054297ea1a9e4c08"
+  },
+  {
+   "kit": "windows",
+   "name": "lnkparse3-network_info.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/network_info",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "7a3db8e134f5fd8a9a06e57ed7cd0f2e9f0bd7c2cd14f5b8054297ea1a9e4c08"
+  },
+  {
+   "kit": "maldoc",
+   "name": "lnkparse3-darwin_block.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/darwin_block",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "5b92fc05d83533c5a7011a91eb57ccdc23f3bc6b0999fc184ae952f75c884b00"
+  },
+  {
+   "kit": "windows",
+   "name": "lnkparse3-darwin_block.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/darwin_block",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "5b92fc05d83533c5a7011a91eb57ccdc23f3bc6b0999fc184ae952f75c884b00"
+  },
+  {
+   "kit": "maldoc",
+   "name": "lnkparse3-padded_cli_arguments.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/padded_cli_arguments",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "e62c3135fd708ee420cf767fa1654d8d66ff01f5160ddadf633e3cc5eaeaa926"
+  },
+  {
+   "kit": "windows",
+   "name": "lnkparse3-padded_cli_arguments.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/padded_cli_arguments",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "e62c3135fd708ee420cf767fa1654d8d66ff01f5160ddadf633e3cc5eaeaa926"
+  },
+  {
+   "kit": "maldoc",
+   "name": "lnkparse3-sample3.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/sample3",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "788a48fd83b1d6a98669dc60d97f208cd574a68089770384284787a4d07c4b70"
+  },
+  {
+   "kit": "windows",
+   "name": "lnkparse3-sample3.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/sample3",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "788a48fd83b1d6a98669dc60d97f208cd574a68089770384284787a4d07c4b70"
+  },
+  {
+   "kit": "maldoc",
+   "name": "lnkparse3-extra_data.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/extra_data",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "038eee664c3fe96f0ff1f0a2c54f7d1166594f94bb89647feccea7a293348a5a"
+  },
+  {
+   "kit": "windows",
+   "name": "lnkparse3-extra_data.lnk",
+   "github": "Matmaus/LnkParse3",
+   "rev": "ad4230280b4ee1ceb3cdf5f274e6d92fb12e7abb",
+   "path": "tests/samples/extra_data",
+   "note": "LnkParse3 test shortcut",
+   "unpack": "b64",
+   "sha256": "038eee664c3fe96f0ff1f0a2c54f7d1166594f94bb89647feccea7a293348a5a"
+  },
+  {
+   "kit": "windows",
+   "name": "zimmer_down-ntuser.dat",
+   "repo": "ctf2024",
+   "path": "forensics/zimmer_down_COMPLETED/ntuser.dat",
+   "note": "Huntress 2024 Zimmer Down: NTUSER.DAT, the flag is a base62 file name in RecentDocs",
+   "sha256": "a81de8e4ad9ba6c40da2416536661dc3d4428149125b2220225adc11a55c48ad"
+  },
+  {
+   "kit": "windows",
+   "name": "little_shop-HOSTA-Security.evtx",
+   "repo": "ctf2024",
+   "path": "forensics/little_shop_of_hashes_COMPLETED/little_shop_of_hashes_logs.zip",
+   "note": "Huntress 2024 Little Shop of Hashes: HOSTA Security log",
+   "member": "hosts/HOSTA/Security.evtx",
+   "sha256": "0c56cb7316e10c39be08517cdc70fc331ee4f0d5007c992acd654a4be81a11be"
+  },
+  {
+   "kit": "windows",
+   "name": "little_shop-HOSTA-System.evtx",
+   "repo": "ctf2024",
+   "path": "forensics/little_shop_of_hashes_COMPLETED/little_shop_of_hashes_logs.zip",
+   "note": "Huntress 2024 Little Shop of Hashes: HOSTA System log",
+   "member": "hosts/HOSTA/System.evtx",
+   "sha256": "44a55d5035b60dcc74868468ec3414e8979f1cf0a888d5507c853f8b072eac09"
+  },
+  {
+   "kit": "windows",
+   "name": "little_shop-HOSTA-Application.evtx",
+   "repo": "ctf2024",
+   "path": "forensics/little_shop_of_hashes_COMPLETED/little_shop_of_hashes_logs.zip",
+   "note": "Huntress 2024 Little Shop of Hashes: HOSTA Application log",
+   "member": "hosts/HOSTA/Application.evtx",
+   "sha256": "d6dd4bb4a8e2165766f4f97f1e014b62febcce7bf30171c05fa8dcd92e390a6b"
+  },
+  {
+   "kit": "windows",
+   "name": "little_shop-HOSTB-Security.evtx",
+   "repo": "ctf2024",
+   "path": "forensics/little_shop_of_hashes_COMPLETED/little_shop_of_hashes_logs.zip",
+   "note": "Huntress 2024 Little Shop of Hashes: HOSTB Security log",
+   "member": "hosts/HOSTB/Security.evtx",
+   "sha256": "f675c7f86e102113500aea7cb941be6269eddcf8bb5696524665cfb2acbfcc7c"
+  },
+  {
+   "kit": "windows",
+   "name": "little_shop-HOSTB-System.evtx",
+   "repo": "ctf2024",
+   "path": "forensics/little_shop_of_hashes_COMPLETED/little_shop_of_hashes_logs.zip",
+   "note": "Huntress 2024 Little Shop of Hashes: HOSTB System log",
+   "member": "hosts/HOSTB/System.evtx",
+   "sha256": "1fea1df87fdbefd33108ad2395db7b132a6ad09256444e6b0bbe3b68bf7d9d41"
+  },
+  {
+   "kit": "windows",
+   "name": "little_shop-HOSTB-Application.evtx",
+   "repo": "ctf2024",
+   "path": "forensics/little_shop_of_hashes_COMPLETED/little_shop_of_hashes_logs.zip",
+   "note": "Huntress 2024 Little Shop of Hashes: HOSTB Application log",
+   "member": "hosts/HOSTB/Application.evtx",
+   "sha256": "e8b8d615323089629a39ebe4b12f7c14e9950a93e6b2d3b4bcec98b76a49c50a"
+  },
+  {
+   "kit": "windows",
+   "name": "nightmare-Security.evtx",
+   "repo": "ctf2024",
+   "path": "forensics/nightmare_on_hunt_street_COMPLETED/logs-parts1-5.zip",
+   "note": "Huntress 2024 Nightmare on Hunt Street: Security log",
+   "member": "Security.evtx",
+   "sha256": "eb4a414d9005d2d54fc17ebd8469828d6dba97bed5e5976e663c82c7914b63f9"
+  },
+  {
+   "kit": "windows",
+   "name": "nightmare-System.evtx",
+   "repo": "ctf2024",
+   "path": "forensics/nightmare_on_hunt_street_COMPLETED/logs-parts1-5.zip",
+   "note": "Huntress 2024 Nightmare on Hunt Street: System log",
+   "member": "System.evtx",
+   "sha256": "3ac0b541d9df8f614984ece350401f4abecc1b88ae69ac821008e7e53518f0c9"
+  },
+  {
+   "kit": "windows",
+   "name": "nightmare-Application.evtx",
+   "repo": "ctf2024",
+   "path": "forensics/nightmare_on_hunt_street_COMPLETED/logs-parts1-5.zip",
+   "note": "Huntress 2024 Nightmare on Hunt Street: Application log",
+   "member": "Application.evtx",
+   "sha256": "540d054f6d4a89b839e241456fdc4d60bc13c425161a19b785c6f0d279e6bde3"
+  },
+  {
+   "kit": "windows",
+   "name": "hidden_streams-Sysmon.evtx",
+   "repo": "ctf2024",
+   "path": "forensics/hidden_streams_COMPLETED/challenge.zip",
+   "note": "Huntress 2024 Hidden Streams: Sysmon log, the flag is in an ADS (event 15)",
+   "member": "Sysmon.evtx",
+   "sha256": "7dc9471af5e51a40c90a677f24001aba5ce1c9ce3aef5e77e67dcaffe53f00b0"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I01XCGF.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I01XCGF.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "99571473d97a634f1490a760a1ed418235cc5439e32af18372560c5eaa8e4679"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I08ZI07.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I08ZI07.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "495befcb8169812aa23eb4d3d1629a3fb71662c96da7cc5b5bcd3ff099ce35d3"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I0AP14L.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I0AP14L.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "bcf849c0a3f2e0fd3db30d8c25d6b6f1d20e982e0795c1625ce7fcc5180ffe77"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I17RAD1.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I17RAD1.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "15e5da900a0b3c624113544a94e13d2db1f20af05c2b62f97d12c51b0e18d6c9"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I198LLE.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I198LLE.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "b40005a8d353f58d43fdc532e2049b1706dd4e05e271ea6391dfb5ae8bc2ac21"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I1D6OCR.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I1D6OCR.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "6a86b0744589d22a992ed630fbd7fd7509125366f5f96c41658d377955aee38e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I1MMUNX.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I1MMUNX.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "901307b0445442c2661ec29ef959f9a0bc4d6241e5a9953f72d5095fb6afcd3b"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I1WD5RF.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I1WD5RF.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "d72426bb5424cd26ed66a440b698165576dd3d91080f0fbe00b0d9a5a4bba386"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I2CVFM2.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I2CVFM2.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "f5bb27c210b0216bad0bb26b01c0b8841f0980e325c8a6e4b6bdbb4338ddf967"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I2FNXOW.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I2FNXOW.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "663b6cf6ce096ce59ffb8a9facd504febc707f01ef797c0b8285062951ab781e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I2J48PI.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I2J48PI.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "9d64de0adf3ecf7f062671c7a930f783d5d8177bc5ae69eb3458bca2b1843a08"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I2ZP91D.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I2ZP91D.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "7c917300fad424c49385f058680842f871afa85465717b47892eaf186c086756"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I3B7EP8.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I3B7EP8.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "f2062ad946daf92ab5229addecd68537d78e86ff2fb105f5d25a117dbe219178"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I3O4FNO.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I3O4FNO.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "fe20649c65922a906fc94eb2f322edc42b96c204cbdb9d46e9b2829fdba5f339"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I3Y2C18.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I3Y2C18.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "6a86b0744589d22a992ed630fbd7fd7509125366f5f96c41658d377955aee38e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I467CFX.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I467CFX.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "bcf849c0a3f2e0fd3db30d8c25d6b6f1d20e982e0795c1625ce7fcc5180ffe77"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I4S3J0O.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I4S3J0O.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "6860b932f15193be059ddd5ed1a0e3ac7975f5dfc12e0e377fd77ba04749373e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I4VAGUQ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I4VAGUQ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "39dca6aa45ee75e510288c3698a00d3cd07dc0eb6f980987a8785a3ef48461d8"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I4VJ9VP.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I4VJ9VP.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "403ad5a75e7c5a2bc7f4084f9824e8747caaddfe298e08d3f66c791120b735ec"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I59AMQZ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I59AMQZ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "403ad5a75e7c5a2bc7f4084f9824e8747caaddfe298e08d3f66c791120b735ec"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I5F20WX.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I5F20WX.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "91d8457b68a54c825d5130a22dc7a0347fe0f617f3eb868e80247c2cfb4c4100"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I5HCDNO.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I5HCDNO.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "663b6cf6ce096ce59ffb8a9facd504febc707f01ef797c0b8285062951ab781e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I5RPN3M.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I5RPN3M.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "6a7c14302aa03b405fdcf07d2f50974e0bc341f1d965bfa5edfe1340580ee12c"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I60PUB8.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I60PUB8.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "9172054e5f270a8771e95e6dd7dcb44a0e3eff6670e735ccaeb6a7d068b86096"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I61YGX7.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I61YGX7.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "d872d6c32434cbc8580474765c4865d8e3e826823089e66c86cea3d1288800c7"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I65140O.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I65140O.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "75f2a2ab1be2873d6eb912190270c980e877bc84fbbdabfcba4b79eea51cf8ec"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I6676MD.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I6676MD.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "15e5da900a0b3c624113544a94e13d2db1f20af05c2b62f97d12c51b0e18d6c9"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I7MXUTD.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I7MXUTD.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "736ab21a2eca58efdf68e7ebfd8a8b13f9adafded8857271e774790739a6dbd7"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I7QCZXB.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I7QCZXB.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "6860b932f15193be059ddd5ed1a0e3ac7975f5dfc12e0e377fd77ba04749373e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I7UPDZU.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I7UPDZU.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "99571473d97a634f1490a760a1ed418235cc5439e32af18372560c5eaa8e4679"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I8Q6O5D.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I8Q6O5D.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "e3abf102a8ec2ceb687153b4dfa73b1b7f83e18497393e389e3abde450336f8e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I90UOKS.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I90UOKS.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "b6de4947cdf9c07e55f0db67429ca7fd77b46e55d210b6c35f262f6848fb8417"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I99VSUL.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I99VSUL.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "6a7c14302aa03b405fdcf07d2f50974e0bc341f1d965bfa5edfe1340580ee12c"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$I9PGBL6.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$I9PGBL6.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "91d8457b68a54c825d5130a22dc7a0347fe0f617f3eb868e80247c2cfb4c4100"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IA88SVT.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IA88SVT.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "9d64de0adf3ecf7f062671c7a930f783d5d8177bc5ae69eb3458bca2b1843a08"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IABA5GX.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IABA5GX.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "75f2a2ab1be2873d6eb912190270c980e877bc84fbbdabfcba4b79eea51cf8ec"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IAKHV8Y.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IAKHV8Y.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "f2062ad946daf92ab5229addecd68537d78e86ff2fb105f5d25a117dbe219178"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IAZPA8T.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IAZPA8T.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "b6de4947cdf9c07e55f0db67429ca7fd77b46e55d210b6c35f262f6848fb8417"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IC04FJS.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IC04FJS.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "4d57ce68339060ea5d46f92795c56f0beea0c3d2887cdc94d1eb72e363df2282"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ICVE4M2.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ICVE4M2.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "0725f883b8936b0be19567961df8d064835cc12b9033a1820e41d8c4ec957389"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ID557GC.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ID557GC.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "9a73bb0d41efedcebde9188fbaba22fd4707540ea7c72a51dfbfa119e803c003"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IDEBQ1M.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IDEBQ1M.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "91d8457b68a54c825d5130a22dc7a0347fe0f617f3eb868e80247c2cfb4c4100"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IDWR2DY.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IDWR2DY.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "663b6cf6ce096ce59ffb8a9facd504febc707f01ef797c0b8285062951ab781e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IE0RMKA.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IE0RMKA.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "15e5da900a0b3c624113544a94e13d2db1f20af05c2b62f97d12c51b0e18d6c9"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IEFXDY8.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IEFXDY8.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "6a86b0744589d22a992ed630fbd7fd7509125366f5f96c41658d377955aee38e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IEXEX7I.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IEXEX7I.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "9172054e5f270a8771e95e6dd7dcb44a0e3eff6670e735ccaeb6a7d068b86096"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IEYL8JP.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IEYL8JP.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "84610f5e7015ff36c234d918a6695c014e7c81eafd27375ae49a0b023526281a"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IFRUSE0.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IFRUSE0.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "77149593b9462fc0f3b13794a43842921fd733cb4649ae3437125d0582a6ee8e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IFUV73N.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IFUV73N.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "cf89afdd2d4a3859a523e7e2dab379f6de8cb20dd5a1a7867ebaabdb82e90939"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IG64RJD.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IG64RJD.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "6860b932f15193be059ddd5ed1a0e3ac7975f5dfc12e0e377fd77ba04749373e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IG8TC80.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IG8TC80.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "d72426bb5424cd26ed66a440b698165576dd3d91080f0fbe00b0d9a5a4bba386"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IGUW5S7.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IGUW5S7.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "b40005a8d353f58d43fdc532e2049b1706dd4e05e271ea6391dfb5ae8bc2ac21"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IHE2HRX.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IHE2HRX.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "0725f883b8936b0be19567961df8d064835cc12b9033a1820e41d8c4ec957389"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IHRXQ2Y.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IHRXQ2Y.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "75f2a2ab1be2873d6eb912190270c980e877bc84fbbdabfcba4b79eea51cf8ec"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IIENSHP.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IIENSHP.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "901307b0445442c2661ec29ef959f9a0bc4d6241e5a9953f72d5095fb6afcd3b"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IIIY075.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IIIY075.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "77149593b9462fc0f3b13794a43842921fd733cb4649ae3437125d0582a6ee8e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IISFJJQ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IISFJJQ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "e3abf102a8ec2ceb687153b4dfa73b1b7f83e18497393e389e3abde450336f8e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IIYLT3Z.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IIYLT3Z.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "84610f5e7015ff36c234d918a6695c014e7c81eafd27375ae49a0b023526281a"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IJ9U0RR.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IJ9U0RR.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "901307b0445442c2661ec29ef959f9a0bc4d6241e5a9953f72d5095fb6afcd3b"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IJUUXYN.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IJUUXYN.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "0725f883b8936b0be19567961df8d064835cc12b9033a1820e41d8c4ec957389"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IJWBEUE.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IJWBEUE.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "4d57ce68339060ea5d46f92795c56f0beea0c3d2887cdc94d1eb72e363df2282"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IK9LJEF.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IK9LJEF.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "086c7b9d97ed5e7b56d080341f1684370fc172f3b5f473e4147df698e8e65e7f"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IKK9TWO.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IKK9TWO.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "61ef876fb170ba507bba05fbfdfb87ad7c76fa4c916cefc65d727757de960eda"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IKQ5M0F.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IKQ5M0F.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "736ab21a2eca58efdf68e7ebfd8a8b13f9adafded8857271e774790739a6dbd7"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IL2QDPK.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IL2QDPK.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "d872d6c32434cbc8580474765c4865d8e3e826823089e66c86cea3d1288800c7"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IL4WLXW.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IL4WLXW.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "495befcb8169812aa23eb4d3d1629a3fb71662c96da7cc5b5bcd3ff099ce35d3"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ILD51DG.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ILD51DG.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "cf89afdd2d4a3859a523e7e2dab379f6de8cb20dd5a1a7867ebaabdb82e90939"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ILN2HDS.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ILN2HDS.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "6a7c14302aa03b405fdcf07d2f50974e0bc341f1d965bfa5edfe1340580ee12c"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ILRXLH5.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ILRXLH5.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "77149593b9462fc0f3b13794a43842921fd733cb4649ae3437125d0582a6ee8e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IM7QAYI.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IM7QAYI.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "912a26bc9767d0625b2bb23f2bf38667e8396e8ae6659e1cfc3bbb18d21cb0fa"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IMU3AKY.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IMU3AKY.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "e3abf102a8ec2ceb687153b4dfa73b1b7f83e18497393e389e3abde450336f8e"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IMZ20SR.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IMZ20SR.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "086c7b9d97ed5e7b56d080341f1684370fc172f3b5f473e4147df698e8e65e7f"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IN4C62C.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IN4C62C.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "39dca6aa45ee75e510288c3698a00d3cd07dc0eb6f980987a8785a3ef48461d8"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IND6VW0.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IND6VW0.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "bcf849c0a3f2e0fd3db30d8c25d6b6f1d20e982e0795c1625ce7fcc5180ffe77"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ING16RB.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ING16RB.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "cb5d72d7622edd8837a56aa9682a64090684e7880b37534c00c71a78bdb007ce"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$INU5TNU.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$INU5TNU.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "912a26bc9767d0625b2bb23f2bf38667e8396e8ae6659e1cfc3bbb18d21cb0fa"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IO7IO01.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IO7IO01.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "961422049ac8744320953e33549272429d17f235383e07d0d828a18494b84221"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IOFYR05.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IOFYR05.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "f5bb27c210b0216bad0bb26b01c0b8841f0980e325c8a6e4b6bdbb4338ddf967"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IOSGXAZ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IOSGXAZ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "fa19a33743643d948ae7f97cc88000c4f03f05a3e322dac9f63011cd52cc8b19"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IOXKN7X.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IOXKN7X.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "f2062ad946daf92ab5229addecd68537d78e86ff2fb105f5d25a117dbe219178"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IOYHHQ5.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IOYHHQ5.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "7c917300fad424c49385f058680842f871afa85465717b47892eaf186c086756"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IPD4HRC.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IPD4HRC.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "912a26bc9767d0625b2bb23f2bf38667e8396e8ae6659e1cfc3bbb18d21cb0fa"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IPDV01V.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IPDV01V.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "086c7b9d97ed5e7b56d080341f1684370fc172f3b5f473e4147df698e8e65e7f"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IPMSABA.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IPMSABA.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "9a73bb0d41efedcebde9188fbaba22fd4707540ea7c72a51dfbfa119e803c003"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IPWI3VK.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IPWI3VK.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "7c917300fad424c49385f058680842f871afa85465717b47892eaf186c086756"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IQ6XS48.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IQ6XS48.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "b6de4947cdf9c07e55f0db67429ca7fd77b46e55d210b6c35f262f6848fb8417"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IQ9QLU0.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IQ9QLU0.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "cb5d72d7622edd8837a56aa9682a64090684e7880b37534c00c71a78bdb007ce"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IQPFIEQ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IQPFIEQ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "fa19a33743643d948ae7f97cc88000c4f03f05a3e322dac9f63011cd52cc8b19"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IQQAA2F.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IQQAA2F.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "625b32646d61e61875a81ab9887fe1490b631ffa98573a40a831b43d9a9cf05a"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IR2JCOS.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IR2JCOS.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "403ad5a75e7c5a2bc7f4084f9824e8747caaddfe298e08d3f66c791120b735ec"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IS4YB00.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IS4YB00.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "961422049ac8744320953e33549272429d17f235383e07d0d828a18494b84221"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IS67SUB.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IS67SUB.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "9a73bb0d41efedcebde9188fbaba22fd4707540ea7c72a51dfbfa119e803c003"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ISBYUOH.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ISBYUOH.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "736ab21a2eca58efdf68e7ebfd8a8b13f9adafded8857271e774790739a6dbd7"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ISTAZD1.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ISTAZD1.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "9172054e5f270a8771e95e6dd7dcb44a0e3eff6670e735ccaeb6a7d068b86096"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ISXWEK6.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ISXWEK6.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "fe20649c65922a906fc94eb2f322edc42b96c204cbdb9d46e9b2829fdba5f339"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ITB15DJ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ITB15DJ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "39dca6aa45ee75e510288c3698a00d3cd07dc0eb6f980987a8785a3ef48461d8"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ITE5TYG.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ITE5TYG.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "816f8eb80068afa5a7a510c3aaeeab4d12f5502b835fc4949c00a188c332d035"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ITMVJR4.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ITMVJR4.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "816f8eb80068afa5a7a510c3aaeeab4d12f5502b835fc4949c00a188c332d035"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ITUQ7CQ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ITUQ7CQ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "84610f5e7015ff36c234d918a6695c014e7c81eafd27375ae49a0b023526281a"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IU5E39M.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IU5E39M.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "4d57ce68339060ea5d46f92795c56f0beea0c3d2887cdc94d1eb72e363df2282"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IUDDG43.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IUDDG43.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "61ef876fb170ba507bba05fbfdfb87ad7c76fa4c916cefc65d727757de960eda"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IUG82GT.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IUG82GT.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "961422049ac8744320953e33549272429d17f235383e07d0d828a18494b84221"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IUIEHU7.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IUIEHU7.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "9d64de0adf3ecf7f062671c7a930f783d5d8177bc5ae69eb3458bca2b1843a08"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IUQNBS2.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IUQNBS2.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "61ef876fb170ba507bba05fbfdfb87ad7c76fa4c916cefc65d727757de960eda"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IUSDLBT.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IUSDLBT.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "625b32646d61e61875a81ab9887fe1490b631ffa98573a40a831b43d9a9cf05a"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IUYP5MU.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IUYP5MU.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "cf89afdd2d4a3859a523e7e2dab379f6de8cb20dd5a1a7867ebaabdb82e90939"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IV05A2U.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IV05A2U.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "b40005a8d353f58d43fdc532e2049b1706dd4e05e271ea6391dfb5ae8bc2ac21"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IV6X20I.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IV6X20I.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "99571473d97a634f1490a760a1ed418235cc5439e32af18372560c5eaa8e4679"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IW14HF1.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IW14HF1.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "d72426bb5424cd26ed66a440b698165576dd3d91080f0fbe00b0d9a5a4bba386"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IW1WPZX.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IW1WPZX.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "816f8eb80068afa5a7a510c3aaeeab4d12f5502b835fc4949c00a188c332d035"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IWKOHFD.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IWKOHFD.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "f5bb27c210b0216bad0bb26b01c0b8841f0980e325c8a6e4b6bdbb4338ddf967"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IWS5CL5.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IWS5CL5.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "495befcb8169812aa23eb4d3d1629a3fb71662c96da7cc5b5bcd3ff099ce35d3"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IXEGH08.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IXEGH08.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "625b32646d61e61875a81ab9887fe1490b631ffa98573a40a831b43d9a9cf05a"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IXWYRKV.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IXWYRKV.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "cb5d72d7622edd8837a56aa9682a64090684e7880b37534c00c71a78bdb007ce"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IYQJIUH.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IYQJIUH.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "fa19a33743643d948ae7f97cc88000c4f03f05a3e322dac9f63011cd52cc8b19"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IZ3RIQE.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IZ3RIQE.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "d872d6c32434cbc8580474765c4865d8e3e826823089e66c86cea3d1288800c7"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$IZ9EJJK.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$IZ9EJJK.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "fe20649c65922a906fc94eb2f322edc42b96c204cbdb9d46e9b2829fdba5f339"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R08ZI07.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R08ZI07.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R198LLE.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R198LLE.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R1D6OCR.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R1D6OCR.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R1MMUNX.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R1MMUNX.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R2J48PI.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R2J48PI.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R2ZP91D.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R2ZP91D.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R3B7EP8.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R3B7EP8.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R3O4FNO.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R3O4FNO.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R3Y2C18.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R3Y2C18.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R467CFX.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R467CFX.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R4S3J0O.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R4S3J0O.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R4VJ9VP.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R4VJ9VP.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R59AMQZ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R59AMQZ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R5F20WX.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R5F20WX.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R5HCDNO.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R5HCDNO.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R5RPN3M.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R5RPN3M.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R60PUB8.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R60PUB8.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R61YGX7.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R61YGX7.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R65140O.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R65140O.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R6676MD.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R6676MD.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R7QCZXB.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R7QCZXB.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R7UPDZU.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R7UPDZU.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R8Q6O5D.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R8Q6O5D.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$R90UOKS.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$R90UOKS.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RA88SVT.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RA88SVT.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RC04FJS.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RC04FJS.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RCVE4M2.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RCVE4M2.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RD557GC.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RD557GC.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RDEBQ1M.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RDEBQ1M.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RDWR2DY.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RDWR2DY.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RE0RMKA.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RE0RMKA.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$REXEX7I.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$REXEX7I.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RG8TC80.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RG8TC80.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RGUW5S7.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RGUW5S7.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RHRXQ2Y.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RHRXQ2Y.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RIENSHP.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RIENSHP.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RIIY075.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RIIY075.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RISFJJQ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RISFJJQ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RIYLT3Z.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RIYLT3Z.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RJUUXYN.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RJUUXYN.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RK9LJEF.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RK9LJEF.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RKQ5M0F.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RKQ5M0F.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RLD51DG.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RLD51DG.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RLN2HDS.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RLN2HDS.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RLRXLH5.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RLRXLH5.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RM7QAYI.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RM7QAYI.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RMZ20SR.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RMZ20SR.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RN4C62C.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RN4C62C.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RND6VW0.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RND6VW0.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RNG16RB.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RNG16RB.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ROFYR05.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ROFYR05.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ROSGXAZ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ROSGXAZ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$ROXKN7X.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$ROXKN7X.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RPD4HRC.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RPD4HRC.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RPMSABA.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RPMSABA.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RPWI3VK.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RPWI3VK.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RQ6XS48.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RQ6XS48.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RS4YB00.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RS4YB00.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RSBYUOH.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RSBYUOH.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RSXWEK6.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RSXWEK6.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RTB15DJ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RTB15DJ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RTE5TYG.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RTE5TYG.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RTUQ7CQ.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RTUQ7CQ.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RU5E39M.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RU5E39M.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RUDDG43.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RUDDG43.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RUG82GT.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RUG82GT.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RUQNBS2.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RUQNBS2.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RUSDLBT.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RUSDLBT.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RUYP5MU.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RUYP5MU.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RV6X20I.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RV6X20I.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RW14HF1.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RW14HF1.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RW1WPZX.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RW1WPZX.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RWKOHFD.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RWKOHFD.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RWS5CL5.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RWS5CL5.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RXEGH08.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RXEGH08.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RXWYRKV.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RXWYRKV.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RYQJIUH.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RYQJIUH.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "trashcan/$RZ3RIQE.txt",
+   "repo": "ctf2025",
+   "path": "day11/trashcan/$RZ3RIQE.txt",
+   "note": "Huntress 2025 Trashcan",
+   "sha256": "042e8341a67170793f70da11ca9fcdb32f2074dc22218d9c5df2054b28c96e93"
+  },
+  {
+   "kit": "windows",
+   "name": "pyevtx-security.evtx",
+   "github": "williballenthin/python-evtx",
+   "rev": "c0007441657899c39180de10a2be1a0e43dbeaf9",
+   "path": "tests/data/security.evtx",
+   "note": "python-evtx test log",
+   "sha256": "5f29a03cf8c1b4bfbd82c4074ccc81ecfe85d7ee15375afc352ed5025c9a4d8d"
+  },
+  {
+   "kit": "windows",
+   "name": "pyevtx-system.evtx",
+   "github": "williballenthin/python-evtx",
+   "rev": "c0007441657899c39180de10a2be1a0e43dbeaf9",
+   "path": "tests/data/system.evtx",
+   "note": "python-evtx test log",
+   "sha256": "ccb83cfefc9038017224cd97b800b66e248fe14529649ddf47907e5a2021449e"
+  },
+  {
+   "kit": "windows",
+   "name": "pyevtx-dns_log_malformed.evtx",
+   "github": "williballenthin/python-evtx",
+   "rev": "c0007441657899c39180de10a2be1a0e43dbeaf9",
+   "path": "tests/data/dns_log_malformed.evtx",
+   "note": "python-evtx test log",
+   "sha256": "56884d5665a02dd4f26de67eabfad751843eff06f3fdeee7ea57a9911baa090b"
+  },
+  {
+   "kit": "windows",
+   "name": "pyevtx-issue_38.evtx",
+   "github": "williballenthin/python-evtx",
+   "rev": "c0007441657899c39180de10a2be1a0e43dbeaf9",
+   "path": "tests/data/issue_38.evtx",
+   "note": "python-evtx test log",
+   "sha256": "becab64455866f8fae5583fbaa5dab901115e4397ea7abe14f37ad732d5d7eb9"
+  },
+  {
+   "kit": "windows",
+   "name": "pyevtx-issue_39.evtx",
+   "github": "williballenthin/python-evtx",
+   "rev": "c0007441657899c39180de10a2be1a0e43dbeaf9",
+   "path": "tests/data/issue_39.evtx",
+   "note": "python-evtx test log",
+   "sha256": "a687d8b81ff56da980c2389a31539a97dfe985dccfc5a288230cbb1b0a853279"
+  },
+  {
+   "kit": "windows",
+   "name": "attack-CA_4624_4625_LogonType2_LogonProc_chrome.evtx",
+   "github": "sbousseaden/EVTX-ATTACK-SAMPLES",
+   "rev": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
+   "path": "Credential Access/CA_4624_4625_LogonType2_LogonProc_chrome.evtx",
+   "note": "EVTX-ATTACK-SAMPLES (Credential Access)",
+   "sha256": "75f199b68d473172705bf874720b01820317fdd7aa4843545c98720dd6de197f"
+  },
+  {
+   "kit": "windows",
+   "name": "attack-kerberos_pwd_spray_4771.evtx",
+   "github": "sbousseaden/EVTX-ATTACK-SAMPLES",
+   "rev": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
+   "path": "Credential Access/kerberos_pwd_spray_4771.evtx",
+   "note": "EVTX-ATTACK-SAMPLES (Credential Access)",
+   "sha256": "4a0a1c7132e216dbc704c806e9429df9ae3ac00485d5238e50c776e3099ae11d"
+  },
+  {
+   "kit": "windows",
+   "name": "attack-babyshark_mimikatz_powershell.evtx",
+   "github": "sbousseaden/EVTX-ATTACK-SAMPLES",
+   "rev": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
+   "path": "Credential Access/babyshark_mimikatz_powershell.evtx",
+   "note": "EVTX-ATTACK-SAMPLES (Credential Access)",
+   "sha256": "3747c33a60a32142bf4e30bf023f155b2c0d6e7a018bce8b7bafbd5aa7ec109c"
+  },
+  {
+   "kit": "windows",
+   "name": "attack-phish_windows_credentials_powershell_scriptblockLog_4104.evtx",
+   "github": "sbousseaden/EVTX-ATTACK-SAMPLES",
+   "rev": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
+   "path": "Credential Access/phish_windows_credentials_powershell_scriptblockLog_4104.evtx",
+   "note": "EVTX-ATTACK-SAMPLES (Credential Access)",
+   "sha256": "177db8fa70262b4e2eba4e2902c97e82e3c6943fd111bde2ee522d5f1d57e856"
+  },
+  {
+   "kit": "windows",
+   "name": "attack-sysmon_10_lsass_mimikatz_sekurlsa_logonpasswords.evtx",
+   "github": "sbousseaden/EVTX-ATTACK-SAMPLES",
+   "rev": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
+   "path": "Credential Access/sysmon_10_lsass_mimikatz_sekurlsa_logonpasswords.evtx",
+   "note": "EVTX-ATTACK-SAMPLES (Credential Access)",
+   "sha256": "9a1689574ed08c1fb18e7ff3f3bed612109aedcb7bf8efbf3537d756e669e96f"
+  },
+  {
+   "kit": "windows",
+   "name": "attack-exec_persist_rundll32_mshta_scheduledtask_sysmon_1_3_11.evtx",
+   "github": "sbousseaden/EVTX-ATTACK-SAMPLES",
+   "rev": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
+   "path": "Execution/exec_persist_rundll32_mshta_scheduledtask_sysmon_1_3_11.evtx",
+   "note": "EVTX-ATTACK-SAMPLES (Execution)",
+   "sha256": "fb5679aec77dc45a35902f705b513811dfea0f2f93c9c8503464a20270c3222f"
+  },
+  {
+   "kit": "windows",
+   "name": "attack-revshell_cmd_svchost_sysmon_1.evtx",
+   "github": "sbousseaden/EVTX-ATTACK-SAMPLES",
+   "rev": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
+   "path": "Execution/revshell_cmd_svchost_sysmon_1.evtx",
+   "note": "EVTX-ATTACK-SAMPLES (Execution)",
+   "sha256": "08ce1feab22e30eb12a5a5b1ba4ac0aa552ff988b762d08de3a4d75ee1636abd"
+  },
+  {
+   "kit": "windows",
+   "name": "attack-exec_sysmon_1_ftp.evtx",
+   "github": "sbousseaden/EVTX-ATTACK-SAMPLES",
+   "rev": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
+   "path": "Execution/exec_sysmon_1_ftp.evtx",
+   "note": "EVTX-ATTACK-SAMPLES (Execution)",
+   "sha256": "aadae0e31b5f2310284687062010251fdd9ed9b8e8d76be14b79896d05f970ef"
+  },
+  {
+   "kit": "windows",
+   "name": "attack-MSSQL_multiple_failed_logon_EventID_18456.evtx",
+   "github": "sbousseaden/EVTX-ATTACK-SAMPLES",
+   "rev": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
+   "path": "Credential Access/MSSQL_multiple_failed_logon_EventID_18456.evtx",
+   "note": "EVTX-ATTACK-SAMPLES (Credential Access)",
+   "sha256": "014e936e1b5bad13275d3c6f2e61cc6dc74c4514557b20264b27df06a08d6ee6"
+  },
+  {
+   "kit": "windows",
+   "name": "regipy-NTUSER.DAT",
+   "github": "mkorman90/regipy",
+   "rev": "bf1239d9bbc5ee9331bdc849ff11d2c42331f737",
+   "path": "regipy_tests/data/NTUSER.DAT.xz",
+   "note": "regipy test hive",
+   "unpack": "xz",
+   "sha256": "6a38fcea924113963e4931725cc4c2f4f10e1240234cb1867d101a1cd92cd439"
+  },
+  {
+   "kit": "windows",
+   "name": "regipy-SYSTEM",
+   "github": "mkorman90/regipy",
+   "rev": "bf1239d9bbc5ee9331bdc849ff11d2c42331f737",
+   "path": "regipy_tests/data/SYSTEM.xz",
+   "note": "regipy test hive",
+   "unpack": "xz",
+   "sha256": "e178813e4643e8ccf4d1ccc505ddc128041b6135277417b98219dfe3167450c3"
+  },
+  {
+   "kit": "windows",
+   "name": "regipy-SAM",
+   "github": "mkorman90/regipy",
+   "rev": "bf1239d9bbc5ee9331bdc849ff11d2c42331f737",
+   "path": "regipy_tests/data/SAM.xz",
+   "note": "regipy test hive",
+   "unpack": "xz",
+   "sha256": "ade60f7db90dee216d93c9cc61c1bb020becba381619473c9488877b0950bc48"
+  },
+  {
+   "kit": "windows",
+   "name": "regipy-amcache.hve",
+   "github": "mkorman90/regipy",
+   "rev": "bf1239d9bbc5ee9331bdc849ff11d2c42331f737",
+   "path": "regipy_tests/data/amcache.hve.xz",
+   "note": "regipy test hive",
+   "unpack": "xz",
+   "sha256": "bd77d59379c4be223b41aa69dddae52269e8af78f429eabee89b56e6bcd52833"
+  },
+  {
+   "kit": "windows",
+   "name": "regipy-SOFTWARE",
+   "github": "mkorman90/regipy",
+   "rev": "bf1239d9bbc5ee9331bdc849ff11d2c42331f737",
+   "path": "regipy_tests/data/SOFTWARE.xz",
+   "note": "regipy test hive",
+   "unpack": "xz",
+   "sha256": "c2e1a391d6be9740e79da7944e012ad9ac878902db38ec7fc225a2a68d262a1b"
+  },
+  {
+   "kit": "windows",
+   "name": "regipy-NTUSER_BAGMRU.DAT",
+   "github": "mkorman90/regipy",
+   "rev": "bf1239d9bbc5ee9331bdc849ff11d2c42331f737",
+   "path": "regipy_tests/data/NTUSER_BAGMRU.DAT.xz",
+   "note": "regipy test hive",
+   "unpack": "xz",
+   "sha256": "5fb553dcc3231500e57212d984321610d790d467965ace2c5f770ef7903e9fc1"
+  },
+  {
+   "kit": "windows",
+   "name": "regipy-SYSTEM_WIN_10_1709",
+   "github": "mkorman90/regipy",
+   "rev": "bf1239d9bbc5ee9331bdc849ff11d2c42331f737",
+   "path": "regipy_tests/data/SYSTEM_WIN_10_1709.xz",
+   "note": "regipy test hive",
+   "unpack": "xz",
+   "sha256": "327b5f8ef6aac317d5ab35ddec2aa3fb4fba008559768353347a5ca4d660f058"
+  },
+  {
+   "kit": "windows",
+   "name": "regipy-SECURITY",
+   "github": "mkorman90/regipy",
+   "rev": "bf1239d9bbc5ee9331bdc849ff11d2c42331f737",
+   "path": "regipy_tests/data/SECURITY.xz",
+   "note": "regipy test hive",
+   "unpack": "xz",
+   "sha256": "214a437cf9a43d89c2f2772577e47ba2ee1b5c02eeb157120fa43679c378e8dc"
+  },
+  {
+   "kit": "windows",
+   "name": "regipy-UsrClass.dat",
+   "github": "mkorman90/regipy",
+   "rev": "bf1239d9bbc5ee9331bdc849ff11d2c42331f737",
+   "path": "regipy_tests/data/UsrClass.dat.xz",
+   "note": "regipy test hive",
+   "unpack": "xz",
+   "sha256": "d8e1aca997c137fa2d14160c6c0f50dd13b0b277e65331de5cd8acca6152ba7a"
+  },
+  {
+   "kit": "windows",
+   "name": "regipy-BCD",
+   "github": "mkorman90/regipy",
+   "rev": "bf1239d9bbc5ee9331bdc849ff11d2c42331f737",
+   "path": "regipy_tests/data/BCD.xz",
+   "note": "regipy test hive",
+   "unpack": "xz",
+   "sha256": "68ea6fe47b681ad878fd7785fb0d7d5b89a480920c02d62ea2d49f929444c06e"
+  },
+  {
+   "kit": "windows",
+   "name": "prefetch-Win10-CALC.EXE-3FBEF7FD.pf",
+   "github": "EricZimmerman/Prefetch",
+   "rev": "27d87a095fe0bd4b07726aec867e1c0f1aef08f9",
+   "path": "Prefetch.Test/TestFiles/Win10/CALC.EXE-3FBEF7FD.pf",
+   "note": "Eric Zimmerman Prefetch test file (Win10)",
+   "sha256": "e1d11876560511788c58e957d302a4a953e8cd8e8d7c0290796393058c164319"
+  },
+  {
+   "kit": "windows",
+   "name": "prefetch-Win10-CMD.EXE-D269B812.pf",
+   "github": "EricZimmerman/Prefetch",
+   "rev": "27d87a095fe0bd4b07726aec867e1c0f1aef08f9",
+   "path": "Prefetch.Test/TestFiles/Win10/CMD.EXE-D269B812.pf",
+   "note": "Eric Zimmerman Prefetch test file (Win10)",
+   "sha256": "0ef6ce683365dac64191608b47a74665ddec28eaae530ce2622900130c404077"
+  },
+  {
+   "kit": "windows",
+   "name": "prefetch-Win10-CHROME.EXE-B3BA7868.pf",
+   "github": "EricZimmerman/Prefetch",
+   "rev": "27d87a095fe0bd4b07726aec867e1c0f1aef08f9",
+   "path": "Prefetch.Test/TestFiles/Win10/CHROME.EXE-B3BA7868.pf",
+   "note": "Eric Zimmerman Prefetch test file (Win10)",
+   "sha256": "52543b5a85b9ee1936e048dc7f7fab6ffaa18834f5db68ee87926e38e84b8e13"
+  },
+  {
+   "kit": "windows",
+   "name": "prefetch-Win7-PING.EXE-B29F6629.pf",
+   "github": "EricZimmerman/Prefetch",
+   "rev": "27d87a095fe0bd4b07726aec867e1c0f1aef08f9",
+   "path": "Prefetch.Test/TestFiles/Win7/PING.EXE-B29F6629.pf",
+   "note": "Eric Zimmerman Prefetch test file (Win7)",
+   "sha256": "cdb6e2de2b02808755aa2591708ebe155ee3483947e230f5fdd6870390fafd26"
+  },
+  {
+   "kit": "windows",
+   "name": "prefetch-Win7-CALC.EXE-77FDF17F.pf",
+   "github": "EricZimmerman/Prefetch",
+   "rev": "27d87a095fe0bd4b07726aec867e1c0f1aef08f9",
+   "path": "Prefetch.Test/TestFiles/Win7/CALC.EXE-77FDF17F.pf",
+   "note": "Eric Zimmerman Prefetch test file (Win7)",
+   "sha256": "14b778d6af72ad0922c463dfa18bdc29ae0543c33a57405653f16c6ebbe91ea9"
+  },
+  {
+   "kit": "windows",
+   "name": "prefetch-XPPro-NOTEPAD.EXE-336351A9.pf",
+   "github": "EricZimmerman/Prefetch",
+   "rev": "27d87a095fe0bd4b07726aec867e1c0f1aef08f9",
+   "path": "Prefetch.Test/TestFiles/XPPro/NOTEPAD.EXE-336351A9.pf",
+   "note": "Eric Zimmerman Prefetch test file (XPPro)",
+   "sha256": "38548422010abde8f641a5bfdad8b7323d4afb7f908916e53647c8f194c9b784"
+  },
+  {
+   "kit": "windows",
+   "name": "prefetch-Win8x-CMD.EXE-4A81B364.pf",
+   "github": "EricZimmerman/Prefetch",
+   "rev": "27d87a095fe0bd4b07726aec867e1c0f1aef08f9",
+   "path": "Prefetch.Test/TestFiles/Win8x/CMD.EXE-4A81B364.pf",
+   "note": "Eric Zimmerman Prefetch test file (Win8x)",
+   "sha256": "ec5a66b363b88674117bad3558cc8cfb6ea9e9d4d8ccd9190aaecbd5007879df"
+  },
+  {
+   "kit": "windows",
+   "name": "prefetch-Vista-CMD.EXE-89305D47.pf",
+   "github": "EricZimmerman/Prefetch",
+   "rev": "27d87a095fe0bd4b07726aec867e1c0f1aef08f9",
+   "path": "Prefetch.Test/TestFiles/Vista/CMD.EXE-89305D47.pf",
+   "note": "Eric Zimmerman Prefetch test file (Vista)",
+   "sha256": "6127d820b031cac7f5fb1e6d45e244aa48cbb7fa62910ad0317eacb71a0edcd0"
+  },
+  {
+   "kit": "windows",
+   "name": "prefetch-Win2012R2-NOTEPAD.EXE-D8414F97.pf",
+   "github": "EricZimmerman/Prefetch",
+   "rev": "27d87a095fe0bd4b07726aec867e1c0f1aef08f9",
+   "path": "Prefetch.Test/TestFiles/Win2012R2/NOTEPAD.EXE-D8414F97.pf",
+   "note": "Eric Zimmerman Prefetch test file (Win2012R2)",
+   "sha256": "70bfca708147cf0171195b6fad0b3ca9c147dc17f6c9786326ce5a87894a7834"
+  },
+  {
+   "kit": "windows",
+   "name": "prefetch-Win2k3-CALC.EXE-02CD573A.pf",
+   "github": "EricZimmerman/Prefetch",
+   "rev": "27d87a095fe0bd4b07726aec867e1c0f1aef08f9",
+   "path": "Prefetch.Test/TestFiles/Win2k3/CALC.EXE-02CD573A.pf",
+   "note": "Eric Zimmerman Prefetch test file (Win2k3)",
+   "sha256": "2fbcd4b8d75f5ef425b67df3ef5790273238a1dd18e96be08c5bc3146d9f0e53"
+  },
+  {
+   "kit": "windows",
+   "name": "mft-entry_single_file",
+   "github": "omerbenamram/mft",
+   "rev": "18b6c05dcff93e9f5ea6a7c4ec743a88a95dddb4",
+   "path": "samples/entry_single_file",
+   "note": "omerbenamram/mft sample",
+   "sha256": "2b8a700716f1dda596551bde7d351dbc053c1c1e08e919aec2d2afc45c748b3b"
+  },
+  {
+   "kit": "windows",
+   "name": "mft-entry_102130_fixup_issue",
+   "github": "omerbenamram/mft",
+   "rev": "18b6c05dcff93e9f5ea6a7c4ec743a88a95dddb4",
+   "path": "samples/entry_102130_fixup_issue",
+   "note": "omerbenamram/mft sample",
+   "sha256": "1255963cc7b995171f8626509a7135ac933bcc61eccd815ebfff313221fa81c8"
+  },
+  {
+   "kit": "windows",
+   "name": "mft-entry_data_run_at_offset",
+   "github": "omerbenamram/mft",
+   "rev": "18b6c05dcff93e9f5ea6a7c4ec743a88a95dddb4",
+   "path": "samples/entry_data_run_at_offset",
+   "note": "omerbenamram/mft sample",
+   "sha256": "d213f218b0dc75c08e9ba54083d051a2153d7c98d16229c78ac6bc9f12328706"
+  },
+  {
+   "kit": "windows",
+   "name": "mft-entry_multiple_index_root_entries",
+   "github": "omerbenamram/mft",
+   "rev": "18b6c05dcff93e9f5ea6a7c4ec743a88a95dddb4",
+   "path": "samples/entry_multiple_index_root_entries",
+   "note": "omerbenamram/mft sample",
+   "sha256": "c5a2e58aa9857bdd597930ff17b703d360c35cc7f4b6c9650a3aecca90b4d233"
+  },
+  {
+   "kit": "windows",
+   "name": "mft-MFT",
+   "github": "omerbenamram/mft",
+   "rev": "18b6c05dcff93e9f5ea6a7c4ec743a88a95dddb4",
+   "path": "samples/MFT",
+   "note": "omerbenamram/mft sample",
+   "sha256": "c78f4968345b70783fbf6573d86c4bf300295ae26ddde4033dd1037b802e13c1"
+  },
+  {
+   "kit": "memory",
+   "name": "rustminidump-test.dmp",
+   "github": "rust-minidump/rust-minidump",
+   "rev": "48364b0b5087db2512d2d7fc2596fac329287a41",
+   "path": "testdata/test.dmp",
+   "note": "rust-minidump test dump",
+   "sha256": "24b0ea7794b2d2523c46c9aea72c03ccbb0ab88ad76d8258d3752c7b71d233ff"
+  },
+  {
+   "kit": "memory",
+   "name": "rustminidump-linux-mini.dmp",
+   "github": "rust-minidump/rust-minidump",
+   "rev": "48364b0b5087db2512d2d7fc2596fac329287a41",
+   "path": "testdata/linux-mini.dmp",
+   "note": "rust-minidump test dump",
+   "sha256": "ec4b64062545eb9874d25037bf0624c96a49098eed20b595344c72d344381576"
+  },
+  {
+   "kit": "memory",
+   "name": "rustminidump-simple-crashpad.dmp",
+   "github": "rust-minidump/rust-minidump",
+   "rev": "48364b0b5087db2512d2d7fc2596fac329287a41",
+   "path": "testdata/simple-crashpad.dmp",
+   "note": "rust-minidump test dump",
+   "sha256": "eeac82c333080aa59a5815424b09eeb7f3f223f8fe18b7c50a361bd9c9d75148"
+  },
+  {
+   "kit": "memory",
+   "name": "rustminidump-pipeline-inlines-macos-segv.dmp",
+   "github": "rust-minidump/rust-minidump",
+   "rev": "48364b0b5087db2512d2d7fc2596fac329287a41",
+   "path": "testdata/pipeline-inlines-macos-segv.dmp",
+   "note": "rust-minidump test dump",
+   "sha256": "9915eb2943ae16e6b6e50cf4bfa5c818032f2c7b3b85e1fa91d5296fad22b707"
+  },
+  {
+   "kit": "memory",
+   "name": "rustminidump-full-dump.dmp",
+   "github": "rust-minidump/rust-minidump",
+   "rev": "48364b0b5087db2512d2d7fc2596fac329287a41",
+   "path": "testdata/full-dump.dmp",
+   "note": "rust-minidump test dump",
+   "sha256": "7e1dd1f116eb648565f50192995c43c222bd33e9a342c0735d13018f688f5a77"
+  },
+  {
+   "kit": "memory",
+   "name": "rustminidump-invalid-range.dmp",
+   "github": "rust-minidump/rust-minidump",
+   "rev": "48364b0b5087db2512d2d7fc2596fac329287a41",
+   "path": "testdata/invalid-range.dmp",
+   "note": "rust-minidump test dump",
+   "sha256": "cf3bafee3cfa229d9d104fa62f05674bb1b2c716bba28eaa1db5c1ff17cce428"
+  },
+  {
+   "kit": "memory",
+   "name": "rustminidump-invalid-record-count.dmp",
+   "github": "rust-minidump/rust-minidump",
+   "rev": "48364b0b5087db2512d2d7fc2596fac329287a41",
+   "path": "testdata/invalid-record-count.dmp",
+   "note": "rust-minidump test dump",
+   "sha256": "3889bda508182ef1874a1bd4cf8dcbad59d7b2c1d295db5add46cf639019def2"
+  },
+  {
+   "kit": "memory",
+   "name": "rustminidump-invalid-parameter.dmp",
+   "github": "rust-minidump/rust-minidump",
+   "rev": "48364b0b5087db2512d2d7fc2596fac329287a41",
+   "path": "testdata/invalid-parameter.dmp",
+   "note": "rust-minidump test dump",
+   "sha256": "5edaec6b6d8e360c8f26c5907d3ccb29d79cfd4c66d617b23005a2f1396aff9b"
+  },
+  {
+   "kit": "memory",
+   "name": "pyelftools-core_linux64.elf",
+   "github": "eliben/pyelftools",
+   "rev": "5a04389392e25d8128e1acb59828a0a85be791b1",
+   "path": "test/testfiles_for_unittests/core_linux64.elf",
+   "note": "pyelftools test core",
+   "sha256": "88df648f531f23ab9ae23a7a2a7539854d196bfd5e765d68ff6332ed05a5c681"
+  },
+  {
+   "kit": "memory",
+   "name": "pyelftools-core_linux32.elf",
+   "github": "eliben/pyelftools",
+   "rev": "5a04389392e25d8128e1acb59828a0a85be791b1",
+   "path": "test/testfiles_for_unittests/core_linux32.elf",
+   "note": "pyelftools test core",
+   "sha256": "272e9f24d076d3215eeb2f9ec7a1095f932e37de9869788fc8321a24f0e8ef2b"
+  },
+  {
+   "kit": "memory",
+   "name": "pyelftools-core_simple64.elf",
+   "github": "eliben/pyelftools",
+   "rev": "5a04389392e25d8128e1acb59828a0a85be791b1",
+   "path": "test/testfiles_for_readelf/core_simple64.elf",
+   "note": "pyelftools test core",
+   "sha256": "9062160a0462c7209746b2704852b0fe5b28ee05e3a8d78c78abcbdf08629a50"
+  },
+  {
+   "kit": "memory",
+   "name": "win-xp-laptop-2005-06-25.img",
+   "url": "https://downloads.volatilityfoundation.org/volatility3/images/win-xp-laptop-2005-06-25.img.gz",
+   "note": "Volatility's public test image (Windows XP SP2, 512 MB raw)",
+   "unpack": "gz",
+   "big": true,
+   "sha256": "c4aeeb1b461378eef796944884d1d60adaa99cbae4d035923c144b08deee1e6e"
+  }
+ ]
+}

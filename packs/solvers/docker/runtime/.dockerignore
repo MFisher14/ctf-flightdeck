@@ -1,0 +1,7 @@
+# OS and editor files never reach the images or their content hash (ctf.toolchain.images.context_files)
+**/.DS_Store
+**/._*
+**/*.swp
+**/*~
+**/__pycache__
+**/*.pyc

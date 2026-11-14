@@ -1,0 +1,95 @@
+# Windows PE / native-emulation class: the running start for {{CHALLENGE}}
+
+Scaffolded {{CREATED}} for {{AGENTS}} racer(s), from the checkout at `{{REPO}}`.
+
+This is the companion brief for the **flag-only static-RE of a Windows PE** class (the Day-30
+SHA1-Hulud shape): a PE handed out, a flag to submit, no remote service. The kit already carries the
+whole Windows process model (B-148) and a one-call setup (B-226); you do not rebuild the harness, and
+you never run the binary natively or in Docker. Every check runs over *your* reimplementation or the
+bounded, fail-closed emulator.
+
+Run Python here with `{{REPO}}/tools/ctfpy <script.py>`; it puts the kit on `sys.path`
+(`import pe_emu, re_workbench, shared_findings`).
+
+## One call lands you on the ready setup
+
+```python
+import pe_emu
+setup = pe_emu.ready_environment(data)          # data = the PE bytes (never a path; never executed)
+print(setup.summary())                          # what is wired: entry, imports, TLS, compares, hashes
+```
+
+`ready_environment` maps the image, builds a clean `WindowsEnvironment`, parses the TLS directory,
+seeds the hashed-API table from `pe_emu.COMMON_WINDOWS_APIS`, and finds the CMP/TEST sites -- all
+offline, so you get them even where the native backend is declined (the Darwin/arm64 Unicorn guard;
+`setup.unicorn_available` / `setup.unicorn_reason` say so, and a missing capstone is reported in
+`setup.compare_sites_reason`, never silently dropped).
+
+`setup` gives you:
+
+- `setup.pe` -- the mapped image (`sections`, `imports`, `relocations`, `entry_rva`, `load_base`).
+- `setup.compare_sites` -- the CMP/TEST sites a validator hinges on.
+- `setup.resolve_api_hash(value)` -- a 32-bit API-hash constant back to its `dll!name` (collisions
+  kept, not hidden). For tunable schemes (width / seed / trailing NUL / sdbm / djb2a) reach for
+  `re_workbench.ApiHashNamer`, which is seeded from the same catalog.
+- `setup.tls` -- the TLS callbacks (`run_tls_callbacks()` fires them with the real ABI before entry).
+- `setup.environment` -- the clean Windows model: VirtualAlloc / HeapSize / LastError, the NtQuery\*
+  debug classes with benign answers and an anti-debug trace, exact LZNT1 (`RtlDecompressBuffer`),
+  dynamic resolution bookkeeping, and the deterministic clocks (GetTickCount / QueryPerformanceCounter
+  / GetSystemTimeAsFileTime). An **unmodelled** API is denied by name, never faked.
+
+## Bounded emulation, when static reading stalls
+
+```python
+sandbox = setup.sandbox()                        # a wired SafeUnicorn (needs the native backend)
+sandbox.run_tls_callbacks()
+result = sandbox.call(target_va, args=(...))     # prove ONE function's output
+```
+
+`SafeUnicorn` runs code inside Unicorn only: every imported API is modelled or denied, syscalls /
+interrupts / faults stop the run, and instruction and wall budgets cap it. A VEH single-step trap, the
+trap-flag `Rip`/`EFlags` rewrite, and a `CONTINUE_SEARCH` fan-out are all honoured. Inject a clock
+(`pe_emu.ready_environment(data, clock=...)`) to drive anti-timing checks deterministically. Emulate
+only where the event's rules allow it, and only to derive evidence -- never to turn a malformed
+specimen into a plain answer.
+
+A **PE32** image gets the 32-bit sandbox from the same call (B-241): Win32 stdcall imports, a TEB and PEB
+that answer only the fields the model carries, and frame-based SEH. A breakpoint, a single-step trap, a
+null-page access violation, a division by zero and a privileged or illegal instruction reach the vectored
+handlers and then the `FS:[0]` chain, `RtlUnwind` included; an exception nothing continues ends the run by
+name. Delay-load imports are listed in `setup.pe.delay_imports` and bound to their own stubs.
+`pe_emu.WindowsEnvironment(stdin=..., command_line=...)` feeds the program, `environment.stdout` keeps
+what it writes to its standard handles, and `ExitProcess` ends the run with reason `exit`.
+
+A packed image: `{{REPO}}/tools/ctfpy {{REPO}}/solvers/binary/unpack_worker.py FILE --out dump.exe` runs the
+stub in a sandboxed child process, stops where control enters bytes the stub wrote, and writes a PE a
+static tool loads (`pe_emu.dump_pe`; `pe_emu.rebuilt_imports` names the import slots the stub rebuilt).
+`sandbox.run(stop_on_written_exec=True)` is the same stop inside your own sandbox
+(`setup.sandbox(track_image_writes=True)`). A loader the bounded emulators decline (the real dynamic
+linker, ART) is Qiling or unidbg territory: `native_loaders.report()` says whether either is installed
+here and why not; neither is ever installed for you.
+
+## Answer selection is decoy-proof
+
+SHA1-Hulud had a printable **decoy** that overwrote the real flag. Never return a string just because
+it looks right. Run every candidate through the board's *pinned* acceptance gate:
+
+```python
+winner = setup.verify(board, candidates, agent="<your-racer-id>")   # None until one passes the gate
+```
+
+A candidate that fails the gate is recorded for the audit trail but never returned; the gate is the
+board's, not yours, so a looser check cannot be slipped in. A gate-passed candidate goes through
+`ctf submit` (the event's submit_mode and SubmitGate decide), pinned by `{{GATE}}`.
+
+## The ladder (simplest first)
+
+1. Triage: `pe_emu.ready_environment(data).summary()` -- arch, imports, TLS, compares in one look.
+2. Name the hashes (`resolve_api_hash` / `re_workbench.ApiHashNamer`) if the loader resolves by hash.
+3. Read the compares; reimplement the validator; find the accepted input
+   (`re_workbench.AcceptedInputSearch`, always with `check=` your full validator).
+4. Only if static reading stalls: `setup.sandbox()` to prove one function's behaviour.
+5. Accept through the pinned gate, then `ctf submit`.
+
+The kit removes the setup work the SHA1-Hulud racers rebuilt every time; the reversing itself is still
+yours.

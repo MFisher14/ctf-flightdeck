@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -383,6 +384,44 @@ def provider_answer(text: str) -> str:
     return name
 
 
+PROVIDER_MENU = (
+    "Which model API do the lanes use?\n"
+    "  1  openrouter   one key for many vendors' models (OPENROUTER_API_KEY)\n"
+    "  2  anthropic    Claude models on Anthropic's API (ANTHROPIC_API_KEY)\n"
+    "  3  openai       OpenAI's API (OPENAI_API_KEY)\n"
+    "  4  ollama       open-weight models on this machine, free\n"
+    "  5  mlx          an MLX server on this Mac, free\n"
+    "  6  custom       any other OpenAI-compatible server\n"
+    "Choose one, by number or name. A coding-agent CLI (Claude Code, Codex) is not chosen here: it needs\n"
+    "no setup, `flightdeck play --agent claude` uses it. Your choice"
+)
+_AGENT_WORDS = ("agent", "codex", "cli", "claudecode", "claude-code")
+_CHOOSE = "choose a number from 1 to 6, or one of openrouter, anthropic, openai, ollama (or local), mlx or custom"
+
+
+def providers_answer(text: str) -> tuple[str, ...]:
+    """What a player typed at init's provider menu: a number or a name, or several of them
+    (commas or spaces). The first is the lanes' API; the rest are returned for init to say
+    what becomes of them. Words for a coding-agent CLI are dropped (the menu says why)."""
+    chosen: list[str] = []
+    for word in re.split(r"[,\s]+", text.strip().lower()):
+        if not word:
+            continue
+        if word.isdigit() and 1 <= int(word) <= len(PROVIDER_CHOICES):
+            word = PROVIDER_CHOICES[int(word) - 1]
+        try:
+            name = provider_answer(word)
+        except AnswerError:
+            if any(part in word for part in _AGENT_WORDS):
+                continue
+            raise AnswerError(_CHOOSE) from None
+        if name not in chosen:
+            chosen.append(name)
+    if not chosen:
+        raise AnswerError(_CHOOSE)
+    return tuple(chosen)
+
+
 def models_answer(text: str) -> tuple[str, ...]:
     """Model ids, weakest first, comma-separated: at least one, each once, none with spaces."""
     from .config import _plain
@@ -557,6 +596,7 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     checks.append(Check("machine", True, hardware.doctor_line(environ, machine=machine), essential=False))
     path = (config_path or default_config_path()).expanduser()
     config = None
+    host_at = len(checks)  # where the host line goes: after the machine, once the config says where runs go
     if not path.exists():
         checks.append(Check("config", False, f"no config at {path}", "run `flightdeck init` to write one"))
     else:
@@ -585,6 +625,9 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
         checks += _light_checks(config, environ)
     if config is not None and config.l1.pack is not None:
         checks.append(_l1_check(config.l1.pack))
+    elif config is not None:
+        checks.append(Check("l1 pack", True, "none, so each lane starts on its model (optional: `flightdeck pack install` adds "
+                            "flightdeck's solver pack, some 800 no-model solvers that run first)"))
     found = False
     if agent is not None:
         agent_checks = _agent_checks(agent, config, environ)
@@ -592,6 +635,9 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
         checks += agent_checks
     docker = _docker_checks(config)
     checks += docker
+    if config is not None and config.l1.pack is not None:
+        checks += _pack_tools_checks(config, environ, docker_runs=any(c.name == "docker" and c.ok for c in docker))
+    checks.insert(host_at, _host_check(config, environ))
     image_there = any(c.name == "lane image" and c.ok for c in docker)
     if agent is not None and found and image_there and config is not None and config.lanes.runtime == "docker":
         checks.append(_agent_image_check(agent, config))  # play --agent runs the CLI inside that image
@@ -604,6 +650,84 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     return checks
 
 
+def _host_check(config, environ: Mapping[str, str], reading=None) -> Check:
+    """The host governor's readings now (governor.py): the load per CPU, the RAM available and
+    the free disk where runs go (the config's runs folder, else the default one), and any
+    `[governor]` limit that binds, which would hold a run's new lanes back. Never essential:
+    a busy machine is no broken setup. `reading`: as probed, else probed here."""
+    from . import governor, hardware
+    from .config import DEFAULT_RUN_DIR, GovernorConfig
+
+    policy = config.governor if config is not None else GovernorConfig()
+    if reading is None:
+        try:
+            runs = config.run_dir if config is not None else Path(DEFAULT_RUN_DIR).expanduser()
+        except RuntimeError:  # no home folder to expand ~ with
+            runs = Path.cwd()
+        reading = governor.probe(runs, hardware.RealHost(environ))
+    said = governor.summary(reading)
+    if not policy.enabled:
+        return Check("host", True, f"{said}; the governor is off ([governor] enabled = false): no lane is held back for these",
+                     essential=False)
+    binding = governor.decide(reading, policy, 0).limits
+    if binding:
+        return Check(
+            "host", False, f"{said}; over a limit now: {binding}",
+            "a run would start one lane at a time until this clears (the lanes at work carry on); free the machine up, "
+            "or change the limit under [governor] in your config", essential=False,
+        )
+    return Check("host", True, f"{said}; within the [governor] limits, so a run holds no lane back", essential=False)
+
+
+def _pack_tools_checks(config, environ: Mapping[str, str], *, docker_runs: bool) -> list[Check]:
+    """The programs the config's pack says its engines call (`tools` in its pack.toml) that
+    are missing where the engines run: on this machine's PATH for the host runtime; for
+    Docker, in the image they run in (`[l1] image`, else the lane image), asked of one
+    throwaway container with no network (pack.missing_in_image). Never essential: an engine
+    whose program is missing says so when it runs, and the rest still work. When the image
+    cannot be asked (no Docker, not on this machine), the line says that, and nothing about
+    what is missing. A pack that lists no tools gets no line."""
+    from . import pack as packs
+
+    name = "pack tools"
+    try:
+        info = packs.read(config.l1.pack)
+    except packs.PackError as exc:
+        return [Check(name, False, str(exc), "fix the pack's pack.toml", essential=False)]
+    tools = info.tools
+    if not tools:
+        return []
+    count = f"{len(tools)} program{'' if len(tools) == 1 else 's'}"
+    unrun = "an engine that needs a missing one says so and does not run; the rest work"
+    if config.lanes.runtime == "host":
+        absent = packs.missing_on_host(tools, environ.get("PATH", ""))
+        if not absent:
+            return [Check(name, True, f"all {count} the pack's engines call are on PATH", essential=False)]
+        return [Check(name, False, f"not on PATH: {' '.join(absent)} ({len(absent)} of the {count} the pack's engines call)",
+                      f"install them ({unrun})", essential=False)]
+    own = config.l1.image
+    image = own or config.lanes.image
+    what = f"the pack image {image}" if own else f"the lane image {image} (no [l1] image: engines run in it)"
+    build = "`flightdeck pack image` builds it" if own else "`flightdeck image build` builds flightdeck's own"
+    if not docker_runs:
+        return [Check(name, False, f"not looked up: Docker is not running, so {what} cannot be asked which of the "
+                                   f"{count} the pack's engines call it has", essential=False)]
+    if not image_present(image):
+        return [Check(name, False, f"not looked up: {what} is not on this machine, so which of the {count} the pack's "
+                                   "engines call it has is not known", build, essential=False)]
+    try:
+        absent = packs.missing_in_image(image, tools)
+    except packs.PackError as exc:
+        return [Check(name, False, f"not looked up: {exc}", essential=False)]
+    if not absent:
+        return [Check(name, True, f"all {count} the pack's engines call are in {what}", essential=False)]
+    return [Check(name, False, f"not in {what}: {' '.join(absent)} ({len(absent)} of the {count} the pack's engines call)",
+                  f"add them to the image ({unrun})", essential=False)]
+
+
+ROOM_LANES = 16  # the terminal check looks at room for at most this many lanes (D8: the lane list scrolls past it)
+
+
 def _terminal_check(columns: int, lines: int, config) -> Check:
     """What a terminal this size leaves out of the console on a busy run with your lanes and
     runtime, and from which size none of it (console/room.py measures it with the console's
@@ -612,7 +736,7 @@ def _terminal_check(columns: int, lines: int, config) -> Check:
     from .console.room import room
 
     lanes = config.lanes if config is not None else LaneConfig()
-    fit = room(columns, lines, max_lanes=lanes.max_lanes, containerized=lanes.runtime == "docker")
+    fit = room(columns, lines, max_lanes=min(lanes.max_lanes, ROOM_LANES), containerized=lanes.runtime == "docker")
     size = f"{columns}x{lines}"
     team = f"; team mode's key line, with c claim, needs {fit.team_columns} columns" if fit.team_columns > fit.columns else ""
     missing = fit.left_out()
@@ -1047,6 +1171,10 @@ def _docker_checks(config) -> list[Check]:
         found = image_present(image)
         how = "flightdeck image build" if image == IMAGE else f"docker pull {image}"
         out.append(Check("lane image", found, f"{image} is {'present' if found else 'not on this machine'}", f"run `{how}`"))
+        if config.l1.pack is not None and config.l1.image:
+            there = image_present(config.l1.image)
+            out.append(Check("l1 image", there, f"{config.l1.image} is {'present' if there else 'not on this machine'}",
+                             "run `flightdeck pack image`, or remove [l1] image to run engines in the lane image"))
     return out
 
 

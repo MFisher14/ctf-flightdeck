@@ -1,0 +1,26 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Hand-written for B-102.
+# SOP/procedure-to-checker lane: detect a written procedure in a bundle, have a cheap model emit a
+# checker + the SOP's own known-answer case, run the KAT first, compute the flag only on a KAT pass.
+# It spawns the Claude CLI (checker generation) and generated-code subprocesses, so it is NOT an
+# intake engine (intake is no-model and offline): it runs only when the router routes a challenge
+# here. A missing CLI returns a `blocked` SolverResult by name, so it is not a hard tool dependency.
+id = "common.sop_checker"
+lane = "common"
+entry = "solvers.common.sop_checker:solve"
+capabilities = ["executes", "sop", "procedure", "checker", "forensics", "known-answer-test"]
+inputs = ["name:*sop*", "name:*procedure*", "ext:.sop"]
+needs_tools = []
+cost_class = "medium"
+status = "active"
+
+[[routes]]  # a bundle whose procedure document is named like an SOP
+category = ["forensics", "misc", "ics"]
+files = ["name:*sop*", "name:*procedure*", "ext:.sop"]
+priority = 58
+
+[[routes]]  # the vocabulary of a reconcile-against-a-written-procedure brief
+category = ["forensics", "misc", "ics"]
+keywords = ["standard operating procedure", "reconcile", "reconciliation", "procedure document",
+            "follow the sop", "known-answer test", "canonical report", "tolerance table",
+            "worked example"]
+priority = 62

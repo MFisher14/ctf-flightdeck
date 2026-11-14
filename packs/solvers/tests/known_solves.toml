@@ -1,0 +1,32 @@
+# Known solve paths that a fix must never lose (B-196, ctf/integrity/preserve.py).
+#
+# At CSCTF over-correcting fix lanes dropped working solve paths (JWT alg:none, RFC 7797 b64=false) and only
+# verification caught it. Each [[solve]] names one path and the tests that prove it still works.
+# `python -m ctf integrity preserve` checks that every test still exists in a collected file and is not
+# hollow; `--run` runs them all (strict: a skipped one is not preserved). Run it before verifying a fix lane.
+# Event solve paths stay in the workdir (`ctf adapt record`) and are replayed with `--lane`/`--recorded`.
+
+[[solve]]
+id = "jwt-alg-none"
+what = "JWT alg none: forge with every none spelling and an empty signature, and solve a live alg-none target"
+tests = ["tests/test_web_jwt_forge_live.py::test_forge_none_has_empty_signature",
+         "tests/test_web_jwt_forge_live.py::test_live_alg_none",
+         "tests/test_harden_webauth2_oracles.py::test_auth_forge_jwt_keeps_alg_confusion_variants"]
+engines = ["web.jwt_forge_live"]
+
+[[solve]]
+id = "jws-rfc7797-b64-false"
+what = "RFC 7797 unencoded payload (b64=false): verify the JWS over the raw payload bytes"
+tests = ["tests/test_harden_webauth2_oracles.py::test_token_verifies_rfc7797_b64_false_with_empty_crit"]
+
+[[solve]]
+id = "jwt-rs256-to-hs256"
+what = "JWT algorithm confusion: sign HS256 with the server's RSA public key and solve a live target"
+tests = ["tests/test_web_jwt_forge_live.py::test_live_rs256_to_hs256_confusion"]
+engines = ["web.jwt_forge_live"]
+
+[[solve]]
+id = "jwt-kid-injection"
+what = "JWT kid injection: point kid at a known public asset and sign with its bytes against a live target"
+tests = ["tests/test_web_jwt_forge_live.py::test_live_kid_injection"]
+engines = ["web.jwt_forge_live"]

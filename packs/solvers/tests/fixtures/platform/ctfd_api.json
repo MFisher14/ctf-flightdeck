@@ -1,0 +1,98 @@
+{
+  "_about": "Hand-written CTFd API v1 exchanges (B-005). Shapes from the CTFd API docs, the carried ctf/client.py and ctf/instances.py (docker_per_team confirmed at CSCTF 2026; ctfd_docker is the pre-event template). Hosts are .example placeholders; no value here came from a live platform.",
+  "base_url": "https://ctf.example",
+  "routes": [
+    {"method": "GET", "url": "https://ctf.example/api/v1/challenges", "status": 200,
+     "body": {"success": true, "data": [
+       {"id": 1, "type": "standard", "name": "Warm Up", "value": 100, "solves": 12, "solved_by_me": false,
+        "category": "Web", "tags": [{"value": "easy"}], "template": "/plugins/challenges/assets/view.html"},
+       {"id": 2, "type": "dynamic", "name": "Rotor", "value": 482, "solves": 3, "solved_by_me": true,
+        "category": "Crypto", "tags": []},
+       {"id": 3, "type": "standard", "name": "Pipes", "value": 250, "solves": 0, "solved_by_me": false,
+        "category": "Pwn", "tags": ["remote"]}
+     ]}},
+    {"method": "GET", "url": "https://ctf.example/api/v1/challenges/1", "status": 200,
+     "body": {"success": true, "data": {
+       "id": 1, "name": "Warm Up", "value": 100, "description": "Find the flag in the archive.",
+       "connection_info": "nc warmup.ctf.example 31337", "category": "Web", "state": "visible",
+       "max_attempts": 0, "type": "standard", "solves": 12, "solved_by_me": false, "attempts": 0,
+       "files": ["/files/0a1b2c/chall.zip?token=eyJmaWxlIjoxfQ", "https://cdn.other.example/bucket/notes%20v2.txt?sig=abc"],
+       "tags": [{"value": "easy"}], "hints": [{"id": 3, "cost": 50, "content": null}]}}},
+    {"method": "GET", "url": "https://ctf.example/files/0a1b2c/chall.zip", "status": 200,
+     "headers": {"Content-Type": "application/zip"}, "bytes_hex": "504b030468656c6c6f"},
+    {"method": "GET", "url": "https://cdn.other.example/bucket/notes v2.txt", "status": 200,
+     "text": "notes from the object store\n"},
+    {"method": "GET", "url": "https://cdn.other.example/bucket/notes%20v2.txt", "status": 200,
+     "text": "notes from the object store\n"},
+
+    {"method": "POST", "url": "https://ctf.example/api/v1/challenges/attempt",
+     "json": {"challenge_id": 1, "submission": "CSCTF{right}"}, "status": 200,
+     "body": {"success": true, "data": {"status": "correct", "message": "Correct"}}},
+    {"method": "POST", "url": "https://ctf.example/api/v1/challenges/attempt",
+     "json": {"challenge_id": 1, "submission": "CSCTF{wrong}"}, "status": 200,
+     "body": {"success": true, "data": {"status": "incorrect", "message": "Incorrect"}}},
+    {"method": "POST", "url": "https://ctf.example/api/v1/challenges/attempt",
+     "json": {"challenge_id": 2, "submission": "CSCTF{again}"}, "status": 200,
+     "body": {"success": true, "data": {"status": "already_solved", "message": "You already solved this"}}},
+    {"method": "POST", "url": "https://ctf.example/api/v1/challenges/attempt",
+     "json": {"challenge_id": 3, "submission": "CSCTF{fast}"}, "status": 429, "headers": {"Retry-After": "30"},
+     "body": {"success": true, "data": {"status": "ratelimited", "message": "You're submitting flags too fast. Slow down."}}},
+    {"method": "POST", "url": "https://ctf.example/api/v1/challenges/attempt",
+     "json": {"challenge_id": 3, "submission": "CSCTF{proxy}"}, "status": 429,
+     "text": "<html>429 Too Many Requests</html>"},
+    {"method": "POST", "url": "https://ctf.example/api/v1/challenges/attempt",
+     "json": {"challenge_id": 4, "submission": "CSCTF{paused}"}, "status": 403,
+     "body": {"success": true, "data": {"status": "paused", "message": "CSCTF 2026 is paused"}}},
+    {"method": "POST", "url": "https://ctf.example/api/v1/challenges/attempt",
+     "json": {"challenge_id": 5, "submission": "CSCTF{late}"}, "status": 403,
+     "body": {"success": true, "data": {"status": "incorrect", "message": "You have 0 tries remaining"}}},
+    {"method": "POST", "url": "https://ctf.example/api/v1/challenges/attempt",
+     "json": {"challenge_id": 6, "submission": "CSCTF{anon}"}, "status": 403,
+     "body": {"success": true, "data": {"status": "authentication_required", "message": "You must be logged in to submit"}}},
+    {"method": "POST", "url": "https://ctf.example/api/v1/challenges/attempt",
+     "json": {"challenge_id": 7, "submission": "CSCTF{odd}"}, "status": 200,
+     "body": {"success": true, "data": {"status": "partial", "message": "?"}}},
+    {"method": "POST", "url": "https://ctf.example/api/v1/challenges/attempt",
+     "json": {"challenge_id": 8, "submission": "CSCTF{gone}"}, "status": 404,
+     "body": {"success": false, "message": "Not found"}},
+
+    {"method": "GET", "url": "https://ctf.example/api/v1/teams/me/solves", "status": 200,
+     "body": {"success": true, "data": [
+       {"id": 41, "challenge_id": 2, "challenge": {"id": 2, "name": "Rotor", "category": "Crypto", "value": 482},
+        "user": {"id": 7, "name": "alice"}, "team": {"id": 3, "name": "our-team"},
+        "date": "2026-11-06T13:05:00.000000Z", "type": "correct"}
+     ]}},
+    {"method": "GET", "url": "https://ctf.example/api/v1/users/me/solves", "status": 200,
+     "body": {"success": true, "data": [
+       {"id": 9, "challenge_id": 1, "challenge": {"id": 1, "name": "Warm Up"}, "user": {"id": 7, "name": "solo"},
+        "date": "2026-11-06T14:00:00+00:00", "type": "correct"}
+     ]}},
+    {"method": "GET", "url": "https://ctf.example/api/v1/scoreboard", "status": 200,
+     "body": {"success": true, "data": [
+       {"pos": 1, "account_id": 5, "account_url": "/teams/5", "account_type": "team", "oauth_id": null,
+        "name": "top-team", "score": 1200, "members": []},
+       {"pos": 2, "account_id": 3, "account_url": "/teams/3", "account_type": "team", "oauth_id": null,
+        "name": "our-team", "score": 982, "members": []}
+     ]}},
+    {"method": "GET", "url": "https://ctf.example/", "status": 200,
+     "text": "<script>var init = {'urlRoot': \"\", 'csrfNonce': \"9f3c2a\", 'userMode': \"teams\"}</script>"},
+
+    {"method": "POST", "url": "https://ctf.example/containers/api/request", "json": {"chal_id": 1}, "status": 200,
+     "body": {"success": true, "data": {"hostname": "inst.ctf.example", "port": 31337, "remaining_time": 3600}}},
+    {"method": "POST", "url": "https://ctf.example/containers/api/request", "json": {"chal_id": 2}, "status": 400,
+     "body": {"error": "Max containers (3) reached"}},
+    {"method": "POST", "url": "https://ctf.example/containers/api/view_info", "json": {"chal_id": 1}, "status": 200,
+     "body": {"success": true, "data": {"hostname": "inst.ctf.example", "port": 31337, "remaining_time": 1800}}},
+    {"method": "POST", "url": "https://ctf.example/containers/api/stop", "json": {"chal_id": 1}, "status": 200,
+     "body": {"success": true, "message": "Container stopped"}},
+    {"method": "POST", "url": "https://ctf.example/containers/api/renew", "json": {"chal_id": 1}, "status": 200,
+     "body": {"success": true, "data": {"hostname": "inst.ctf.example", "port": 31337, "remaining_time": 3600}}},
+
+    {"method": "POST", "url": "https://ctf.example/api/v1/plugins/ctfd-docker/container", "params": {"challenge_id": "3"},
+     "status": 200, "body": {"success": true, "data": {"host": "10.0.0.9", "port": 4444}}},
+    {"method": "GET", "url": "https://ctf.example/api/v1/plugins/ctfd-docker/container", "params": {"challenge_id": "3"},
+     "status": 200, "body": {"success": true, "data": {"host": "10.0.0.9", "port": 4444, "expires": 1800}}},
+    {"method": "DELETE", "url": "https://ctf.example/api/v1/plugins/ctfd-docker/container", "params": {"challenge_id": "3"},
+     "status": 200, "body": {"success": true}}
+  ]
+}

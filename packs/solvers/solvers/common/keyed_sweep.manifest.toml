@@ -1,0 +1,28 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-062.
+# Contract engine: solve(challenge_dir, profile, **opts) -> SolverResult.
+# The keyed classical / book-cipher sweep: harvests candidate keys from the handout's own tables and
+# tokens, decrypts every cipher text with each, and ranks the readings by word coverage.
+id = "common.keyed_sweep"
+lane = "common"
+entry = "solvers.common.keyed_sweep:solve"
+capabilities = ["executes", "cipher", "vigenere", "beaufort", "autokey", "gronsfeld", "book-cipher",
+                "running-key", "key-harvest", "classical"]
+inputs = ["ext:.txt"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a brief that names a keyed cipher or the things its key hides in (above the classical library's routes)
+category = ["crypto", "osint", "misc"]
+keywords = ["vigenere", "vigenère", "beaufort", "autokey", "gronsfeld", "book cipher", "running key",
+            "keyword cipher", "callsign", "codebook", "key of the day", "intercept"]
+priority = 63
+
+# Intake (B-002): on any text handout, whatever the category (the two rows this closes were OSINT). No
+# cipher text or index run in the handout is `none` in well under a second; nothing is spawned and
+# nothing leaves the host.
+[intake]
+select = "files"
+run = "challenge"
+match = ["ext:.txt", "ext:.text", "ext:.md", "ext:.csv", "ext:.tsv", "ext:.enc", "ext:.cipher", "ext:.ct", "ext:.msg"]
+timeout = 30

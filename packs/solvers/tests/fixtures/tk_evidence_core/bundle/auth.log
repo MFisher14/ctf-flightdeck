@@ -1,0 +1,10 @@
+2026-10-07T23:58:01Z bastion sshd[2201]: Accepted publickey for deploy from 198.51.100.20 port 50022 ssh2
+2026-10-08T02:14:03Z bastion sshd[2310]: Failed password for svc_backup from 203.0.113.7 port 40111 ssh2
+2026-10-08T02:14:08Z bastion sshd[2311]: Failed password for svc_backup from 203.0.113.7 port 40112 ssh2
+2026-10-08T02:14:13Z bastion sshd[2312]: Failed password for svc_backup from 203.0.113.7 port 40113 ssh2
+2026-10-08T02:14:18Z bastion sshd[2313]: Failed password for svc_backup from 203.0.113.7 port 40114 ssh2
+2026-10-08T02:14:23Z bastion sshd[2314]: Failed password for svc_backup from 203.0.113.7 port 40115 ssh2
+2026-10-08T02:14:31Z bastion sshd[2316]: Accepted password for svc_backup from 203.0.113.7 port 40117 ssh2
+2026-10-08T02:20:00Z bastion sshd[2330]: Failed password for invalid user admin from 192.0.2.44 port 5122 ssh2
+2026-10-08T02:20:04Z bastion sshd[2331]: Failed password for invalid user admin from 192.0.2.44 port 5123 ssh2
+2026-10-08T02:31:10Z bastion sshd[2402]: Disconnected from 198.51.100.20 port 50022

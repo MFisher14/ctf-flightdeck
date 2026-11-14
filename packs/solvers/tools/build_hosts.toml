@@ -1,0 +1,34 @@
+# Hosts a Codex BUILD lane may reach through Codex's managed network proxy (B-192, docs/build-sandbox.md).
+# This is the repo build profile's allowlist, not a solver's: solvers run in the fence (ctf/fence.py).
+#
+# One [[host]] table per host: name = an exact host name (no wildcard, no IP address, no port),
+# why = what build work needs it. `python -m ctf build-sandbox hosts` checks the list and refuses a
+# host that an event profile names (platform base_url and hosts, live_service_scope), Discord, a
+# model API, or a host that accepts a push or an upload (github.com, api.github.com,
+# upload.pypi.org, ...: ctf.build_sandbox.PUSH_HOSTS). Commands Codex runs reach a host only through
+# the proxy; a direct connection is denied.
+#
+# github.com is deliberately absent: it takes `git push` over HTTPS, so with it on the list the
+# sandbox itself would not keep pushes outside. Inside a lane, fetch a vendored tool's source as an
+# archive from codeload.github.com (https://codeload.github.com/OWNER/REPO/tar.gz/REV); a `git clone`
+# from github.com or a release download (which starts at github.com) runs outside the sandbox.
+
+[[host]]
+name = "pypi.org"
+why = "uv pip install: the package index for the pins in requirements.in"
+
+[[host]]
+name = "files.pythonhosted.org"
+why = "uv pip install: the wheel and sdist downloads pypi.org points to"
+
+[[host]]
+name = "codeload.github.com"
+why = "GitHub source archives (a tag's or a commit's .tar.gz) for vendored tools; read only"
+
+[[host]]
+name = "objects.githubusercontent.com"
+why = "GitHub release asset downloads, from an asset URL resolved outside the lane; read only"
+
+[[host]]
+name = "release-assets.githubusercontent.com"
+why = "GitHub release asset downloads (newer asset host), as above; read only"

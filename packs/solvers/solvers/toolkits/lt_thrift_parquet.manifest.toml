@@ -1,0 +1,25 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-251 (long-tail formats).
+# Regeneration never overwrites this file.
+id = "toolkits.lt_thrift_parquet"
+lane = "toolkits"
+entry = "solvers.toolkits.lt_thrift_parquet:solve"
+capabilities = ["executes", "parquet", "thrift", "schema-formats", "snappy", "gzip", "forensics"]
+inputs = ["magic:PAR1", "ext:.parquet"]
+# the page decompressors are needed only for a column under that codec
+needs_tools = ["py:cramjam", "py:zstandard", "py:brotli"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a Parquet file anywhere in the handout
+files = ["magic:PAR1", "ext:.parquet"]
+priority = 31
+
+[[routes]]
+keywords = ["parquet", "thrift", "tcompactprotocol", "tbinaryprotocol"]
+priority = 61
+
+[intake]  # B-002: read every Parquet file at intake (pure Python, offline)
+select = "files"
+run = "challenge"
+match = ["magic:PAR1"]
+timeout = 120

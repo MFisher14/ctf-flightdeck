@@ -6,8 +6,60 @@ flightdeck calls these **L1**. Each lane runs the ones that fit its challenge be
 model call (a coding-agent lane: before its CLI is started), so a solve can cost no tokens, and
 when they find nothing the lane's model starts with what they reported.
 
-flightdeck ships no solvers. You bring your own, and this page is the contract between them and
-flightdeck.
+You can bring your own, use flightdeck's solver pack, or both in turn. This page is the contract
+between a pack and flightdeck.
+
+## flightdeck's solver pack
+
+The repository holds a solver pack, `packs/solvers/`: the no-model solvers its author played and
+won events with. It is not part of the PyPI package (it is large, and brings some 250 pinned
+Python libraries of its own), so you install it with one command:
+
+```sh
+flightdeck pack install
+```
+
+That fetches the pack as it was released with your flightdeck (a git clone of only that folder,
+into `~/.local/share/ctf-flightdeck/packs/`; a source checkout of flightdeck uses its own
+`packs/solvers/`), shows the pack's setup command and asks before running it (it builds the
+pack's Python environment with `uv`, inside the pack's folder), builds the pack's Docker image
+when your lanes run in Docker, and writes `[l1] pack` and `image` into your config. `--yes`
+answers the questions; `--no-setup` and `--no-image` skip the steps; `--ref main` fetches the
+newest pack instead of your release's.
+
+On every challenge the pack runs its whole intake as one engine, `solvers.intake`: it unpacks
+the handout recursively (archives inside archives, encoded containers), searches every member
+for the flag under layered encodings, runs each of its analysis engines whose routes or file
+types match (some 800, for crypto, forensics, reversing, web, mobile, network captures and
+more), and then its decoders. One flag it can show the source of is `solved`, and is the only
+thing it hands flightdeck as a flag. Several values, or one it cannot confirm, are told to the
+lane's model and to you as text (the result is `unsure`): under auto submit flightdeck sends
+every flag of a result, and a decoy or a guess must not go out that way. Its notes also say
+what the handout holds, which engines ran and which others fit, so the model starts from there.
+
+The lanes' models can use the pack too. `pack install` sets `lane_tools = true` under `[l1]`:
+every lane's brief then says where the pack is and how to call it (`solvers fit` lists the
+engines that fit the challenge, `solvers doc` and `solvers run` explain and run one, `solvers
+playbook` prints the approach notes for a category), so a model reaches for an engine or a
+playbook instead of writing a parser again. With Docker lanes, lanes then run in the pack's
+image with the pack mounted read-only (their network is fenced as before); a coding-agent lane
+(`--agent`) needs its CLI in that image, and a run says so before it starts when it is not.
+`flightdeck pack install --no-lane-tools` leaves it off.
+
+Three things to know:
+
+- It never submits and never talks to a platform or the network; its engines run under its own
+  network guard as well as flightdeck's.
+- Some engines call command-line tools (tshark, binwalk, exiftool, ghidra and others). The
+  Docker image has the common ones; on the host runtime they are yours to install
+  (`packs/solvers/Brewfile` lists them), and an engine whose tool is missing is skipped and named.
+- `flightdeck pack info` says what the configured pack is and whether its image is built;
+  `flightdeck pack image` builds the image later.
+
+`flightdeck pack install SOURCE` installs any other pack the same way: SOURCE is a git address
+or a folder on this machine. A pack is code you choose to run, as you: read what its setup
+command is before you say yes. [A pack that needs setup](#a-pack-that-needs-setup) is the
+format.
 
 ## The words
 
@@ -100,6 +152,8 @@ A route matches a challenge when **every** condition it states holds, and a cond
   `pwn`, `for`, `misc`, `osint`, or any other category in lower case.
 - `keywords`: one of these is in the challenge's name or description (lower-case, as a
   substring).
+- `any = true`: the route matches every challenge. It states no other condition; use it for an
+  engine that looks at whatever it is given (an unpacker, a decoder).
 - `files`: one of these patterns matches a handout file:
   - `ext:.txt`: the file name ends so, in any case (`ext:.tar.gz` works);
   - `magic:PK`: the file starts with this text; `magic:0x1f8b` gives the bytes in hex;
@@ -125,6 +179,9 @@ matched, highest first.
   variable `FLIGHTDECK_L1_RESULT` names.
 - `output = "text"`: the engine prints whatever it likes, and every match of the event's flag
   format in what it printed becomes a candidate flag.
+
+An engine that searches for flags itself reads the event's flag format, a regular expression,
+from the environment variable `FLIGHTDECK_FLAG_FORMAT`.
 
 ## The result: `SolverResult`
 
@@ -240,6 +297,48 @@ off.
 Keep challenges out of your pack. A folder inside the pack that holds a challenge's files (it has
 a `challenge.json` or a `board.json`) is never searched for engines, so that a challenge can never
 add a solver to your pack; `l1 route` and `l1 run` refuse a challenge that is inside the pack.
+
+## A pack that needs setup
+
+A pack whose engines need more than its files says so in a `pack.toml` at its top, and
+`flightdeck pack install` acts on it:
+
+```toml
+name = "my-pack"                     # required: lower-case letters, digits, _ . -
+version = "1.0.0"                    # optional
+description = "What it solves."      # optional, one line
+engines = "flightdeck"               # optional: the only folder searched for *.manifest.toml
+tools = ["tshark", "binwalk"]        # optional: the programs the engines call, by name
+
+[setup]                              # optional
+command = "./setup.sh"               # a file of the pack and its arguments, run in the pack's folder
+
+[image]                              # optional
+tag = "my-pack:1"
+dockerfile = "docker/Dockerfile"     # inside the pack
+context = "."                        # inside the pack; default: the Dockerfile's folder
+
+[lanes]                              # optional: the pack as a toolkit for the lanes' models
+note = "docs/LANE.md"                # a text file inside the pack; {pack} in it is the pack's folder
+```
+
+- `[setup] command` runs on this machine, as you, only when you agree to it.
+- `[image]` is the image the pack's engines run in when lanes run in Docker, instead of the lane
+  image: `[l1] image` in your config names it, and a run refuses to start while it is not built.
+  It needs `bash` and whatever the engines run. flightdeck still mounts the pack read-only and
+  gives each engine a container of its own with no network.
+- `[lanes] note` is what a lane's brief says about the pack when your config has
+  `lane_tools = true` under `[l1]`: your words to the model, at most 3,000 characters, placed
+  after the challenge's own text and outside its fence. Under Docker the lanes run in `[l1]
+  image` and see the pack, read-only, at the path it has on this machine. Keep the note short:
+  it is in every turn's context.
+- `tools` lists the programs your engines call, as you would type them (no paths). It changes
+  nothing in a run. `flightdeck doctor` names the ones missing where the engines run: on this
+  machine's PATH when lanes run on the host, inside `[l1] image` (else the lane image) when they
+  run in Docker, asked of one throwaway container with no network. `flightdeck pack info` lists
+  them too. Both only warn: an engine whose program is missing says so and does not run, and the
+  rest work. When the image is not on this machine, doctor says that and guesses nothing.
+- An unknown key is an error.
 
 ## From a gap to a new engine
 

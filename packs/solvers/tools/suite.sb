@@ -1,0 +1,8 @@
+(version 1)
+; Network sandbox for the full test suite (tools/suite.py; the recipe in docs/migration/BASELINE.md).
+; Everything is allowed except outbound network: only loopback (the fake services tests start on
+; 127.0.0.1) and local unix sockets are reachable, so no test can contact an event host.
+(allow default)
+(deny network-outbound)
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-outbound (remote unix-socket))

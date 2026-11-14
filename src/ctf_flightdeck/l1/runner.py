@@ -25,7 +25,8 @@ writes nothing to disk; so an engine that prints without end fills neither memor
 The result channel. The engine's environment has FLIGHTDECK_L1_RESULT, the path of a file
 in the workspace's .flightdeck/ whose name has a random part. A python engine's returned
 result reaches it through the boot script; a cli engine may write its SolverResult JSON
-there itself. Stdout is never read as a python engine's result: an engine prints what it
+there itself. FLIGHTDECK_FLAG_FORMAT is the event's flag format, a regular expression, for an
+engine that searches for flags itself. Stdout is never read as a python engine's result: an engine prints what it
 read from the challenge, and a line the challenge's author wrote could pose as a result.
 
 Then the run becomes a SolverResult:
@@ -57,8 +58,9 @@ not on this machine; the pack and the boot script are mounted there at the paths
 here, so the command names the same files; and the capture still runs here, with
 flightdeck's own python, starting `docker exec`. A program the image lacks blocks the engine,
 naming it, after the container was started (its image is what is checked), and nothing ran.
-The engine gets PATH (the image's, absolute directories only), TERM=dumb and
-FLIGHTDECK_L1_RESULT (in /work), and nothing else of this machine's environment.
+The engine gets PATH (the image's, absolute directories only), TERM=dumb,
+FLIGHTDECK_L1_RESULT (in /work) and FLIGHTDECK_FLAG_FORMAT, and nothing else of this machine's
+environment.
 
 A run marks the flags it found in an engine's output (output "text") as scraped
 (EngineRun.scraped): the engine printed them, it never claimed them, and what it printed may
@@ -97,6 +99,7 @@ CAPTURE = Path(__file__).resolve().with_name("_capture.py")
 PYTHON = "python3"
 SHELL = "bash"  # starts the engine (as the workspace's own commands do): a #!-less script runs as a shell script
 RESULT_ENV = "FLIGHTDECK_L1_RESULT"  # the engine's result file, as the engine sees it
+FORMAT_ENV = "FLIGHTDECK_FLAG_FORMAT"  # the event's flag format (a regular expression), for an engine that searches itself
 RESULT_MAX = 1024 * 1024  # a result file bigger than this is not read
 MB = 1024 * 1024
 HEAD_BYTES = 6 * MB  # stdout kept from its start
@@ -422,7 +425,7 @@ async def _run_in(
     begun = time.monotonic()
     try:
         if isinstance(workspace, EngineContainer):
-            host_argv = await _in_container(workspace, manifest, name, capture)
+            host_argv = await _in_container(workspace, manifest, name, capture, pattern.pattern)
             if isinstance(host_argv, SolverResult):  # the image lacks a program: nothing ran
                 return host_argv, 0.0, False
             begun = time.monotonic()
@@ -433,6 +436,7 @@ async def _run_in(
             line = " ".join([
                 f"PATH={shlex.quote(path)}",
                 f"{RESULT_ENV}={shlex.quote(f'{seen_as}/{PRIVATE}/{name}')}",
+                f"{FORMAT_ENV}={shlex.quote(pattern.pattern)}",
                 "exec",
                 shlex.join(capture),
                 '${LC_CTYPE+"--lc-ctype=$LC_CTYPE"}',  # the engine gets the LC_CTYPE this shell has, or none (_capture.py)
@@ -449,7 +453,7 @@ async def _run_in(
     return result, seconds, scraped
 
 
-async def _in_container(box: EngineContainer, manifest: Manifest, name: str, capture: list[str]) -> list[str] | SolverResult:
+async def _in_container(box: EngineContainer, manifest: Manifest, name: str, capture: list[str], flag_format: str) -> list[str] | SolverResult:
     """The argv, run on this machine, that runs the engine in its container: flightdeck's
     capture starting `docker exec` with the programs the image has. The blocked result,
     naming them, when the image lacks some."""
@@ -463,7 +467,7 @@ async def _in_container(box: EngineContainer, manifest: Manifest, name: str, cap
             f"run in Docker){hint}; nothing ran"
         ))
     argv = command(manifest, find=lambda program: str(found[program]))
-    env = {"PATH": path, "TERM": "dumb", RESULT_ENV: f"{box.workdir}/{PRIVATE}/{name}"}
+    env = {"PATH": path, "TERM": "dumb", RESULT_ENV: f"{box.workdir}/{PRIVATE}/{name}", FORMAT_ENV: flag_format}
     return [*capture, "--", *box.exec_argv([str(found[SHELL]), "-c", 'exec "$@"', "flightdeck-l1", *argv], env)]
 
 

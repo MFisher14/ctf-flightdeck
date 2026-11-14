@@ -6,7 +6,10 @@ challenge, and the rest of that directory is its handout. An optional board.json
 the event and its flag format; an optional answers file holds the sha256 of each flag. A
 challenge.json may say how many tries the platform allows at the flag ("max_attempts", as a
 CTFd pull writes it): a flag for such a challenge never goes to the platform without the
-player, under the auto submit policy too (core/deck.py).
+player, under the auto submit policy too (core/deck.py). It may say that the flag rotates
+("rotates": every that many seconds, on clock boundaries; 0 or absent: it does not): the
+lane is told to fetch it right before submitting, and the deck sends none in a later window
+than the one it was found in (core/deck.py).
 
 Everything in a board folder is untrusted data, challenge.json included. It is checked
 field by field and an unknown key is an error, so a typo fails loudly. No path in it may
@@ -47,7 +50,10 @@ ID = re.compile(r"[a-z0-9][a-z0-9_.-]*")
 ID_RULE = "lower-case letters, digits and _ . - (not first), at most 64 characters"
 SHA256 = re.compile(r"[0-9a-f]{64}")
 
-CHALLENGE_KEYS = ("name", "category", "points", "solves", "description", "files", "urls", "id", "max_attempts")
+CHALLENGE_KEYS = ("name", "category", "points", "solves", "description", "files", "urls", "id", "max_attempts", "instance", "type", "rotates")
+ON_DEMAND = "on-demand"  # "instance": the platform starts the challenge's instance when asked (platform/instances.py)
+TYPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")  # "type": the platform's own name for the challenge's kind
+MAX_ROTATES = 86_400  # seconds: a flag that rotates less often than daily is not one to hurry for
 BOARD_KEYS = ("event", "flag_format")
 
 CATEGORY_CODES = {
@@ -117,9 +123,10 @@ def category_code(category: str) -> str:
     return CATEGORY_CODES.get(category_key(category), category.strip().lower())
 
 
-def load_board(folder: Path, *, answers: Path | None = None) -> Board:
+def load_board(folder: Path, *, answers: Path | None = None, empty_ok: bool = False) -> Board:
     """Read a board folder. `answers` names an answers file; without it, the folder's own
-    answers.sha256.json is used if there is one."""
+    answers.sha256.json is used if there is one. `empty_ok`: a folder with no challenge in
+    it yet is a board of none (an event the player adds challenges to as they go)."""
     try:
         folder = Path(folder).expanduser()
     except RuntimeError:  # ~user for a user that does not exist
@@ -158,13 +165,37 @@ def load_board(folder: Path, *, answers: Path | None = None) -> Board:
             raise BoardError(f"{_show(spec)}: id {cid} is also the id of {_show(seen[cid])}")
         seen[cid] = spec
         challenges.append(item)
-    if not challenges:
+    if not challenges and not empty_ok:
         hint = ""
         if _present(root / CHALLENGE_FILE):
             hint = f"; it has a {CHALLENGE_FILE} of its own, so point at the folder that holds it"
         raise BoardError(f"{_show(root)}: no challenge directories (subdirectories with a {CHALLENGE_FILE}){hint}")
     used = _answers(root, answers, challenges)
     return Board(event, flag_format, tuple(challenges), used, tuple(skipped))
+
+
+def load_challenge(directory: Path) -> BoardChallenge:
+    """One challenge folder, read as load_board reads each (BoardError when it cannot be)."""
+    try:
+        return _challenge(directory)
+    except OSError as exc:
+        raise BoardError(f"{_show(directory / CHALLENGE_FILE)}: cannot read it ({exc.strerror})") from None
+
+
+def challenge_folders(root: Path) -> list[Path]:
+    """The folders under a board that hold a challenge.json, by name; links are left out."""
+    try:
+        entries = sorted(root.iterdir(), key=lambda entry: entry.name)
+    except OSError:
+        return []
+    found = []
+    for entry in entries:
+        try:
+            if not entry.is_symlink() and entry.is_dir() and _present(entry / CHALLENGE_FILE):
+                found.append(entry)
+        except OSError:
+            continue
+    return found
 
 
 class AnswerVerifier:
@@ -251,6 +282,11 @@ def _challenge(directory: Path) -> BoardChallenge:
         path, data, "max_attempts", _count, "a whole number, 0 or more: the tries the platform allows at the flag (0: any number)",
         default=0,
     )
+    rotates = _field(
+        path, data, "rotates", _rotation,
+        f"a whole number of seconds, 0 to {MAX_ROTATES}: how often the flag rotates, on clock boundaries (0: it does not)",
+        default=0,
+    )
     if "id" in data:
         cid = _field(path, data, "id", _valid_id, f"a challenge id ({ID_RULE})")
     else:
@@ -262,6 +298,10 @@ def _challenge(directory: Path) -> BoardChallenge:
             )
     files = _files(directory, path, data.get("files", _MISSING))
     urls = _urls(path, data.get("urls", _MISSING))
+    instance = _field(path, data, "instance", lambda v: v == ON_DEMAND, f'"{ON_DEMAND}" (the platform starts its instance when asked), or left out',
+                      default="")
+    kind = _field(path, data, "type", lambda v: isinstance(v, str) and TYPE.fullmatch(v) is not None,
+                  "the platform's name for the challenge's type: letters, digits, _ . and -, at most 64", default="")
     challenge = Challenge(
         id=cid,
         name=name,
@@ -272,6 +312,9 @@ def _challenge(directory: Path) -> BoardChallenge:
         files=files,
         live=bool(urls),
         max_attempts=max_attempts,
+        on_demand=instance == ON_DEMAND,
+        platform_type=kind,
+        rotates=rotates,
     )
     return BoardChallenge(challenge=challenge, handout=directory, urls=urls)
 
@@ -539,6 +582,10 @@ def _text(value: object) -> bool:
 
 def _count(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _rotation(value: object) -> bool:
+    return _count(value) and value <= MAX_ROTATES
 
 
 def _valid_id(value: object) -> bool:

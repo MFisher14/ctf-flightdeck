@@ -1,0 +1,31 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-027.
+# Contract engine: solve(challenge_dir, profile, **opts) -> SolverResult.
+id = "common.ecdsa_recovery"
+lane = "common"
+entry = "solvers.common.ecdsa_recovery:solve"
+capabilities = ["executes", "ecc", "ecdsa", "crypto"]
+inputs = ["json", "der"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # keyword route: ranks high when the brief names the attack
+category = ["crypto"]
+# not a bare "nonce reuse": AEAD (GCM, ChaCha20-Poly1305) nonce reuse is crypto_depth's, not this engine's
+keywords = ["ecdsa", "signature nonce reuse", "signing nonce reuse", "dsa nonce reuse", "reused nonce",
+            "repeated r", "repeated nonce", "related nonce",
+            "signing scalar", "signature export", "signed records", "der signature", "secp256k1",
+            "nonce fault", "arithmetic progression", "stride nonce"]
+priority = 64
+
+[[routes]]  # file route: distinctive signature-export artifacts
+files = ["magic:signature_rs_hex", "name:*signing*export*.json", "name:*signature*.json", "ext:.der"]
+priority = 33
+
+# Intake (B-002): on any JSON or DER file, run the reader+recovery with no model. Self-verified by d*G,
+# so a wrong guess simply recovers nothing. Offline: no network, no spawned processes.
+[intake]
+run = "challenge"
+select = "files"
+match = ["ext:.json", "ext:.der", "magic:signature_rs_hex"]
+timeout = 60

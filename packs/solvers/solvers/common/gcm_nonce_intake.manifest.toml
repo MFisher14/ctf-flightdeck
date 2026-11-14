@@ -1,0 +1,32 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-060.
+# Contract engine: solve(challenge_dir, profile, **opts) -> SolverResult.
+# The GF(2^128) maths it drives ships in solvers/common/crypto_depth.py (gcm_recover_subkey); this
+# engine is the no-model intake adapter that reaches it (normalises *_hex/*_b64 fields, accepts only a
+# unique H, trials S/H as AES keys over the leftover blobs behind the event flag format).
+id = "common.gcm_nonce_intake"
+lane = "common"
+entry = "solvers.common.gcm_nonce_intake:solve"
+capabilities = ["executes", "crypto", "aes", "gcm"]
+inputs = ["json"]
+needs_tools = ["py:Crypto"]   # pycryptodome opens the seal; intake skips the engine without it
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # keyword route: a crypto brief naming the AES-GCM reused-nonce / forbidden-attack seal
+category = ["crypto"]
+keywords = ["forbidden attack", "gcm nonce-reuse recovery", "reused gcm nonce",
+            "sealed master order", "tag mask key", "e_k(j0)"]
+priority = 58
+
+[[routes]]  # file route: a JSON export of GCM dispatches (ciphertext/tag records); ranks below the solver band
+files = ["name:*intercept*.json", "name:*dispatch*.json", "name:*gcm*.json"]
+priority = 32
+
+# Intake (B-002): on any JSON handout, after the B-013 sweep, run the recovery with no model. The subkey
+# is self-verified (every tag must reproduce) and accepted only when unique, so a JSON with no nonce-reuse
+# material simply recovers nothing. Offline: no network, no oracle, no spawned process.
+[intake]
+run = "challenge"
+select = "files"
+match = ["ext:.json"]
+timeout = 60

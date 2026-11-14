@@ -1,0 +1,1857 @@
+{
+  "binary.format/elf": {
+    "accepted": "elf",
+    "rejected": [
+      "ELF",
+      "ELF64"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/d02-probes.jsonl 09:18:33-09:22:25: d02_analysis_format ELF and ELF64 incorrect, elf accepted",
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/d04-probes.jsonl 09:18:37: analysis_format ELF64 incorrect; 09:21:51: elf accepted",
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/notes.md 'Judge-confirmed answer conventions'; in the keys of the Day 4 base (CORRECT 09:44:03), time trial (CORRECT 09:44:09) and mastery (CORRECT 09:44:11), 2026-10-04"
+    ]
+  },
+  "binary.format/pe": {
+    "accepted": "pe",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/mastery (attempt 03123118-8c41-4feb-9108-a06cb196f97f, CORRECT 09:44:11, 2026-10-04): delivery 2 holds PE builds d02--variant-000.exe and d04--variant-002.exe, and set2.d02_analysis_format = pe and set2.d04_analysis_format = pe were in the accepted batch",
+      "no single-id probe on file; challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/notes.md 'Unverified' was written before that mastery result"
+    ]
+  },
+  "binary.format/pe+cli": {
+    "accepted": "pe_cli",
+    "rejected": [
+      "PE32",
+      "PE",
+      "pe",
+      "PE32 executable",
+      "pei-i386",
+      "HCFG",
+      "pe32",
+      ".NET assembly",
+      "PE32 .NET assembly",
+      "dotnet",
+      "dll",
+      "exe",
+      "pe-dotnet",
+      "dotnet-pe",
+      "managed",
+      "pe-cli",
+      "cli",
+      "cil",
+      "net",
+      ".net",
+      "clr",
+      "pe32+",
+      "none",
+      "elf",
+      "pebin",
+      "peexe",
+      "pedll",
+      "coff-i386",
+      "COFF-i386",
+      "pe\u0000\u0000",
+      "PE\u0000\u0000",
+      "mz",
+      "MZ",
+      "msil",
+      "il",
+      "assembly",
+      "mono",
+      "pe/coff",
+      "pecoff",
+      "coff",
+      "win32",
+      "windows",
+      "portable",
+      "pe-il",
+      "pe-msil",
+      "pe-net",
+      "pe_dotnet",
+      "pe32-dotnet",
+      "pe32-cli",
+      "managed-pe",
+      "pe-managed",
+      "dotnet-assembly",
+      "dotnet_assembly",
+      "netcore",
+      "net8.0",
+      "ecma-335",
+      "ecma335",
+      ".NET",
+      "CLI",
+      "CIL",
+      "MSIL",
+      "PE/.NET",
+      "PE32/.NET",
+      "PE32 (.NET)",
+      ".NET PE",
+      "PE .NET",
+      "PE32 CLI",
+      "PE/CLI",
+      "PE/COFF",
+      "COFF",
+      "Mono/.Net assembly",
+      "managed assembly",
+      "PE32 managed assembly",
+      ".NET DLL",
+      "DLL",
+      "PE32 DLL",
+      "Portable Executable",
+      "portable executable",
+      "PE32 executable (console) Intel 80386 Mono/.Net assembly, for MS Windows",
+      "BSJB",
+      "#~",
+      ".NETCoreApp,Version=v8.0",
+      "Microsoft.NETCore.App",
+      "0x10b",
+      "0x010b",
+      "pe-i386",
+      "pe32-i386",
+      "i386-pe",
+      "dosexec",
+      "msdos",
+      "pe executable",
+      "PE executable",
+      "pe32 executable",
+      "Win32 EXE",
+      "Win32 DLL",
+      "windows-pe",
+      "winpe",
+      ".dll",
+      ".exe",
+      ".NET Assembly",
+      ".NET binary",
+      "dotnet binary",
+      "managed binary",
+      "Managed",
+      "DotNet",
+      ".Net",
+      "NET",
+      "DOTNET",
+      ".NET 8.0",
+      ".NET 8",
+      "net8",
+      "dotnet8",
+      ".NET Core",
+      "dotnetcore",
+      "netcoreapp",
+      "netcoreapp8.0",
+      "ILOnly",
+      "ilonly",
+      "il-only",
+      "AnyCPU",
+      "anycpu",
+      "console",
+      "Console",
+      "Ecma335",
+      "csharp",
+      "C#",
+      "cs",
+      "cor20",
+      "COR20",
+      "pe+cli",
+      "pei",
+      "PE32+",
+      "portable-executable",
+      "library",
+      "pe-dll",
+      "pe32-dll",
+      "PE32 executable (DLL)",
+      "hcfg",
+      "il_only",
+      "ILONLY",
+      "bsjb",
+      "ECMA-335",
+      ".NETCoreApp",
+      "pe-exe",
+      "pe32-exe",
+      "pe.net",
+      "dotnet-dll",
+      "dotnet-exe",
+      "pe-clr",
+      "pe32-clr",
+      "clr-pe",
+      "pe-console",
+      "dotnet-pe32",
+      "pe32-net",
+      "cli-assembly",
+      "managed-assembly",
+      "net-assembly",
+      ".net-assembly",
+      "netmodule",
+      "pe32 (.net)",
+      "ECMA335",
+      "coreclr",
+      "classlib",
+      "winexe",
+      "pe/dotnet",
+      "pe+dotnet",
+      "dotnet_pe",
+      "pe/cli",
+      "pe/clr",
+      "pe/il",
+      "framework-dependent",
+      "pe32/i386",
+      "PE32/I386",
+      "portable_executable",
+      "managed_pe",
+      "pe_managed",
+      "managed_assembly",
+      "managed_dll",
+      "managed_module",
+      "managed_cli",
+      "managed_il",
+      "managed_pe32",
+      "pe32_managed"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/main-probes.jsonl 09:44:03: d03_analysis_format = pe_cli answered CORRECT (PE32 image with a CLI header, the .NET sample)",
+      "183 distinct spellings answered incorrect, one id per request: challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/d03-probes.jsonl (130 rows, 09:16:50-09:32:42) and main-probes.jsonl (87 rows, 09:28:39-09:44:02); the list equals prototypes/binan/rejected_d03_format.txt",
+      "in the keys of the Day 4 time trial and both mastery sets; challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/notes-d03.md says the Day 3 base accepted the same label"
+    ]
+  },
+  "binary.machine/x86-64": {
+    "accepted": "x86-64",
+    "rejected": [
+      "amd64"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/d01-probes.jsonl 09:17:27: machine = x86-64 accepted (d01, ELF, EM_X86_64)",
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/d04-probes.jsonl 09:18:37: analysis_architecture = x86-64 accepted (d04, Go ELF); the Day 4 mastery accepted it for the PE build d04--variant-002.exe as well",
+      "solvers/binary/d04_notes.md: architecture amd64 (GOARCH) rejected. Recorded in the notes only: no probe row on file"
+    ]
+  },
+  "binary.machine/i386": {
+    "accepted": "i386",
+    "rejected": [
+      "I386",
+      "x86"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/d03-probes.jsonl 09:16:51-09:18:30: analysis_machine I386 and x86 incorrect, i386 accepted (d03, PE machine 0x14c)",
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/notes.md 'Judge-confirmed answer conventions'"
+    ]
+  },
+  "binary.elf_class/64": {
+    "accepted": "ELF64",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/d01-probes.jsonl 09:17:27: elf_class = ELF64 accepted",
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/notes-d01.md 'Answer conventions': ELF + class bits"
+    ]
+  },
+  "binary.elf_type/exec": {
+    "accepted": "ET_EXEC",
+    "rejected": [
+      "EXEC"
+    ],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/d01-probes.jsonl 09:17:27: elf_type EXEC incorrect; 09:18:00: ET_EXEC accepted",
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/notes-d01.md 'Answer conventions': the raw e_type name"
+    ]
+  },
+  "binary.endianness/little": {
+    "accepted": "little",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/d01-probes.jsonl 09:17:27: endianness = little accepted",
+      "challenges/day-04/binary-reverse-engineering-day-04-go-runtime-fingerprints/notes-d01.md 'Answer conventions'"
+    ]
+  },
+  "binary.format/jar": {
+    "accepted": "jar",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-06T13:25:18Z accepted jar scope=key attempt=dd166be8-f15d-4229-bbeb-d1b9dece76fc ids=d06_analysis_format left=5.947"
+    ]
+  },
+  "binary.hcfg_version/header": {
+    "accepted": "decimal",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-06T13:25:19Z accepted decimal scope=key attempt=dd166be8-f15d-4229-bbeb-d1b9dece76fc ids=d06_analysis_hcfg_version left=5.393"
+    ]
+  },
+  "binary.compression_methods/zip": {
+    "accepted": "int",
+    "rejected": [
+      "names"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-08T13:04:18Z rejected names scope=key attempt=4bf7e66b-790b-42d7-8146-6939a616ed68 ids=d07_analysis_compression_methods",
+      "2026-10-08T13:04:18Z accepted int scope=key attempt=4bf7e66b-790b-42d7-8146-6939a616ed68 ids=d07_analysis_compression_methods"
+    ]
+  },
+  "binary.elf_class/integer": {
+    "accepted": "bits",
+    "rejected": [
+      "ei_class"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-08T13:04:18Z rejected ei_class scope=key attempt=4bf7e66b-790b-42d7-8146-6939a616ed68 ids=d08_analysis_elf_class",
+      "2026-10-08T13:04:19Z accepted bits scope=key attempt=4bf7e66b-790b-42d7-8146-6939a616ed68 ids=d08_analysis_elf_class"
+    ]
+  },
+  "binary.machine/integer": {
+    "accepted": "e_machine",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-08T13:04:19Z accepted e_machine scope=key attempt=4bf7e66b-790b-42d7-8146-6939a616ed68 ids=d08_analysis_machine"
+    ]
+  },
+  "binary.hcfg_offset/base64": {
+    "accepted": "b64_file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-09T13:01:12Z accepted b64_file_offset scope=key attempt=261c283c-9bca-49f1-a8c7-47e1a8f987f4 ids=d09_analysis_hcfg_offset"
+    ]
+  },
+  "binary.machine/integer_pe": {
+    "accepted": "coff_machine",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-10T13:01:24Z accepted coff_machine scope=key attempt=93428e7c-27e1-4019-bbd8-6c7d51b3410e ids=set2.d10_analysis_machine left=22.185"
+    ]
+  },
+  "binary.has_hcfg_section/elf": {
+    "accepted": "section",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "backlog row 196: Day 10 d10_analysis_has_hcfg_section was answered true by the live fields_d10.py and accepted CORRECT on the base (challenges/day-10/binary-reverse-engineering-day-10-zig-cross-platform-services/key.json), the time trial and all three mastery sets; field_catalog.r_has_section reads the ELF section table (the Zig sample has a .hcfg section) and answers under method name `section`, so promoting it here makes Day 11 (cumulative) bank it plain"
+    ]
+  },
+  "binary.hcfg_offset/base64+d11": {
+    "accepted": "b64_file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-11T13:00:10Z accepted b64_file_offset scope=key attempt=8eb44131-f8d5-4396-89c8-8626ad0d0d8b ids=d11_analysis_hcfg_offset"
+    ]
+  },
+  "binary.hcfg_offset/raw+d12": {
+    "accepted": "file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-12T13:00:10Z accepted file_offset scope=key attempt=cb4f6dda-7531-4f88-b3a3-a933d0470683 ids=d12_analysis_hcfg_offset"
+    ]
+  },
+  "binary.machine/wasm32": {
+    "accepted": "wasm32",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-16T13:00:15Z accepted wasm32 scope=key attempt=69c1bed3-f849-491c-b5b5-3bfae551d664 ids=d16_analysis_compact_architecture"
+    ]
+  },
+  "binary.format/wasm": {
+    "accepted": "wasm",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-16T13:00:16Z accepted wasm scope=key attempt=69c1bed3-f849-491c-b5b5-3bfae551d664 ids=d16_analysis_compact_format"
+    ]
+  },
+  "binary.hcfg_storage/base64": {
+    "accepted": "base64",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:00:17Z accepted base64 scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d08_analysis_hcfg_storage"
+    ]
+  },
+  "binary.hcfg_storage/raw": {
+    "accepted": null,
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:00:18Z rejected raw scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:00:18Z rejected binary scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage"
+    ]
+  },
+  "binary.mangled_score_symbol/elf": {
+    "accepted": "mangled",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:01:37Z accepted mangled scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d02_analysis_mangled_score_symbol"
+    ]
+  },
+  "binary.typeinfo_symbol/elf": {
+    "accepted": "typeinfo_of_class",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:01:38Z accepted typeinfo_of_class scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d02_analysis_typeinfo_symbol"
+    ]
+  },
+  "binary.has_go_runtime/elf": {
+    "accepted": "lower",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:01:38Z accepted lower scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d04_analysis_has_go_runtime"
+    ]
+  },
+  "binary.has_rust_mangled_symbol/elf": {
+    "accepted": "lower",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:01:39Z accepted lower scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d05_analysis_has_rust_mangled_symbol"
+    ]
+  },
+  "binary.methods/class": {
+    "accepted": "declared_order",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:01:39Z accepted declared_order scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d06_analysis_methods"
+    ]
+  },
+  "binary.access_flags/class": {
+    "accepted": "decimal",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:01:40Z accepted decimal scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d06_analysis_access_flags"
+    ]
+  },
+  "binary.has_coroutine_runtime/jar": {
+    "accepted": "lower",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:01:40Z accepted lower scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d07_analysis_has_coroutine_runtime"
+    ]
+  },
+  "binary.method_count/class": {
+    "accepted": "main_class",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:01:40Z accepted main_class scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d07_analysis_method_count"
+    ]
+  },
+  "binary.hcfg_storage/raw_xor_payload": {
+    "accepted": null,
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:02:45Z rejected xor scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:02:45Z rejected raw_xor scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:02:45Z rejected xor_raw scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:02:45Z rejected plain scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:02:45Z rejected binary_xor scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:02:45Z rejected plaintext scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:02:45Z rejected embedded scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:02:45Z rejected inline scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:02:45Z rejected cleartext scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:02:45Z rejected native scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:02:45Z rejected xor_encoded scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:02:45Z rejected obfuscated scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage"
+    ]
+  },
+  "binary.hcfg_storage/raw_names2": {
+    "accepted": null,
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:03:48Z rejected raw_bytes scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:03:48Z rejected bytes scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:03:48Z rejected raw_binary scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:03:48Z rejected binary_blob scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:03:48Z rejected byte_array scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:03:48Z rejected blob scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:03:48Z rejected literal scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:03:48Z rejected rodata scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:03:48Z rejected data_section scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:03:48Z rejected section scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:03:48Z rejected hex scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:03:48Z rejected base64 scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage"
+    ]
+  },
+  "binary.hcfg_storage/raw_names3": {
+    "accepted": null,
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:04:15Z rejected none scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:15Z rejected identity scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:15Z rejected unencoded scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:15Z rejected direct scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:15Z rejected as_is scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:15Z rejected verbatim scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:15Z rejected bin scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:15Z rejected ascii scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:15Z rejected utf8 scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:15Z rejected text scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:15Z rejected raw_hcfg scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:15Z rejected hcfg scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage"
+    ]
+  },
+  "binary.hcfg_storage/raw_names4": {
+    "accepted": null,
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:04:38Z rejected single_byte_xor scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:38Z rejected xor_single_byte scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:38Z rejected xor_bytes scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:38Z rejected hcfg_xor scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:38Z rejected binary_hcfg scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:38Z rejected raw_container scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:38Z rejected embedded_raw scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:38Z rejected static scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:38Z rejected constant scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:38Z rejected array scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:38Z rejected buffer scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:04:38Z rejected stored_raw scope=d12_analysis_hcfg_storage attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage"
+    ]
+  },
+  "binary.hcfg_storage/section_name@d12": {
+    "accepted": null,
+    "rejected": [
+      "section",
+      "bare"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:05:42Z rejected section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:05:42Z rejected bare scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage"
+    ]
+  },
+  "binary.hcfg_storage/section_name@d14": {
+    "accepted": null,
+    "rejected": [
+      "section",
+      "bare"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:05:42Z rejected section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:05:43Z rejected bare scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage"
+    ]
+  },
+  "binary.hcfg_storage/label@d14": {
+    "accepted": null,
+    "rejected": [
+      "section",
+      "raw",
+      "binary",
+      "xor",
+      "elf_section",
+      "custom_section",
+      "dedicated_section",
+      "named_section",
+      "raw_section",
+      "section_raw",
+      "hcfg_section",
+      "raw-section",
+      "elf_section_raw",
+      "raw_elf_section",
+      "linker_section",
+      "section_attribute",
+      "symbol",
+      "huntress_config",
+      "objc_section",
+      "base64",
+      "none",
+      "plain",
+      "embedded",
+      "inline",
+      "plaintext",
+      "cleartext",
+      "native",
+      "raw_xor",
+      "xor_raw",
+      "binary_xor",
+      "xor_encoded",
+      "obfuscated",
+      "raw_bytes",
+      "bytes",
+      "raw_binary",
+      "blob",
+      "literal",
+      "rodata",
+      "data",
+      "data_section",
+      "hex",
+      "identity",
+      "unencoded",
+      "direct",
+      "as_is",
+      "verbatim",
+      "raw_hcfg",
+      "single_byte_xor",
+      "raw_container",
+      "static",
+      "constant",
+      "array",
+      "buffer",
+      "exported_symbol",
+      "dynamic_symbol",
+      "dynsym",
+      "global_symbol",
+      "global",
+      "exported",
+      "export",
+      "symtab",
+      "raw-bytes",
+      "raw-xor",
+      "single-byte-xor",
+      "section:.hcfg",
+      "raw:.hcfg",
+      "elf:.hcfg",
+      "hcfg_symbol",
+      "config_symbol",
+      "object",
+      "data_object",
+      "global_object",
+      "readonly",
+      "read_only",
+      "ro_section",
+      "custom",
+      "named",
+      "standalone",
+      "separate_section",
+      "descriptor",
+      "persistence_descriptor",
+      "plain_bytes",
+      "byte_literal",
+      "raw_literal",
+      "raw_source",
+      "byte_array",
+      "uint8_array",
+      "c_array",
+      "raw_data",
+      "record",
+      "struct",
+      "global_variable",
+      "initialized_data",
+      "memory",
+      "utf8",
+      "text",
+      "ascii",
+      ".hcfg_section",
+      "hcfg-section",
+      "unsigned_char_array",
+      "char_array",
+      "objc",
+      "objective_c",
+      "objc_constant",
+      "objc_const",
+      "structure",
+      "data_segment",
+      "segment",
+      "hcfg_xor",
+      "xor_bytes",
+      "xor_single_byte",
+      "embedded_raw",
+      "binary_blob",
+      "stored_raw",
+      "used_section",
+      "attribute_section",
+      "gcc_section",
+      "xor8",
+      "byte_xor",
+      "xor_payload",
+      "section_symbol",
+      "objc_class",
+      "nsdata",
+      "RAW",
+      "Raw",
+      "plain_hex",
+      "xor_section",
+      "section_bytes",
+      "custom_elf_section",
+      "hcfg_raw",
+      "framed",
+      "container",
+      "unreferenced",
+      "xored",
+      "xor_hcfg",
+      "raw_symbol",
+      "section_hcfg",
+      "raw_in_section",
+      "section_xor",
+      "hcfg_elf_section",
+      "named_elf_section",
+      "section_blob",
+      "objc_raw",
+      "registered",
+      "xor_0xa1",
+      "xor_cipher",
+      "cipher",
+      "vernam",
+      "decoder_ring",
+      "ring",
+      "caesar",
+      "substitution",
+      "keystream",
+      "stream",
+      "otp",
+      "fixed_xor",
+      "shift"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:09:36Z rejected section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:09:37Z rejected raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:09:37Z rejected binary scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:09:41Z rejected xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:09:41Z rejected elf_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:09:42Z rejected custom_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:09:42Z rejected dedicated_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:09:42Z rejected named_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:12:36Z rejected raw_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:12:37Z rejected section_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:12:37Z rejected hcfg_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:12:37Z rejected raw-section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:12:38Z rejected elf_section_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:12:38Z rejected raw_elf_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:12:39Z rejected linker_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:12:39Z rejected section_attribute scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:12:39Z rejected symbol scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:12:40Z rejected huntress_config scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:12:40Z rejected objc_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:35Z rejected base64 scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:35Z rejected none scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:35Z rejected plain scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:36Z rejected embedded scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:36Z rejected inline scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:36Z rejected plaintext scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:37Z rejected cleartext scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:37Z rejected native scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:37Z rejected raw_xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:37Z rejected xor_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:38Z rejected binary_xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:38Z rejected xor_encoded scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:52Z rejected obfuscated scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:52Z rejected raw_bytes scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:53Z rejected bytes scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:53Z rejected raw_binary scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:54Z rejected blob scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:54Z rejected literal scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:55Z rejected rodata scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:55Z rejected data scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:55Z rejected data_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:55Z rejected hex scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:56Z rejected identity scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:14:56Z rejected unencoded scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:05Z rejected direct scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:06Z rejected as_is scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:06Z rejected verbatim scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:06Z rejected raw_hcfg scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:07Z rejected single_byte_xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:07Z rejected raw_container scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:07Z rejected static scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:08Z rejected constant scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:08Z rejected array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:08Z rejected buffer scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:09Z rejected exported_symbol scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:09Z rejected dynamic_symbol scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:18Z rejected dynsym scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:18Z rejected global_symbol scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:19Z rejected global scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:19Z rejected exported scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:20Z rejected export scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:20Z rejected symtab scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:20Z rejected raw-bytes scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:21Z rejected raw-xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:21Z rejected single-byte-xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:21Z rejected section:.hcfg scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:22Z rejected raw:.hcfg scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:22Z rejected elf:.hcfg scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:27Z rejected hcfg_symbol scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:28Z rejected config_symbol scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:29Z rejected object scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:29Z rejected data_object scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:29Z rejected global_object scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:30Z rejected readonly scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:30Z rejected read_only scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:30Z rejected ro_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:31Z rejected custom scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:31Z rejected named scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:32Z rejected standalone scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:15:32Z rejected separate_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:33Z rejected descriptor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:33Z rejected persistence_descriptor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:34Z rejected plain_bytes scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:34Z rejected byte_literal scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:34Z rejected raw_literal scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:35Z rejected raw_source scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:35Z rejected byte_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:35Z rejected uint8_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:36Z rejected c_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:36Z rejected raw_data scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:36Z rejected record scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:36Z rejected struct scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:48Z rejected global_variable scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:49Z rejected initialized_data scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:49Z rejected memory scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:49Z rejected utf8 scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:49Z rejected text scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:50Z rejected ascii scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:50Z rejected .hcfg_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:50Z rejected hcfg-section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:50Z rejected unsigned_char_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:51Z rejected char_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:51Z rejected objc scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:17:51Z rejected objective_c scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:01Z rejected objc_constant scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:02Z rejected objc_const scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:02Z rejected structure scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:02Z rejected data_segment scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:03Z rejected segment scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:03Z rejected hcfg_xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:03Z rejected xor_bytes scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:04Z rejected xor_single_byte scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:04Z rejected embedded_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:04Z rejected binary_blob scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:05Z rejected stored_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:05Z rejected used_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:11Z rejected attribute_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:12Z rejected gcc_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:12Z rejected xor8 scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:12Z rejected byte_xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:13Z rejected xor_payload scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:14Z rejected section_symbol scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:14Z rejected objc_class scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:14Z rejected nsdata scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:15Z rejected RAW scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:15Z rejected Raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:18:15Z rejected plain_hex scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:21:24Z rejected xor_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:21:24Z rejected section_bytes scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:21:25Z rejected custom_elf_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:21:25Z rejected hcfg_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:21:25Z rejected framed scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:21:26Z rejected container scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:21:26Z rejected unreferenced scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:21:27Z rejected xored scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:24:15Z rejected xor_hcfg scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:24:15Z rejected raw_symbol scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:24:16Z rejected section_hcfg scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:24:16Z rejected raw_in_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:24:17Z rejected section_xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:24:17Z rejected hcfg_elf_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:24:17Z rejected named_elf_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:24:18Z rejected section_blob scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:24:18Z rejected objc_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:24:19Z rejected registered scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T13:24:19Z rejected xor_0xa1 scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:21:49Z rejected xor_cipher scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:21:49Z rejected cipher scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:21:49Z rejected vernam scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:21:49Z rejected decoder_ring scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:21:50Z rejected ring scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:21:51Z rejected caesar scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:21:51Z rejected substitution scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:21:51Z rejected keystream scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:21:52Z rejected stream scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:21:52Z rejected otp scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:21:53Z rejected fixed_xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage",
+      "2026-10-17T14:22:05Z rejected shift scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d14_analysis_hcfg_storage"
+    ]
+  },
+  "binary.hcfg_storage/label@d12": {
+    "accepted": null,
+    "rejected": [
+      "raw_data",
+      "data_raw",
+      "raw_data_section",
+      "data_section_raw",
+      "record",
+      "raw_section",
+      "section_raw",
+      "hcfg_section",
+      "elf_section",
+      "custom_section",
+      "dedicated_section",
+      "named_section",
+      "symbol",
+      "huntress_config",
+      "typed_constant",
+      "typed_const",
+      "const",
+      "global",
+      "global_array",
+      "global_variable",
+      "variable",
+      "initialized_data",
+      "initialized",
+      "data_array",
+      "writable_data",
+      "rwdata",
+      "rw_data",
+      "data_segment",
+      "segment",
+      "pt_load",
+      "memory",
+      "in_memory",
+      "struct",
+      "structure",
+      "packed_record",
+      "pascal_record",
+      "raw-xor",
+      "xor-raw",
+      "single-byte-xor",
+      "raw-bytes",
+      "raw bytes",
+      "raw:.data",
+      "section:.data",
+      "file_offset",
+      "offset",
+      "plain_bytes",
+      "array_of_byte",
+      "byte_literal",
+      "bytes_literal",
+      "raw_literal",
+      "plain_binary",
+      "plain_raw",
+      "raw_source",
+      "xor8",
+      "byte_xor",
+      "xor_byte",
+      "xor_key",
+      "xor_payload",
+      "raw_xor_payload",
+      "byte_table",
+      "const_array",
+      "record_array",
+      "uint8_array",
+      ".fpcdata",
+      ".rodata",
+      "fpc",
+      "framed",
+      "header",
+      "container",
+      "hcfg_v1",
+      "v1",
+      "RAW",
+      "Raw",
+      "xored",
+      "encrypted",
+      "repeating_key_xor",
+      "descriptor",
+      "plain_hex",
+      "raw_struct",
+      "raw_header",
+      "hcfg_raw",
+      "raw_record",
+      "raw_array",
+      "static_array",
+      "ansistring",
+      "array_of_bytes",
+      "tbytes",
+      "rawbytestring",
+      "xor_blob",
+      "raw_blob",
+      "binary_data",
+      "pascal_const",
+      "record_layout",
+      "xor_hcfg",
+      "packed_array",
+      "fpc_record",
+      "memory_record",
+      "raw_memory",
+      "xor_only",
+      "raw_in_data",
+      "data_xor",
+      "xor_0x81",
+      "xor_cipher",
+      "cipher",
+      "vernam",
+      "decoder_ring",
+      "ring",
+      "caesar",
+      "substitution",
+      "keystream",
+      "stream",
+      "otp",
+      "fixed_xor",
+      "shift"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:12:35Z rejected raw_data scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:12:35Z rejected data_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:12:35Z rejected raw_data_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:12:36Z rejected data_section_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:12:36Z rejected record scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:30Z rejected raw_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:31Z rejected section_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:32Z rejected hcfg_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:32Z rejected elf_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:32Z rejected custom_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:33Z rejected dedicated_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:33Z rejected named_section scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:34Z rejected symbol scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:34Z rejected huntress_config scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:34Z rejected typed_constant scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:49Z rejected typed_const scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:49Z rejected const scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:49Z rejected global scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:50Z rejected global_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:50Z rejected global_variable scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:51Z rejected variable scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:51Z rejected initialized_data scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:51Z rejected initialized scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:52Z rejected data_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:14:52Z rejected writable_data scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:01Z rejected rwdata scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:02Z rejected rw_data scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:02Z rejected data_segment scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:02Z rejected segment scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:03Z rejected pt_load scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:03Z rejected memory scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:04Z rejected in_memory scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:04Z rejected struct scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:04Z rejected structure scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:05Z rejected packed_record scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:14Z rejected pascal_record scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:14Z rejected raw-xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:15Z rejected xor-raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:15Z rejected single-byte-xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:16Z rejected raw-bytes scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:16Z rejected raw bytes scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:16Z rejected raw:.data scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:17Z rejected section:.data scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:17Z rejected file_offset scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:15:17Z rejected offset scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:29Z rejected plain_bytes scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:30Z rejected array_of_byte scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:30Z rejected byte_literal scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:30Z rejected bytes_literal scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:30Z rejected raw_literal scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:31Z rejected plain_binary scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:31Z rejected plain_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:32Z rejected raw_source scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:32Z rejected xor8 scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:32Z rejected byte_xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:44Z rejected xor_byte scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:45Z rejected xor_key scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:45Z rejected xor_payload scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:46Z rejected raw_xor_payload scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:46Z rejected byte_table scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:46Z rejected const_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:46Z rejected record_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:47Z rejected uint8_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:47Z rejected .fpcdata scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:47Z rejected .rodata scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:57Z rejected fpc scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:58Z rejected framed scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:58Z rejected header scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:59Z rejected container scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:59Z rejected hcfg_v1 scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:17:59Z rejected v1 scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:18:00Z rejected RAW scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:18:00Z rejected Raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:18:01Z rejected xored scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:18:01Z rejected encrypted scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:18:11Z rejected repeating_key_xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:18:11Z rejected descriptor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:18:11Z rejected plain_hex scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:43Z rejected raw_struct scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:44Z rejected raw_header scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:44Z rejected hcfg_raw scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:44Z rejected raw_record scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:45Z rejected raw_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:45Z rejected static_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:45Z rejected ansistring scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:46Z rejected array_of_bytes scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:46Z rejected tbytes scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:47Z rejected rawbytestring scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:52Z rejected xor_blob scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:53Z rejected raw_blob scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:54Z rejected binary_data scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:22:54Z rejected pascal_const scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:24:11Z rejected record_layout scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:24:11Z rejected xor_hcfg scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:24:11Z rejected packed_array scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:24:12Z rejected fpc_record scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:24:12Z rejected memory_record scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:24:13Z rejected raw_memory scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:24:13Z rejected xor_only scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:24:14Z rejected raw_in_data scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:24:14Z rejected data_xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T13:24:15Z rejected xor_0x81 scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:21:45Z rejected xor_cipher scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:21:46Z rejected cipher scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:21:46Z rejected vernam scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:21:46Z rejected decoder_ring scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:21:47Z rejected ring scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:21:47Z rejected caesar scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:21:47Z rejected substitution scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:21:48Z rejected keystream scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:21:48Z rejected stream scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:21:48Z rejected otp scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:22:04Z rejected fixed_xor scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T14:22:05Z rejected shift scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage"
+    ]
+  },
+  "binary.hcfg_storage/radix@d12": {
+    "accepted": null,
+    "rejected": [
+      "base256",
+      "stored",
+      "Stored"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-17T14:43:11Z rejected base256 scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T15:02:52Z rejected stored scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage",
+      "2026-10-17T15:03:01Z rejected Stored scope=key attempt=3f6476d9-8e59-4a11-b9c8-da2958557270 ids=d12_analysis_hcfg_storage"
+    ]
+  },
+  "binary.mangled_score_symbol/pe": {
+    "accepted": "comdat",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T19:02:50Z accepted comdat scope=key attempt=5bff0b52-60dc-4f4a-b88f-e6b806e9e7c3 ids=set1.d02_analysis_mangled_score_symbol"
+    ]
+  },
+  "binary.typeinfo_symbol/pe": {
+    "accepted": "comdat",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T19:02:51Z accepted comdat scope=key attempt=5bff0b52-60dc-4f4a-b88f-e6b806e9e7c3 ids=set1.d02_analysis_typeinfo_symbol"
+    ]
+  },
+  "binary.section_names/pe": {
+    "accepted": "names",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T19:02:52Z accepted names scope=key attempt=5bff0b52-60dc-4f4a-b88f-e6b806e9e7c3 ids=set1.d04_analysis_section_names"
+    ]
+  },
+  "binary.hcfg_offset/pe+d10": {
+    "accepted": "file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T19:02:54Z accepted file_offset scope=key attempt=5bff0b52-60dc-4f4a-b88f-e6b806e9e7c3 ids=set1.d10_analysis_hcfg_offset"
+    ]
+  },
+  "binary.hash_form/unread+c21acad0": {
+    "accepted": "lower",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-19T13:00:14Z accepted lower scope=key attempt=e87f090b-4176-4d72-a5b6-a42fc94f0e9e ids=d01_artifact_sha256_1"
+    ]
+  },
+  "binary.hash_form/unread+f26af5c3": {
+    "accepted": "lower",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-20T13:46:14Z accepted lower scope=key attempt=1af763f0-5a66-465b-8aaa-14e2cb47793b ids=c_sha256 left=43.417"
+    ]
+  },
+  "binary.vtable_symbol/elf": {
+    "accepted": "vtable_of_class",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-20T13:46:14Z accepted vtable_of_class scope=key attempt=1af763f0-5a66-465b-8aaa-14e2cb47793b ids=vtable_symbol left=42.709"
+    ]
+  },
+  "binary.vtable_symbol/pe": {
+    "accepted": "comdat",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-20T13:47:59Z accepted comdat scope=key attempt=417ff328-cb2c-477f-97cd-e5285eab7c95 ids=set1.vtable_symbol"
+    ]
+  },
+  "binary.question_text/config_campaign+0908bf7e": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-21T13:00:10Z accepted judged scope=key attempt=8490020b-4d4e-405a-b414-cf3f80430d3f ids=d21_analysis_config_campaign"
+    ]
+  },
+  "binary.question_text/config_domain+5d89e44b": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-21T13:00:11Z accepted judged scope=key attempt=8490020b-4d4e-405a-b414-cf3f80430d3f ids=d21_analysis_config_domain"
+    ]
+  },
+  "binary.question_text/config_mutex+8428b784": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-21T13:00:12Z accepted judged scope=key attempt=8490020b-4d4e-405a-b414-cf3f80430d3f ids=d21_analysis_config_mutex"
+    ]
+  },
+  "binary.question_text/config_url+c879cff3": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-21T13:00:13Z accepted judged scope=key attempt=8490020b-4d4e-405a-b414-cf3f80430d3f ids=d21_analysis_config_url"
+    ]
+  },
+  "binary.question_text/xor_key_hex+835d24c1": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:09Z accepted judged scope=key attempt=c79d8ee2-b943-4554-97bc-12ef463988bb ids=d23_analysis_xor_key_hex"
+    ]
+  },
+  "binary.hcfg_offset/base64+d08": {
+    "accepted": "b64_file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:16Z accepted b64_file_offset scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d08_analysis_hcfg_offset"
+    ]
+  },
+  "binary.hcfg_offset/raw_elsewhere+d12": {
+    "accepted": "file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:17Z accepted file_offset scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d12_analysis_hcfg_offset"
+    ]
+  },
+  "binary.hcfg_offset/base64+d13": {
+    "accepted": "b64_file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:17Z accepted b64_file_offset scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d13_analysis_hcfg_offset"
+    ]
+  },
+  "binary.hcfg_offset/raw+d14": {
+    "accepted": "file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:17Z accepted file_offset scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d14_analysis_hcfg_offset"
+    ]
+  },
+  "binary.hcfg_offset/raw+d17": {
+    "accepted": "file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:18Z accepted file_offset scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d17_analysis_hcfg_offset"
+    ]
+  },
+  "binary.hcfg_offset/raw+d18": {
+    "accepted": "file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:18Z accepted file_offset scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d18_analysis_hcfg_offset"
+    ]
+  },
+  "binary.d08_analysis_hcfg_storage/proposed.760a59a8#candidates": {
+    "accepted": "enum:base64",
+    "rejected": [
+      "enum:raw",
+      "enum:raw_const_array"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:19Z rejected enum:raw scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d08_analysis_hcfg_storage",
+      "2026-10-23T13:00:19Z rejected enum:raw_const_array scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d08_analysis_hcfg_storage",
+      "2026-10-23T13:00:20Z accepted enum:base64 scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d08_analysis_hcfg_storage"
+    ]
+  },
+  "binary.d09_analysis_hcfg_storage/proposed.760a59a8#candidates": {
+    "accepted": "enum:vocab:clause:base64",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:20Z accepted enum:vocab:clause:base64 scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d09_analysis_hcfg_storage"
+    ]
+  },
+  "binary.d11_analysis_hcfg_storage/proposed.760a59a8#candidates": {
+    "accepted": "enum:vocab:clause:base64",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:20Z accepted enum:vocab:clause:base64 scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d11_analysis_hcfg_storage"
+    ]
+  },
+  "binary.d12_analysis_hcfg_storage/proposed.760a59a8#candidates": {
+    "accepted": "enum:vocab:clause:raw_const_array",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:21Z accepted enum:vocab:clause:raw_const_array scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d12_analysis_hcfg_storage"
+    ]
+  },
+  "binary.d13_analysis_hcfg_storage/proposed.760a59a8#candidates": {
+    "accepted": "enum:vocab:clause:base64",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:21Z accepted enum:vocab:clause:base64 scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d13_analysis_hcfg_storage"
+    ]
+  },
+  "binary.d14_analysis_hcfg_storage/proposed.760a59a8#candidates": {
+    "accepted": "enum:vocab:clause:raw_hcfg_section",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:22Z accepted enum:vocab:clause:raw_hcfg_section scope=key attempt=760a59a8-7c5e-47ac-93e9-1d090170d2b2 ids=d14_analysis_hcfg_storage"
+    ]
+  },
+  "binary.hcfg_offset/raw+d10": {
+    "accepted": "file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:43:35Z accepted file_offset scope=key attempt=31ca11c1-0e7b-40f6-b542-9ebc6ccd015e ids=set1.d10_analysis_hcfg_offset"
+    ]
+  },
+  "binary.question_text/config_campaign+ad51a160": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-24T13:00:09Z accepted judged scope=key attempt=6ad723e5-e1d9-4110-80b9-b54097f96023 ids=d24_analysis_config_campaign"
+    ]
+  },
+  "binary.question_text/config_domain+8fa06493": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-24T13:00:09Z accepted judged scope=key attempt=6ad723e5-e1d9-4110-80b9-b54097f96023 ids=d24_analysis_config_domain"
+    ]
+  },
+  "binary.question_text/config_mutex+a02d92a2": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-24T13:00:12Z accepted judged scope=key attempt=6ad723e5-e1d9-4110-80b9-b54097f96023 ids=d24_analysis_config_mutex"
+    ]
+  },
+  "binary.question_text/config_url+451018c8": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-24T13:00:13Z accepted judged scope=key attempt=6ad723e5-e1d9-4110-80b9-b54097f96023 ids=d24_analysis_config_url"
+    ]
+  },
+  "binary.d26_analysis_crash_fault_method/proposed.3d288248#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:kv:frames",
+      "enum:kv:frames~f1"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-26T13:00:10Z rejected enum:kv:frames scope=key attempt=3d288248-9b59-4ee3-b249-ffa94f2700a4 ids=d26_analysis_crash_fault_method",
+      "2026-10-26T13:00:10Z rejected enum:kv:frames~f1 scope=key attempt=3d288248-9b59-4ee3-b249-ffa94f2700a4 ids=d26_analysis_crash_fault_method"
+    ]
+  },
+  "binary.question_text/config_campaign+236f15dc": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-27T13:00:10Z accepted judged scope=key attempt=8e41979f-1263-4864-ba12-ad7aba49eb97 ids=d27_analysis_config_campaign"
+    ]
+  },
+  "binary.question_text/config_domain+b1823206": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-27T13:00:10Z accepted judged scope=key attempt=8e41979f-1263-4864-ba12-ad7aba49eb97 ids=d27_analysis_config_domain"
+    ]
+  },
+  "binary.question_text/config_mutex+ec0cdc45": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-27T13:00:11Z accepted judged scope=key attempt=8e41979f-1263-4864-ba12-ad7aba49eb97 ids=d27_analysis_config_mutex"
+    ]
+  },
+  "binary.question_text/config_url+a99f726f": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-27T13:00:16Z accepted judged scope=key attempt=8e41979f-1263-4864-ba12-ad7aba49eb97 ids=d27_analysis_config_url"
+    ]
+  },
+  "binary.class_count/zip+integer": {
+    "accepted": "class_entries",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:11Z accepted class_entries scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d06_analysis_class_count"
+    ]
+  },
+  "binary.rule_text/vtable_symbol+bare+6d6b7542": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:13Z accepted judged scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d02_analysis_vtable_symbol"
+    ]
+  },
+  "binary.symbol_count/elf+integer": {
+    "accepted": "symtab_named",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:28Z accepted symtab_named scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d05_analysis_symbol_count"
+    ]
+  },
+  "binary.class_name/class": {
+    "accepted": "dotted",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:28Z accepted dotted scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d06_analysis_class_name"
+    ]
+  },
+  "binary.has_nim_runtime/elf": {
+    "accepted": "mark",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:28Z accepted mark scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d09_analysis_has_nim_runtime"
+    ]
+  },
+  "binary.section_count/elf+integer": {
+    "accepted": "e_shnum",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:28Z accepted e_shnum scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d10_analysis_section_count"
+    ]
+  },
+  "binary.has_fpc_runtime/elf": {
+    "accepted": "mark",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:29Z accepted mark scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d12_analysis_has_fpc_runtime"
+    ]
+  },
+  "binary.handler_symbol_count/elf+integer": {
+    "accepted": null,
+    "rejected": [
+      "func_symbols"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:00:29Z rejected func_symbols scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d18_analysis_handler_symbol_count"
+    ]
+  },
+  "binary.analysis_cli_runtime/fixpacket+pattern": {
+    "accepted": "cor20_major_minor",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:50Z accepted cor20_major_minor scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d03_analysis_cli_runtime"
+    ]
+  },
+  "binary.analysis_has_decoy_branch/fixpacket+enum": {
+    "accepted": "final_bytes_latin1_or_utf16le",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:50Z accepted final_bytes_latin1_or_utf16le scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d03_analysis_has_decoy_branch"
+    ]
+  },
+  "binary.structural_artifact_count/fixpacket+integer": {
+    "accepted": "zip_member_count",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:51Z accepted zip_member_count scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d01_structural_artifact_count"
+    ]
+  },
+  "binary.structural_ordered_set_sha256/fixpacket+pattern": {
+    "accepted": "colon_join_then_sha256",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:51Z accepted colon_join_then_sha256 scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d01_structural_ordered_set_sha256"
+    ]
+  },
+  "binary.analysis_d_symbol_count/fixpacket+integer#candidates": {
+    "accepted": "symtab",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:52Z accepted symtab scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d11_analysis_d_symbol_count"
+    ]
+  },
+  "binary.analysis_crystal_symbol_count/fixpacket+integer#candidates": {
+    "accepted": "symtab",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:52Z accepted symtab scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d13_analysis_crystal_symbol_count"
+    ]
+  },
+  "binary.analysis_conditional_branch_opcode_count/fixpacket+integer": {
+    "accepted": "text_jcc_byte_scan",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:52Z accepted text_jcc_byte_scan scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d17_analysis_conditional_branch_opcode_count"
+    ]
+  },
+  "binary.analysis_has_gnat_runtime/fixpacket+enum": {
+    "accepted": "gnat_mark_or_symbol",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:52Z accepted gnat_mark_or_symbol scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d17_analysis_has_gnat_runtime"
+    ]
+  },
+  "binary.analysis_handler_symbol_count/fixpacket+integer#candidates": {
+    "accepted": "symtab",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:53Z accepted symtab scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d18_analysis_handler_symbol_count"
+    ]
+  },
+  "binary.analysis_handler_symbols_sha256/fixpacket+pattern": {
+    "accepted": "matches_sorted_lf_sha256",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:53Z accepted matches_sorted_lf_sha256 scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d18_analysis_handler_symbols_sha256"
+    ]
+  },
+  "binary.analysis_packing_key_1_hex/fixpacket+pattern": {
+    "accepted": "pk19_dir_plus5",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:53Z accepted pk19_dir_plus5 scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d19_analysis_packing_key_1_hex"
+    ]
+  },
+  "binary.analysis_packing_key_2_hex/fixpacket+pattern": {
+    "accepted": "pk19_dir_plus6",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:54Z accepted pk19_dir_plus6 scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d19_analysis_packing_key_2_hex"
+    ]
+  },
+  "binary.analysis_method_names_sha256/fixpacket+pattern": {
+    "accepted": "main_class_unique_sorted_lf_sha256",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:54Z accepted main_class_unique_sorted_lf_sha256 scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d26_analysis_method_names_sha256"
+    ]
+  },
+  "binary.analysis_config_campaign/fixpacket+exact_text": {
+    "accepted": "family_common",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:54Z accepted family_common scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d28_analysis_config_campaign"
+    ]
+  },
+  "binary.analysis_config_domain/fixpacket+exact_text": {
+    "accepted": "family_common",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:55Z accepted family_common scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d28_analysis_config_domain"
+    ]
+  },
+  "binary.analysis_config_mutex/fixpacket+exact_text": {
+    "accepted": "family_common",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:55Z accepted family_common scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d28_analysis_config_mutex"
+    ]
+  },
+  "binary.analysis_config_url/fixpacket+exact_text": {
+    "accepted": "family_common",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:15:56Z accepted family_common scope=key attempt=b0dd9db5-639c-4cb7-949f-643788b301e9 ids=d28_analysis_config_url"
+    ]
+  },
+  "binary.hcfg_offset/raw+d21": {
+    "accepted": "file_offset",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:17:34Z accepted file_offset scope=key attempt=0a55350f-5197-4583-b17d-49f8f926a797 ids=d21_analysis_plugin_hcfg_offset"
+    ]
+  },
+  "binary.rule_text/vtable_symbol+section_prefixed+6d6b7542": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:17:50Z accepted judged scope=key attempt=81ba2409-829f-4634-a6d8-e89e793d6661 ids=set1.d02_analysis_vtable_symbol"
+    ]
+  },
+  "binary.section_count/pe+integer": {
+    "accepted": "number_of_sections",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:17:51Z accepted number_of_sections scope=key attempt=81ba2409-829f-4634-a6d8-e89e793d6661 ids=set1.d10_analysis_section_count"
+    ]
+  },
+  "binary.d29_analysis_optimized_format/proposed.b87485ca#candidates": {
+    "accepted": "enum:fact:kind.format",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:09:59Z accepted enum:fact:kind.format scope=key attempt=b87485ca-34b2-4456-bc41-00624bf0c0c6 ids=d29_analysis_optimized_format"
+    ]
+  },
+  "binary.d29_analysis_optimized_machine/proposed.b87485ca#candidates": {
+    "accepted": "enum:fact:elf.e_machine",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:09:59Z accepted enum:fact:elf.e_machine scope=key attempt=b87485ca-34b2-4456-bc41-00624bf0c0c6 ids=d29_analysis_optimized_machine"
+    ]
+  },
+  "binary.d29_analysis_unoptimized_format/proposed.b87485ca#candidates": {
+    "accepted": "enum:fact:kind.format",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:00Z accepted enum:fact:kind.format scope=key attempt=b87485ca-34b2-4456-bc41-00624bf0c0c6 ids=d29_analysis_unoptimized_format"
+    ]
+  },
+  "binary.d29_analysis_unoptimized_machine/proposed.b87485ca#candidates": {
+    "accepted": "enum:fact:elf.e_machine",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:00Z accepted enum:fact:elf.e_machine scope=key attempt=b87485ca-34b2-4456-bc41-00624bf0c0c6 ids=d29_analysis_unoptimized_machine"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_campaign/proposed.b87485ca#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:campaign",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:01Z accepted enum:record:hcfg:raw:kv:campaign scope=key attempt=b87485ca-34b2-4456-bc41-00624bf0c0c6 ids=d29_analysis_optimized_config_campaign"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_domain/proposed.b87485ca#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:domain",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:03Z accepted enum:record:hcfg:raw:kv:domain scope=key attempt=b87485ca-34b2-4456-bc41-00624bf0c0c6 ids=d29_analysis_optimized_config_domain"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_mutex/proposed.b87485ca#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:mutex",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:04Z accepted enum:record:hcfg:raw:kv:mutex scope=key attempt=b87485ca-34b2-4456-bc41-00624bf0c0c6 ids=d29_analysis_optimized_config_mutex"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_url/proposed.b87485ca#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:url",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:04Z accepted enum:record:hcfg:raw:kv:url scope=key attempt=b87485ca-34b2-4456-bc41-00624bf0c0c6 ids=d29_analysis_optimized_config_url"
+    ]
+  },
+  "binary.d29_analysis_optimized_format/proposed.a72885ef#candidates": {
+    "accepted": "enum:fact:kind.format",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:10Z accepted enum:fact:kind.format scope=key attempt=a72885ef-0f7c-445d-b3c7-a7b740b7e883 ids=d29_analysis_optimized_format"
+    ]
+  },
+  "binary.d29_analysis_optimized_machine/proposed.a72885ef#candidates": {
+    "accepted": "enum:fact:elf.e_machine",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:11Z accepted enum:fact:elf.e_machine scope=key attempt=a72885ef-0f7c-445d-b3c7-a7b740b7e883 ids=d29_analysis_optimized_machine"
+    ]
+  },
+  "binary.d29_analysis_unoptimized_format/proposed.a72885ef#candidates": {
+    "accepted": "enum:fact:kind.format",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:11Z accepted enum:fact:kind.format scope=key attempt=a72885ef-0f7c-445d-b3c7-a7b740b7e883 ids=d29_analysis_unoptimized_format"
+    ]
+  },
+  "binary.d29_analysis_unoptimized_machine/proposed.a72885ef#candidates": {
+    "accepted": "enum:fact:elf.e_machine",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:11Z accepted enum:fact:elf.e_machine scope=key attempt=a72885ef-0f7c-445d-b3c7-a7b740b7e883 ids=d29_analysis_unoptimized_machine"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_campaign/proposed.a72885ef#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:campaign",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:12Z accepted enum:record:hcfg:raw:kv:campaign scope=key attempt=a72885ef-0f7c-445d-b3c7-a7b740b7e883 ids=d29_analysis_optimized_config_campaign"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_domain/proposed.a72885ef#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:domain",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:12Z accepted enum:record:hcfg:raw:kv:domain scope=key attempt=a72885ef-0f7c-445d-b3c7-a7b740b7e883 ids=d29_analysis_optimized_config_domain"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_mutex/proposed.a72885ef#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:mutex",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:13Z accepted enum:record:hcfg:raw:kv:mutex scope=key attempt=a72885ef-0f7c-445d-b3c7-a7b740b7e883 ids=d29_analysis_optimized_config_mutex"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_url/proposed.a72885ef#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:url",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:14Z accepted enum:record:hcfg:raw:kv:url scope=key attempt=a72885ef-0f7c-445d-b3c7-a7b740b7e883 ids=d29_analysis_optimized_config_url"
+    ]
+  },
+  "binary.d29_analysis_optimized_format/proposed.4a791a1e#candidates": {
+    "accepted": "enum:fact:kind.format",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:34Z accepted enum:fact:kind.format scope=key attempt=4a791a1e-a04e-4b13-b9bc-2d0f9ce6ec33 ids=set1.d29_analysis_optimized_format"
+    ]
+  },
+  "binary.d29_analysis_optimized_machine/proposed.4a791a1e#candidates": {
+    "accepted": "enum:fact:elf.e_machine",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:35Z accepted enum:fact:elf.e_machine scope=key attempt=4a791a1e-a04e-4b13-b9bc-2d0f9ce6ec33 ids=set1.d29_analysis_optimized_machine"
+    ]
+  },
+  "binary.d29_analysis_unoptimized_format/proposed.4a791a1e#candidates": {
+    "accepted": "enum:fact:kind.format",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:37Z accepted enum:fact:kind.format scope=key attempt=4a791a1e-a04e-4b13-b9bc-2d0f9ce6ec33 ids=set1.d29_analysis_unoptimized_format"
+    ]
+  },
+  "binary.d29_analysis_unoptimized_machine/proposed.4a791a1e#candidates": {
+    "accepted": "enum:fact:elf.e_machine",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:38Z accepted enum:fact:elf.e_machine scope=key attempt=4a791a1e-a04e-4b13-b9bc-2d0f9ce6ec33 ids=set1.d29_analysis_unoptimized_machine"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_campaign/proposed.4a791a1e#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:campaign",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:39Z accepted enum:record:hcfg:raw:kv:campaign scope=key attempt=4a791a1e-a04e-4b13-b9bc-2d0f9ce6ec33 ids=set1.d29_analysis_optimized_config_campaign"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_domain/proposed.4a791a1e#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:domain",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:40Z accepted enum:record:hcfg:raw:kv:domain scope=key attempt=4a791a1e-a04e-4b13-b9bc-2d0f9ce6ec33 ids=set1.d29_analysis_optimized_config_domain"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_mutex/proposed.4a791a1e#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:mutex",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:41Z accepted enum:record:hcfg:raw:kv:mutex scope=key attempt=4a791a1e-a04e-4b13-b9bc-2d0f9ce6ec33 ids=set1.d29_analysis_optimized_config_mutex"
+    ]
+  },
+  "binary.d29_analysis_optimized_config_url/proposed.4a791a1e#candidates": {
+    "accepted": "enum:record:hcfg:raw:kv:url",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:10:42Z accepted enum:record:hcfg:raw:kv:url scope=key attempt=4a791a1e-a04e-4b13-b9bc-2d0f9ce6ec33 ids=set1.d29_analysis_optimized_config_url"
+    ]
+  },
+  "binary.format/neko+enum+393ffdf1": {
+    "accepted": "token",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:10Z accepted token scope=key attempt=3451d5ee-4bab-40e5-86fa-ab24aac2516b ids=d30_analysis_library_format"
+    ]
+  },
+  "binary.question_text/xor_key_hex+f5008c92": {
+    "accepted": "judged",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-31T13:00:09Z accepted judged scope=key attempt=47650774-f161-4ba2-8b39-4d5e34e3c78e ids=d31_analysis_xor_key_hex"
+    ]
+  },
+  "binary.gauntlet_trace_branch/hgau": {
+    "accepted": "trace_branch_kv",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-31T13:01:47Z accepted trace_branch_kv scope=key attempt=47650774-f161-4ba2-8b39-4d5e34e3c78e ids=d31_analysis_gauntlet_trace_branch"
+    ]
+  }
+}

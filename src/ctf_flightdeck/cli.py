@@ -40,7 +40,7 @@ app = typer.Typer(
     add_completion=False,
     rich_markup_mode="markdown",
     help="A terminal harness for playing CTFs with AI agents, where you run the loop.",
-    epilog="New here? `flightdeck init`, then `flightdeck doctor`, then `flightdeck practice`. "
+    epilog="New here? `flightdeck init`, then `flightdeck doctor`, then `flightdeck practice`. An event: `flightdeck start`. "
     "No setup at all: `flightdeck mock`.",
 )
 
@@ -60,7 +60,98 @@ def root(
 ) -> None:
     """A terminal harness for playing CTFs with AI agents, where you run the loop."""
     if ctx.invoked_subcommand is None:
-        typer.echo(_next_steps(), nl=False)
+        if _at_terminal() and _at_terminal_out():
+            _home()
+        else:  # nobody to ask (a script, a pipe): say what to run
+            typer.echo(_next_steps(), nl=False)
+
+
+MAX_RESUME = 6  # events offered on the opening menu, most recently played first
+
+
+def _home() -> None:
+    """`flightdeck` alone, at a terminal: the home screen (console/home.py), then what the
+    player chose there."""
+    from . import events, start_cli
+    from .config import ConfigError, default_config_path, load_config
+    from .console import home
+
+    try:
+        path = default_config_path()
+        have = path.exists()
+        loaded = load_config(path) if have else None
+    except ConfigError as exc:
+        typer.echo(f"flightdeck: {exc}", err=True)
+        raise typer.Exit(2) from None
+    status = start_cli.pack_line(loaded).split(". Optional")[0] if loaded is not None else ""
+    menu = home.items(have_config=have, events=events.known()[:MAX_RESUME] if have else (),
+                      pack_installed=loaded is not None and loaded.l1.pack is not None)
+    choice = _home_choice(menu, status)
+    if choice is None:
+        return
+    kind = choice[0]
+    if kind == "resume":
+        play(board=choice[1])
+    elif kind == "new":
+        _start_new(choice[1])
+    elif kind == "practice":
+        practice()
+    elif kind == "mock":
+        mock()
+    elif kind == "pack":
+        from . import pack_cli
+
+        pack_cli.install()
+    elif kind == "setup":
+        start_cli.start()
+
+
+def _home_choice(menu, status: str):
+    from .console.home import HomeApp
+
+    return HomeApp(menu, status).run()
+
+
+def _start_new(new) -> None:
+    """Set up the event the home screen's form described, and play it: the event folder, the
+    token to the keys file, the VPN file (its tool installed on a yes), then the console. The
+    folder comes first, so no token is kept for an event that could not be set up."""
+    from . import events, keys, vpn, vpn_cli
+    from . import start as starts
+
+    def fail(text: str) -> NoReturn:
+        typer.echo(f"flightdeck: {text}", err=True)
+        raise typer.Exit(2)
+
+    answers = new.answers
+    try:
+        starts.write(new.folder, answers)
+    except starts.StartError as exc:
+        fail(str(exc))
+    events.remember(new.folder)
+    typer.echo(f"flightdeck: set up {new.folder}", err=True)
+    for note in new.notes:
+        typer.echo(f"flightdeck: token: {note}", err=True)
+    try:
+        if new.token:
+            keys.save(answers.token_env, new.token)
+    except keys.KeysError as exc:
+        fail(f"{exc}. The event is set up, but its token is not kept: put {answers.token_env}=<your CTFd access token> in "
+             f"{keys.keys_path()} (chmod 600), then `flightdeck` resumes this event")
+    try:
+        if new.vpn is not None:
+            vpn_cli.ensure_tool(vpn.keep(new.folder, new.vpn))
+    except vpn.VPNError as exc:
+        fail(f"{exc}. The event is set up without its VPN file: `flightdeck vpn add {new.folder} FILE` keeps one")
+    if answers.platform == "ctfd" and not new.token:
+        try:
+            there = keys.source(answers.token_env) is not None
+        except keys.KeysError as exc:
+            fail(str(exc))
+        if not there:
+            fail(f"no token yet: put {answers.token_env}=<your CTFd access token> in {keys.keys_path()} (chmod 600), "
+                 f"then `flightdeck` resumes this event")
+    play(board=new.folder)
 
 
 def _next_steps() -> str:
@@ -73,22 +164,33 @@ def _next_steps() -> str:
         have = path.exists()
     except ConfigError as exc:
         return head + f"{exc}\n"
+    pack = ""
     if not have:
         steps = [
             ("flightdeck init", "a few questions; writes your config"),
             ("flightdeck doctor", "checks your setup and says how to fix what is missing"),
             ("flightdeck practice", "plays 14 small practice challenges (spends tokens on your model API)"),
+            ("flightdeck start", "sets up an event and plays it: asks for its name, site and token, makes its folder"),
         ]
         text = head + "No config yet. Start here:\n"
     else:
         steps = [
+            ("flightdeck start", "play an event: asks for its name, site and token, makes its folder, launches"),
+            ("flightdeck play FOLDER", "play an event you set up before, or any folder of challenges"),
+            ("flightdeck practice", "the practice set (14 small challenges)"),
             ("flightdeck doctor", "checks your setup"),
-            ("flightdeck practice", "the practice set, or: flightdeck play BOARD"),
         ]
         text = head + f"Your config: {path}\n"
+        from .config import load_config
+        from .start_cli import pack_line
+
+        try:
+            pack = "\n" + pack_line(load_config(path)) + "\n"
+        except ConfigError as exc:
+            pack = f"\n{exc}\n"
     width = max(len(command) for command, _ in steps)
     text += "".join(f"  {command:<{width}}  {what}\n" for command, what in steps)
-    return text + "\nNo setup at all: flightdeck mock (fake data, nothing spent). Every command: flightdeck --help\n"
+    return text + pack + "\nNo setup at all: flightdeck mock (fake data, nothing spent). Every command: flightdeck --help\n"
 
 
 def _path(path: Path) -> Path:
@@ -150,7 +252,7 @@ def mock(
     from .mock.world import FakeWorld
 
     world = FakeWorld(scenarios.get(scenario.value), max_lanes=max_lanes, team=team, containerized=containerized)
-    FlightdeckApp(world.deck, ticker=world.tick, tick_seconds=1.0 / speed, mock=f"MOCK · {scenario.value}").run()
+    FlightdeckApp(world.deck, ticker=world.tick, tick_seconds=1.0 / speed, mock=f"MOCK · {scenario.value}", welcome=True).run()
 
 
 class Submit(StrEnum):
@@ -235,9 +337,18 @@ def play(
     (pulled, new waves, flags submitted, solves followed) and the team folder. Spends tokens:
     on the API in your config, or with --agent on that CLI's own key or subscription."""
     from .run import RunError, RunOptions, host_warning, prepare_run
+    from .start import is_event_folder, resolve
 
+    asked = _path(board) if board else None
+    board, event = resolve(asked, event)  # a folder `flightdeck start` made: its event.toml and its board/
+    if asked is not None and is_event_folder(asked):
+        from . import events
+
+        events.remember(asked)  # `flightdeck` alone offers to resume it
+    if asked is not None and not _vpn_ready(asked, ask=_at_terminal() and not headless):
+        raise typer.Exit(1)
     options = RunOptions(
-        board=_path(board) if board else None,
+        board=board,
         answers=_path(answers) if answers else None,
         config=_path(config) if config else None,
         max_lanes=max_lanes,
@@ -260,6 +371,8 @@ def play(
         run = prepare_run(options)
     except RunError as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
+        if asked is not None and event is None and not _has_entries(asked):  # nothing to play there yet
+            typer.echo("flightdeck: to set up an event (its folder, its rules, its board) and play it: `flightdeck start`", err=True)
         raise typer.Exit(2) from None
     except KeyboardInterrupt:  # Ctrl-C in autopilot's wait for the event's start (the one wait before a run)
         typer.echo("flightdeck: stopped before the run started: nothing was pulled and no lane started", err=True)
@@ -274,7 +387,7 @@ def play(
         console = Headless(run, say=lambda line: typer.echo(f"flightdeck: {line}", err=True))
         between = console.fly
     else:
-        console = run.app()
+        console = run.app(welcome=_first_console())
         between = console.run_async  # the console releases the board itself once it is up (on_start)
     _fly(run, between)
     if console.stopped_by is not None:  # SIGHUP or SIGTERM: the lanes were stopped as when you quit
@@ -283,6 +396,46 @@ def play(
     if console.return_code:  # the console failed (Textual has printed why): not a run that ended as asked
         typer.echo("flightdeck: the console failed: the run's lanes were stopped as when you quit", err=True)
         raise typer.Exit(1)
+
+
+def _vpn_ready(folder: Path, *, ask: bool) -> bool:
+    """Before a folder with a VPN file is played: say whether the VPN looks connected, and at
+    a terminal offer to connect it when it does not. False only when the player chose to stop.
+    Only a file the player added through flightdeck is offered (vpn.added): one that is merely
+    in the folder (a board is untrusted data), or that changed since it was added, is said to
+    be there and unverified, and nothing is run for it."""
+    from . import vpn, vpn_cli
+
+    found = vpn.find(folder)
+    if found is None:
+        return True
+    try:
+        if not vpn.added(found):
+            typer.echo(f"flightdeck: {vpn.unverified(found)}", err=True)
+            typer.echo("flightdeck: it was not connected: lanes reach this event's live targets only if its VPN is up", err=True)
+            return True
+        state = vpn.connected(found)
+    except vpn.VPNError as exc:
+        typer.echo(f"flightdeck: {exc}", err=True)
+        return True
+    if state is not False:
+        typer.echo(f"flightdeck: {vpn.status_line(found, state)}", err=True)
+        return True
+    typer.echo(f"flightdeck: {vpn.status_line(found, state)}", err=True)
+    if not ask:
+        typer.echo("flightdeck: lanes cannot reach this event's live targets until it is connected", err=True)
+        return True
+    if vpn_cli.connect(found) == 0:
+        return True
+    return typer.confirm("The VPN is not connected, so lanes cannot reach live targets. Play anyway?", default=False)
+
+
+def _has_entries(folder: Path) -> bool:
+    """Whether `folder` is a folder with something in it."""
+    try:
+        return any(folder.iterdir())
+    except OSError:
+        return False
 
 
 def _fly(run, between: Callable[[], Awaitable[object]]) -> None:
@@ -536,7 +689,9 @@ def init(
         light_model_answer,
         mlx_server_command,
         models_answer,
+        PROVIDER_MENU,
         provider_answer,
+        providers_answer,
         runtime_answer,
         write_config,
     )
@@ -605,7 +760,13 @@ def init(
                 + (" and " if len(missing) > 1 else "") + missing[-1] + " (see `flightdeck init --help`)"
             )
     if provider is None:
-        provider = ask("Provider: openrouter, anthropic, openai, ollama (or local), mlx or custom", provider_answer, "openrouter")
+        provider, *others = ask(PROVIDER_MENU, providers_answer, "1")
+        if others and provider == "anthropic" and "openrouter" in others and fallback is None:
+            fallback = True  # asked for together: OpenRouter stands in when Anthropic keeps failing
+            others.remove("openrouter")
+        typer.echo(f"Lanes use {provider}." + (
+            f" One API runs the lanes; for {' and '.join(others)} as a fallback, write [fallback] in the config "
+            "(`flightdeck config --example` shows it)." if others else ""))
     dialect = "anthropic" if provider == "anthropic" else "openai"
     if base_url is not None:
         base_url = given(base_url, "--base-url", lambda text: base_url_answer(text, anthropic=dialect == "anthropic"))
@@ -741,6 +902,8 @@ def init(
         typer.echo("next: flightdeck image build   (builds the lane image once)")
     typer.echo(light_line(light_table))
     typer.echo("then: flightdeck doctor, and flightdeck practice")
+    typer.echo("for an event: flightdeck start   (asks for the event's name, site and token, makes its folder, launches)")
+    typer.echo("optional: flightdeck pack install   (flightdeck's solver pack: some 800 no-model solvers that run first)")
 
 
 @app.command(rich_help_panel=SETUP)
@@ -810,17 +973,22 @@ def config_command(
 
 def _mount() -> None:
     from . import (
-        build_cli, gaps_cli, localmodel_cli, postflight_cli, practice_cli, preflight_cli, share_cli, team_cli, writeup_cli,
+        build_cli, gaps_cli, localmodel_cli, pack_cli, postflight_cli, practice_cli, preflight_cli, share_cli, start_cli, team_cli, vpn_cli, writeup_cli,
     )
     from . import models_cli
     from .l1 import cli as l1_cli
-    from .platform import ctfd_cli
+    from .platform import ctfd_cli, gamemaster_cli
 
     app.add_typer(preflight_cli.app, name="preflight", rich_help_panel=EVENT,
                   help="Check an event profile (event.toml): what the rules allow, and what flightdeck will do.")
     app.add_typer(ctfd_cli.app, name="ctfd", rich_help_panel=EVENT)
+    app.add_typer(gamemaster_cli.app, name="gm", rich_help_panel=EVENT)
     app.add_typer(team_cli.app, name="team", rich_help_panel=EVENT)
+    app.add_typer(vpn_cli.app, name="vpn", rich_help_panel=EVENT)
     app.add_typer(l1_cli.app, name="l1", rich_help_panel=SOLVERS)
+    app.add_typer(pack_cli.app, name="pack", rich_help_panel=SOLVERS)
+    app.command("start", rich_help_panel=PLAY)(start_cli.start)
+    app.command("add", rich_help_panel=EVENT)(start_cli.add)
     app.command("report", rich_help_panel=AFTER)(postflight_cli.report_command)
     app.command("writeups", rich_help_panel=AFTER)(writeup_cli.writeups)
     app.command("score", rich_help_panel=AFTER)(practice_cli.score_command)
@@ -833,6 +1001,29 @@ def _mount() -> None:
 
 
 _mount()
+
+
+def _first_console() -> bool:
+    """Whether this is the player's first real console on this machine (it opens on the
+    welcome screen); noted in the state folder so the next one opens on the dashboard."""
+    from .leftovers import state_folder
+
+    try:
+        note = state_folder() / "welcomed"
+        if note.exists():
+            return False
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text("the welcome screen was shown\n")
+    except OSError:
+        return False
+    return True
+
+
+def _at_terminal_out() -> bool:
+    """Whether what flightdeck prints goes to a terminal (not a pipe or a file)."""
+    import sys
+
+    return sys.stdout.isatty()
 
 
 def _at_terminal() -> bool:

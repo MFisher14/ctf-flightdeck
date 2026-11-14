@@ -1,0 +1,15 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-216 (binary lane reader generalization).
+# import-only: solve is its main public callable, not a contract entry; `ctf run` refuses library engines
+id = "binary.speed_solver"
+lane = "binary"
+entry = "solvers.binary.speed_solver:solve"
+capabilities = ["library", "elf", "pe"]
+inputs = []
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]
+category = ["reverse"]
+keywords = ["binary speed solver", "variant-proof binary"]
+priority = 62

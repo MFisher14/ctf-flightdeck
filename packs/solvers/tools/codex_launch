@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Start Codex inside the solver filesystem fence (B-219).
+
+    tools/codex_launch [fence options] [--interactive] [--model M] [--effort E]
+                       [--approval never|on-request|untrusted] [--dry-run] [PROMPT | -]
+                       [-- extra codex args]
+    tools/codex_launch --self-test [fence options]
+
+With --challenge ID (or $CTF_CHALLENGE) the launch is budget-gated (R-09, tools/launch_gate.py): a
+capped or stopped challenge is refused (exit 3) with the reason and the command that lifts it; the
+agent runs supervised, is re-checked every --gate-poll seconds and stopped (exit 3) when the challenge
+becomes capped or stopped; `codex exec` gets --json and its turn usage, priced for --model (required
+when gated), is charged to the challenge. The TUI is gated but not metered.
+
+What it runs: `codex exec --skip-git-repo-check -C <workspace>` (or interactive `codex -C ...`) with
+a permission profile that extends Codex's ":workspace" sandbox: the workspace and the master repo
+writable, the drop folder and extra roots readable, and every denied root (~/.codex, ~/.claude,
+~/Library, browser and messaging stores, the notification database, unified logs, snapshots,
+~/pentest-tools, ~/Downloads except the drop folder, ...) unreadable to the commands Codex runs.
+Approvals default to "never" so a denial goes back to the model instead of becoming an escalation
+prompt. The fast and ultrafast service tiers are switched off (`--disable fast_mode --disable
+ultrafast_mode`; B-009) and the shell snapshot is off (it lives under ~/.codex).
+
+B-201 (tools/route_launch.py): on an event whose profile has a [routing] table, a launch with a role
+(--role / $CTF_ROLE) is routed by role, --difficulty and --category: the route fills --model (when it
+names a codex model) and --effort where they are not given, and its fields are recorded on agent_launch.
+A route's speed tier (ultrafast, fast, priority) is used only with its explicit budget_usd on a
+budget-gated `codex exec` run, which is stopped once it has spent that much; otherwise it is refused.
+
+Fence options are those of `python -m ctf fence` (--event, --workspace, --repo, --drop,
+--allow-read, --deny-read, --strict-home, --no-config). PROMPT "-" reads the prompt from stdin.
+--self-test probes the fence under `codex sandbox` (no model call) and exits 1 on any failure.
+Arguments after `--` go to codex; ones that would undo the fence are refused by name.
+
+What Codex's sandbox can and cannot block is in docs/fence.md.
+"""
+import argparse
+import os
+import shlex
+import shutil
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from ctf import env as _env  # noqa: E402
+from ctf import event as _event  # noqa: E402
+from ctf import fence as _fence  # noqa: E402
+from ctf import fence_launch as _launch  # noqa: E402
+from ctf.cli import fence as _cli  # noqa: E402
+from tools import launch_gate as _gate  # noqa: E402
+from tools import route_launch as _route  # noqa: E402
+
+
+def _profile_effort(event_slug):
+    """B-095: the launch-pinned reasoning effort from the event profile's [models].effort, or None
+    when no event resolves (the CLI default then applies). A profile that fails to load is left to the
+    fence step, which reports it by name; it is not masked here."""
+    slug = event_slug or _env.get("CTF_EVENT")
+    if not slug:
+        return None
+    try:
+        return _event.load(slug).models.effort
+    except (_event.EventError, FileNotFoundError, OSError):
+        return None
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    extra: list[str] = []
+    if "--" in argv:
+        i = argv.index("--")
+        argv, extra = argv[:i], argv[i + 1:]
+    p = argparse.ArgumentParser(prog="codex_launch", description=__doc__.split("\n\n")[0])
+    _cli.add_fence_options(p)
+    p.add_argument("--interactive", action="store_true", help="start the TUI instead of codex exec")
+    p.add_argument("--model")
+    p.add_argument("--effort", help="model_reasoning_effort (default: the event profile's "
+                   "[models].effort, B-095); the escalation ladder ramps it by relaunching")
+    p.add_argument("--approval", default="never", choices=_launch.APPROVAL_POLICIES)
+    p.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", "codex"))
+    p.add_argument("--dry-run", action="store_true", help="print the command, do not start codex")
+    p.add_argument("--self-test", action="store_true", help="probe the fence under `codex sandbox`")
+    _gate.add_gate_options(p)
+    _route.add_route_options(p)
+    p.add_argument("prompt", nargs="?")
+    a = p.parse_args(argv)
+    gate = None
+    session = None
+    why = "the launcher exited before the agent started"
+    try:
+        try:
+            f = _cli.fence_from_args(a)
+            if a.self_test:
+                from ctf import fence_selftest
+                checks = fence_selftest.codex_selftest(f, codex_bin=a.codex_bin)
+                for c in checks:
+                    print(f"{'ok  ' if c.ok else 'FAIL'}  {c.name}  {'' if c.ok else c.detail}")
+                failed = sum(not c.ok for c in checks)
+                print(f"{len(checks) - failed}/{len(checks)} checks passed")
+                return 1 if failed else 0
+            prompt = a.prompt
+            if prompt == "-":
+                prompt = sys.stdin.read()
+            if not a.interactive and not (prompt or "").strip():
+                raise _launch.LaunchError("codex exec needs a prompt (argument or '-' for stdin); "
+                                          "use --interactive for the TUI")
+            _launch.check_codex_extra(extra)
+            route = _route.route_for(a, "codex")       # B-201: the event's model router (opt-in)
+            tier = _route.apply_route(route, a, "codex")
+            if a.effort is None:                       # B-095: default to the profile's launch effort
+                a.effort = _profile_effort(a.event)
+            if not a.dry_run and shutil.which(a.codex_bin) is None:    # before the gate takes a seat
+                raise _launch.LaunchError(f"codex CLI not found ({a.codex_bin!r}); install it or set "
+                                          "CODEX_BIN")
+            session, refused = _gate.claim_session(a, "codex", dry_run=a.dry_run)   # B-175
+            if refused is not None:
+                return refused
+            gate = _gate.gate_for(a, "codex")
+            usage = None
+            if gate is not None:
+                extra, usage = _gate.codex_metering(extra, a.model, headless=not a.interactive,
+                                                    speed=tier)
+            _route.check_speed_tier(route, tier, gate=gate, metered=usage is not None)   # B-201
+            if gate is not None:
+                _route.record_route(gate, route, tier, effort=a.effort)
+                refused = _gate.admit(gate, dry_run=a.dry_run)
+                if refused is not None:
+                    return refused
+                extra = extra + _gate.no_spawn_args(gate)     # B-143: helpers and forks do not spawn
+            cmd = _launch.codex_argv(f, codex_bin=a.codex_bin, headless=not a.interactive, model=a.model,
+                                     effort=a.effort, approval=a.approval, extra=extra, prompt=prompt,
+                                     service_tier=tier)
+            if not a.dry_run:
+                f.workspace.mkdir(parents=True, exist_ok=True)
+        except (_fence.FenceError, _launch.LaunchError, _gate.GateError, _route.RouteLaunchError,
+                OSError) as e:
+            why = f"launcher error: {e}"
+            print(f"codex_launch: {e}", file=sys.stderr)
+            return 2
+        except Exception as e:  # EventError and friends: named, never a traceback
+            why = f"launcher error: {type(e).__name__}: {e}"
+            print(f"codex_launch: {type(e).__name__}: {e}", file=sys.stderr)
+            return 2
+        if a.dry_run:
+            shown = cmd[:-1] + ["<prompt>"] if prompt is not None else cmd
+            print(" ".join(shlex.quote(x) for x in shown))
+            return 0
+        if gate is not None:
+            if usage is None:
+                _gate.unmetered_notice(gate)
+            try:
+                return _gate.supervise(cmd, gate, cwd=f.workspace, usage=usage, interactive=a.interactive,
+                                       poll_seconds=a.gate_poll, session=session)
+            except OSError as e:
+                if gate.started:
+                    raise
+                why = f"could not start {cmd[0]}: {e}"
+                print(f"codex_launch: {why}", file=sys.stderr)
+                return 2
+        os.chdir(f.workspace)
+        os.environ.update(_gate.exec_owner_env("codex", _gate.challenge_from(a.challenge)))  # B-175
+        os.execvp(cmd[0], cmd)
+    finally:
+        _gate.release_unstarted(gate, why)     # B-143: a seat taken by a run that never started
+        _gate.release_session(session)         # B-175: the session name is free again
+
+
+if __name__ == "__main__":
+    sys.exit(main())

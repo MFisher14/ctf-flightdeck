@@ -1,0 +1,34 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-106.
+# Offline by default: parses a documented hash/signature spec (JSON, YAML or text) and diffs its
+# covered-field set against the fields the spec's write endpoints can change. With
+# --opt target=URL it GETs the spec through the scope-locked WebClient; the amend-after-approval
+# probe (--opt field/value/write_route) is a state-changing action, refused unless the event
+# profile's rules.web_state_changing is true (Open O-2).
+id = "web.integrity_binding"
+lane = "web"
+entry = "solvers.web.integrity_binding:solve"
+capabilities = ["analysis", "live", "web", "integrity", "signature", "toctou", "business-logic"]
+inputs = ["name:schema*", "name:openapi*", "name:swagger*", "ext:.json", "ext:.yaml", "ext:.txt"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+# No [intake] table: the binding spec is usually served live (/schema), and intake denies engines
+# the network. Agents call it with `python -m ctf run web.integrity_binding <dir> --opt target=...`.
+[[routes]]  # keyword nudge (band 60+): partial signature / hash binding gaps
+category = ["web"]
+keywords = [
+    "covered_fields",
+    "covered fields",
+    "signed fields",
+    "partial signature",
+    "integrity binding",
+    "manifest hash",
+    "manifest_hash",
+    "hash covers",
+    "signature covers",
+    "after approval",
+    "post-approval",
+    "embargo",
+]
+priority = 64

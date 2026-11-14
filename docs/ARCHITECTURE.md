@@ -125,6 +125,26 @@ a reply that a kill, a solve or quitting cut short (`_count_cut()` in `agent/dri
 still in flight when quitting (or a kill) cancels it brings back no usage, so its cost is not
 counted: the run's totals can be below what the API bills by that one call per lane.
 
+**Flag variants** (`flagvariants.py`, `Deck._variant`; P37). `flagvariants.variants(value, flag_format)` is pure: at most 12 other
+spellings of a value, ranked, each matching the event's flag format and carrying what changed. The safe fixes come first
+(whitespace, a doubled wrapper, the prefix as the format names it), then case, diacritics, spaces, leet and wrap. With
+`DeckConfig.variant_tries` above 0, the deck consumes that list after the platform's own wrong answer to a flag: it proposes the
+next variant not known wrong, not waiting and not on its way, on the first lane that sent the flag and is still open, through
+`_candidate`, so no rule on a lane's flag is bypassed; one at a time and at most `variant_tries` per challenge per run. A submit
+event for a variant carries `variant_of` and `variant_changes`.
+
+**Rotating flags** (P39). `Challenge.rotates` (the board's `rotates` key) gives a challenge windows of that many seconds, counted
+on the deck's `wall` clock (Unix time on this machine: the run clock starts at 0 and cannot place a clock boundary). `_candidate`
+records when each flag of such a challenge was last claimed, and `Deck.rotated(challenge, flag)` says why it would be dead now: a
+later window, or under `ROTATE_MARGIN` seconds of its window left. The deck asks at an approval, under auto at the claim, and when
+a queued flag's turn comes; the run's submitter asks before every send. A dead flag is dropped: `LaneDriver.rotated` tells each
+open lane to fetch a fresh one, a warning event carries `rotated_out`, and nothing enters the known-wrong flags. `wrong_flags`
+leaves the first `ROTATING_MISSES` wrong answers at such a challenge out of the wrong-answer stop.
+
+**What holds a start without holding the queue.** Two things keep `_fill` from starting a lane without `hold_queue` (which needs
+the player and disengages autopilot): `Deck.waits` (a challenge whose instance is not up is passed over, the next in the queue
+starts: P36) and `Deck.start_gate` (the host governor: no new lane at all while a limit binds, unless none is at work: P40).
+
 ## 4. Lanes
 
 | Piece | Where | Job |
@@ -176,6 +196,32 @@ output where it arrives, before anything cuts it, then every report to the deck 
 the driver's notes on the lane, and what else the driver writes into the lane's context (L1
 results, the first look, the player's messages, a summary). A `--host` lane that reads the keys
 file sends its model the names, not the values.
+
+### What lanes share
+
+Where: `core/shared.py`, `agent/sharing.py`, `sharedfile.py` (P43).
+
+The deck already holds everything a lane did; `core/shared.py` reads one entry per lane from it (`attempt`): models, approach,
+plan, the programs its shell ran (names read from step text, nothing parsed or run), last steps, findings, changed files, flag
+fates, course and budget alerts, and how it ended (a solve without its flag). No model writes it. At a lane's first model call
+`agent/sharing.opening` makes the text for it: the other lanes on its challenge, open ones first (a fork's parent first), then
+ended ones by turns, 900 characters an entry and 3,000 in all, the rest counted. It goes after the brief in `prompts.fenced`,
+since every line is derived from what a lane did while reading a challenge. `AgentDriver` keeps it as a message `_fresh` repeats
+before the L1 message; `ExternalDriver` adds it in `opening()`; so an escalation or a refresh keeps the same text and the cached
+prefix holds. `sharedfile.SharedFile` writes the whole record to `shared.json` at each lane's end and at close.
+
+### Series
+
+Where: `core/series.py`, `agent/sharing.py`, `DockerWorkspace.mount` (P44).
+
+`core/series.series_key` reads a series from names alone; `continuation_marker` finds "continuation of the same lab"-style
+wording. At a lane's start, before its workspace is prepared, `sharing.attach` picks for each sibling the workspace of the lane
+that solved it, else the one that ended last, never a running one: on the host it is the folder itself, and in Docker a
+read-only bind mount at `/series/<safe id>`. At the first model call `series_block` lists the siblings in the fence (solved
+first; six at most) with that lane's entry, its flags dropped and every known flag and flag-format match replaced, then says in
+flightdeck's own words that the files are challenge data and a sibling's flag is not this challenge's. The deck backs that:
+`Deck._accepted` remembers each flag that solved a challenge, and `_candidate` makes it wait for the player at any other
+challenge under submit auto.
 
 ### Workspaces
 
@@ -340,6 +386,8 @@ next to the workspace.
 |---|---|---|
 | L1 packs | `l1/` | `SolverResult`, engine manifests, the router, the runner and the importer. [More](#l1-packs). |
 | L1 stage | `agent/l1stage.py` | A lane runs the engines routed to its challenge before its first model call, or before its coding-agent CLI is started. [More](#l1-stage). |
+| Pack install | `pack.py`, `pack_cli.py` | `flightdeck pack install \| image \| info`: fetch a pack (a git clone, or one folder of a repository), read its `pack.toml`, run its setup command when the player agrees, build its image, and write `[l1] pack` and `image` into the config as a text edit that must load or is undone. |
+| The solver pack | `packs/solvers/` (not in the wheel) | The author's solvers, exported from his master by `packs/solvers/maint/export.py`. `flightdeck/intake_engine.py` is its one flightdeck engine: the pack's whole no-model intake on a challenge's copy, reported as one `SolverResult`. `flightdeck/lane_cli.py` (`solvers fit \| run \| doc \| playbook \| list`) is what a lane's model calls under `[l1] lane_tools`, and `flightdeck/LANE.md` what the brief says about it (`prompts.brief(toolkit=...)`). The pack has its own `ctf` package, Python environment and test suite; nothing in `src/` imports it. |
 
 ### L1 packs
 
@@ -352,6 +400,12 @@ why), the runner (each engine in its own copy of the handout, an allowlisted env
 process group, a timeout), the importer (manifests for a folder of plain scripts, never touching
 them). `flightdeck l1 list | route | run | import`. [SOLVERS.md](SOLVERS.md) is the guide to writing
 a pack.
+
+**Pack tools** (`pack.py`; P41). `pack.toml` takes an optional `tools` list of program names. It is advisory: no run reads it.
+`pack.missing_on_host()` looks the names up in PATH's absolute folders; `pack.missing_in_image()` runs the L1 container's lookup
+script in one `docker run --rm --pull never --network none` of the image and raises when the image cannot be asked. `doctor`'s
+non-essential `pack tools` check uses the first for host lanes and the second for Docker lanes, and `flightdeck pack info` prints
+both.
 
 ### L1 stage
 
@@ -391,6 +445,8 @@ coding-agent lane's file changes hold nothing an engine wrote.
 | CTFd | `platform/ctfd.py` | Pulls a CTFd board into a folder board, submits approved flags, and reads the team's solves and the tries left. [More](#ctfd). |
 | Pre-flight | `preflight.py` | The event profile (`event.toml`): what the rules allow, and a policy per stage (`pull`, `l1`, `agents`, `submit`, `instance`), never looser than the rules. `flightdeck preflight` checks it. |
 | Live instance policy | `agent/driver.py`, `run.py` | `auto`: lanes may reach their challenge's instance. `confirm`: a lane asks first (a live-box approval); until the player allows it, its http tool is off and its container has no network, then the container joins a fenced network that reaches the instance and nothing else ([Lane network](#lane-network)). `off`: never. Pre-flight sets it from the event profile. |
+| Game Master | `platform/gamemaster.py`, `platform/gamemaster_run.py` | Pulls a Game Master's started attempts into a folder board, submits answers, and reads its solved list. [More](#game-master). |
+| Instances on demand | `platform/instances.py`, `instancerun.py` | A CTFd container plugin's client (start, status, renew, stop: named plugin shapes or the profile's own routes, scoped to the board's challenges, each request sent once), and the run's scheduler: no lane starts on an on-demand challenge before its instance is up (`Deck.wait_for` / `ready`, which `_fill` passes over), `plan()` stops what nobody works and starts what is wanted in the queue's order up to `max_running`, an instance found running is adopted and never stopped, a full cap is retried, instances are renewed before their end and stopped at the run's. The address becomes the challenge's `urls` in the maps lanes and L1 read. |
 | Event runs | `run.py` | `play --event`: the profile's policies, CTFd pulls and waves, submits off the console's loop, the team folder. [More](#event-runs). |
 | Team channel | `team.py` | Claims, live-box holds and solves shared through a synced folder (no server); everything in it is untrusted. |
 
@@ -412,6 +468,26 @@ than the limit make it a rate limit). The tries left are read from every answer 
 challenge's details (`Pull.tries`; only where the challenge takes no partial answers); the deck
 closes a challenge with none left and opens it again, parked, when a later pull finds tries
 (`Deck.platform_tries`).
+
+A rate limit that passes is waited out and the flag sent again by the run's submit worker
+(`run._Submits.work`, P33): up to three more sends, after the wait CTFd names or 65 seconds,
+never at a challenge whose tries are counted. `CTFdClient.attempt` itself still sends once.
+
+### Game Master
+
+Where: `platform/gamemaster.py`, `platform/gamemaster_run.py`, `platform/gamemaster_cli.py` (P42).
+
+A one-URL platform: GETs with an `op` query (list, status, artifact), retried on 429, 5xx or no answer, and POSTs (start an
+attempt, submit answers), each sent once. The token is a Bearer header and appears nowhere else. `GameMasterClient.start` refuses a
+clocked attempt before sending anything. `pull()` writes one board challenge per answer id of each started attempt (files
+downloaded once, sha256-checked, copied to each), a `board.json` whose flag format is the answer format (`answer{...}` by
+default), and `gm.json`, the map from board id to challenge id and answer id; it starts plain attempts only with `start=True`
+(`flightdeck gm pull --start`) and lists what it left unstarted. CORRECT and accepted are right, incorrect is wrong,
+already_solved and the refusals judged nothing, 429 is a rate limit, and any other word is an error naming it. In a run
+(`platform = "gamemaster"`), `GameMasterLink` is the deck's submitter: one worker task sends the answer inside the flag format's
+`answer` group, applies the word through `Deck.platform_verdict`, resends a rate-limited answer as P33 does for CTFd, and tells
+autopilot when an answer was not judged. A second task reads the list every `solves_seconds` and closes what it lists as solved.
+A run starts no attempt and pulls nothing.
 
 ### Event runs
 
@@ -458,6 +534,13 @@ a notifier listens for and the post-flight report lists.
 Board format: a folder in which each subfolder with a `challenge.json` is a challenge, with an
 optional `board.json` (the event's name and flag format) and an optional `answers.sha256.json`
 (each flag's sha256, outside the challenge folders). [BOARDS.md](BOARDS.md) has every key.
+
+**A second opinion on a timer** (P38). `_opinions` runs in each step after the alert rules. With `[autopilot] second_after` set, a
+workable, unsolved challenge with exactly one open lane and nothing queued gets `Fork(lane, model)` by `Actor.AUTOPILOT` once
+that lane has run that many seconds or `Deck.wrong_flags` for the challenge is above 0: the next rung above the lane's, else the
+lowest other ladder model. `third_after` does the same for a challenge with exactly two open lanes, onto a model neither runs.
+Each once per challenge. Nothing is forked while the queue is held, past the run budget, or while any open lane of the challenge
+is one P23 leaves alone. On an event loop an alarm wakes a step when the next opinion falls due.
 
 ## 7. Detection and the light model
 
@@ -577,6 +660,13 @@ and notes the flag format it checks and where that came from; wires the deck, dr
 console; releases the board on the console's loop. Every run hands its driver every secret it
 holds to hide (`_held_secrets`: each keys-file value, the `[api]` and `[fallback]` keys, the
 notification webhook's URL, the CTFd token), so a keys file that cannot be read stops a run before it starts.
+
+**Host governor** (`governor.py`; P40). `probe()` reads the machine through a `hardware.Host` and three injectable readers: the
+1-minute load and CPU count, available RAM (Linux `MemAvailable`; macOS `vm_stat` free, inactive and speculative pages) and free
+disk at the run folder. Each reading is a value or the reason it is unknown. `decide(reading, policy, running_lanes)` is pure and
+names each `[governor]` limit that binds; unknown readings and limits of 0 bind nothing. `prepare_run` takes the first reading and
+sets `Deck.start_gate`; `Run._govern` reads again every 15 seconds in a worker thread and calls `Deck.recheck_starts()`. One
+warning event when starts begin to be held (`gated: true`) and one when they resume.
 
 ### Event log
 

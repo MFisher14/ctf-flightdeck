@@ -1,0 +1,420 @@
+{
+  "metadata.format/filename": {
+    "accepted": "basename",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-01/metadata-forensics-day-01-hash-to-ride: base (attempt 373a335d), time trial (3a62dfe4) and mastery (6867196f) all CORRECT; the answer is the base filename with its extension and no directory (evidence-note.txt, roster.csv)"
+    ]
+  },
+  "metadata.format/size_bytes": {
+    "accepted": "integer",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-01/metadata-forensics-day-01-hash-to-ride: base (attempt 373a335d), time trial (3a62dfe4) and mastery (6867196f) all CORRECT; the answer is a base-10 integer with no units or separators (240, 129)"
+    ]
+  },
+  "metadata.format/md5": {
+    "accepted": "hex_lower",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-01/metadata-forensics-day-01-hash-to-ride: base (attempt 373a335d), time trial (3a62dfe4) and mastery (6867196f) all CORRECT; 32 lowercase hex characters submitted (the judge's normalization for this id is case_insensitive)"
+    ]
+  },
+  "metadata.format/sha1": {
+    "accepted": "hex_lower",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-01/metadata-forensics-day-01-hash-to-ride: base (attempt 373a335d), time trial (3a62dfe4) and mastery (6867196f) all CORRECT; 40 lowercase hex characters submitted (normalization case_insensitive)"
+    ]
+  },
+  "metadata.format/sha256": {
+    "accepted": "hex_lower",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-01/metadata-forensics-day-01-hash-to-ride: base (attempt 373a335d), time trial (3a62dfe4) and mastery (6867196f) all CORRECT; 64 lowercase hex characters, no prefix or spaces (normalization case_insensitive)"
+    ]
+  },
+  "metadata.format/magic.prefix_hex_16": {
+    "accepted": "hex_lower",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-02/metadata-forensics-day-02-looks-can-be-deceiving: time trial (attempt e7d6a390) and mastery (57b39b0d) CORRECT; 32 lowercase hex characters for the first 16 bytes, no 0x prefix or spaces (normalization trim)"
+    ]
+  },
+  "metadata.format/text.utf8_bom_present": {
+    "accepted": "true_false",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-03/metadata-forensics-day-03-bom-voyage: time trial (attempt 21699ebe) and mastery (cf2ebe81) CORRECT; an enum whose accepted_values are true and false, lowercase"
+    ]
+  },
+  "metadata.format/jpeg.sof_dimensions_pixels": {
+    "accepted": "wxh",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "challenges/day-04/metadata-forensics-day-04-picture-this: base (attempt 6ee08aab, 257x146), time trial (8bd05179, 274x157) and mastery (6478b256, 291x168 and 308x179) all CORRECT",
+      "challenges/day-04/metadata-forensics-day-04-picture-this/notes.md 'Technique': WIDTHxHEIGHT, lowercase x, no spaces"
+    ]
+  },
+  "metadata.format/pdf.header_version": {
+    "accepted": "raw",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-06T13:00:03Z accepted raw scope=key attempt=f55fed59-7495-4961-a914-50770bb587f0 ids=d06-pdf-001-pdf-header-version"
+    ]
+  },
+  "metadata.format/zip.eocd_total_entries": {
+    "accepted": "integer",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-07T13:00:21Z accepted integer scope=key attempt=00cfbd0e-65ae-4014-a0e5-0c22ffad33aa ids=d07-zip-001-zip-eocd-total-entries"
+    ]
+  },
+  "metadata.format/zip.central_directory_member_names": {
+    "accepted": "json_compact",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-08T13:01:08Z accepted json_compact scope=key attempt=7169d1ed-79d3-452d-a214-a7db16aca44c ids=d07-zip-001-zip-central-directory-member-names"
+    ]
+  },
+  "metadata.format/pe.coff_machine_u16_hex": {
+    "accepted": "0x_u16_4digits",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-09T13:01:03Z accepted 0x_u16_4digits scope=key attempt=096cfd12-5a0a-48b3-8267-1f01adfe90a6 ids=d09-pe-001-pe-coff-machine-u16-hex"
+    ]
+  },
+  "metadata.format/pe.address_of_entry_point_rva_hex": {
+    "accepted": "0x_u32_8digits",
+    "rejected": [
+      "0x_minimal"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-10T13:01:03Z rejected 0x_minimal scope=key attempt=782c078b-f07c-4ef5-b2d8-908e25d70f74 ids=d09-pe-001-pe-address-of-entry-point-rva-hex",
+      "2026-10-10T13:01:04Z accepted 0x_u32_8digits scope=key attempt=782c078b-f07c-4ef5-b2d8-908e25d70f74 ids=d09-pe-001-pe-address-of-entry-point-rva-hex"
+    ]
+  },
+  "metadata.format/pe.version_original_filename": {
+    "accepted": "raw",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-11T13:00:02Z accepted raw scope=key attempt=1ec49572-c6c8-479b-b2d0-6bccd513c49b ids=d09-pe-001-pe-version-original-filename"
+    ]
+  },
+  "metadata.format/dotnet_mvid_guid": {
+    "accepted": "raw",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-12T13:01:09Z accepted raw scope=key attempt=d30bd8e0-85b6-4567-be9b-8bb232d8c8b8 ids=d12-dotnet-001-dotnet-mvid-guid"
+    ]
+  },
+  "metadata.format/msi.product_code_guid": {
+    "accepted": "braces_upper",
+    "rejected": [
+      "hyphen_lower",
+      "hyphen_upper",
+      "compact_lower",
+      "compact_upper"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-13T13:01:27Z rejected hyphen_lower scope=key attempt=de8f873c-ce59-48b3-846d-fad1f10ba103 ids=d13-msi-001-msi-product-code-guid",
+      "2026-10-13T13:01:27Z rejected hyphen_upper scope=key attempt=de8f873c-ce59-48b3-846d-fad1f10ba103 ids=d13-msi-001-msi-product-code-guid",
+      "2026-10-13T13:01:29Z rejected compact_lower scope=key attempt=de8f873c-ce59-48b3-846d-fad1f10ba103 ids=d13-msi-001-msi-product-code-guid",
+      "2026-10-13T13:01:30Z rejected compact_upper scope=key attempt=de8f873c-ce59-48b3-846d-fad1f10ba103 ids=d13-msi-001-msi-product-code-guid",
+      "2026-10-13T13:01:31Z accepted braces_upper scope=key attempt=de8f873c-ce59-48b3-846d-fad1f10ba103 ids=d13-msi-001-msi-product-code-guid"
+    ]
+  },
+  "metadata.format/lnk.target_path_windows": {
+    "accepted": "raw",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-14T13:01:02Z accepted raw scope=key attempt=68cf1837-bf3d-4a89-bf2d-b7d18334d6ff ids=d14-lnk-001-lnk-target-path-windows"
+    ]
+  },
+  "metadata.format/ooxml.external_relationship_targets": {
+    "accepted": null,
+    "rejected": [
+      "json_compact"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-15T13:00:03Z rejected json_compact scope=key attempt=0209dfb9-e271-4560-afd3-ce4cc8a5ecdc ids=d15-ooxml-001-ooxml-external-relationship-targets"
+    ]
+  },
+  "metadata.format/ooxml.external_relationship_targets+order": {
+    "accepted": "sorted",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-15T13:01:32Z accepted sorted scope=key attempt=0209dfb9-e271-4560-afd3-ce4cc8a5ecdc ids=d15-ooxml-001-ooxml-external-relationship-targets"
+    ]
+  },
+  "metadata.format/email_message_id": {
+    "accepted": "raw~eml.message_id",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-16T13:00:05Z accepted raw~eml.message_id scope=key attempt=b4226bac-93d1-44d1-be7a-8cfd343b1de3 ids=d16-email-001-email-message-id"
+    ]
+  },
+  "metadata.media.primary_audio_codec_name/wav": {
+    "accepted": "ffprobe_codec_name",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-17T13:00:35Z accepted ffprobe_codec_name scope=key attempt=3bad47a0-1176-490d-a390-96579611f98d ids=d17-audio-001-media-primary-audio-codec-name"
+    ]
+  },
+  "metadata.media.primary_video_dimensions/mp4": {
+    "accepted": "wxh",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-18T13:00:04Z accepted wxh scope=key attempt=c20ef3fa-81db-4d10-9c54-7ab997d51998 ids=d18-video-001-media-primary-video-dimensions"
+    ]
+  },
+  "metadata.format/elf.e_machine_u16_hex": {
+    "accepted": "0x_u16_4digits~elf.e_machine",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-19T13:00:06Z accepted 0x_u16_4digits~elf.e_machine scope=key attempt=a3b88b82-588d-487e-bec7-c5cf8f56c379 ids=d19-elf-001-elf-e-machine-u16-hex"
+    ]
+  },
+  "metadata.format/apk.package_name": {
+    "accepted": "raw",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-21T13:02:47Z accepted raw scope=key attempt=7f28e024-cdbf-4439-98e7-d93c5e64658d ids=d21-apk-001-apk-package-name"
+    ]
+  },
+  "metadata.format/macho.cpu_type_set#candidates": {
+    "accepted": "cpu_type_hex",
+    "rejected": [
+      "arch_name",
+      "cpu_type_constant",
+      "cpu_type_integer"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-20T13:01:20Z rejected arch_name scope=key attempt=c39bb1ad-3e37-4937-afad-fd1a5dff3cda ids=d20-macho-001-macho-cpu-type-set",
+      "2026-10-20T13:01:20Z rejected cpu_type_constant scope=key attempt=c39bb1ad-3e37-4937-afad-fd1a5dff3cda ids=d20-macho-001-macho-cpu-type-set",
+      "2026-10-20T13:01:20Z rejected cpu_type_integer scope=key attempt=c39bb1ad-3e37-4937-afad-fd1a5dff3cda ids=d20-macho-001-macho-cpu-type-set",
+      "2026-10-20T13:01:21Z accepted cpu_type_hex scope=key attempt=c39bb1ad-3e37-4937-afad-fd1a5dff3cda ids=d20-macho-001-macho-cpu-type-set"
+    ]
+  },
+  "metadata.d21-apk-001-apk-package-name/proposed.7f28e024#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:shape:filename",
+      "enum:absent:none_no_evidence",
+      "enum:shape:filename~spell:lower",
+      "model:manifest_package_attr_utf16"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-21T13:00:04Z rejected enum:shape:filename scope=key attempt=7f28e024-cdbf-4439-98e7-d93c5e64658d ids=d21-apk-001-apk-package-name",
+      "2026-10-21T13:00:05Z rejected enum:absent:none_no_evidence scope=key attempt=7f28e024-cdbf-4439-98e7-d93c5e64658d ids=d21-apk-001-apk-package-name",
+      "2026-10-21T13:00:05Z rejected enum:shape:filename~spell:lower scope=key attempt=7f28e024-cdbf-4439-98e7-d93c5e64658d ids=d21-apk-001-apk-package-name",
+      "2026-10-21T13:00:07Z rejected model:manifest_package_attr_utf16 scope=key attempt=7f28e024-cdbf-4439-98e7-d93c5e64658d ids=d21-apk-001-apk-package-name"
+    ]
+  },
+  "metadata.format/jar.main_class": {
+    "accepted": "raw",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-22T13:00:05Z accepted raw scope=key attempt=e63e3bdb-a436-4755-bbb9-330774aecd04 ids=d22-jar-001-jar-main-class"
+    ]
+  },
+  "metadata.format/sqlite.page_size_bytes": {
+    "accepted": "integer",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T13:00:05Z accepted integer scope=key attempt=5173d062-c395-4674-a149-1d15b860524e ids=d23-sqlite-001-sqlite-page-size-bytes"
+    ]
+  },
+  "metadata.media.primary_audio_codec_name/flac+flac": {
+    "accepted": "ffprobe_codec_name",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T17:55:58Z accepted ffprobe_codec_name scope=key attempt=0eab6840-ac97-4714-b22c-62e2b14ffeed ids=set1.d17-audio-001-media-primary-audio-codec-name"
+    ]
+  },
+  "metadata.media.primary_audio_codec_name/mp3+layer3": {
+    "accepted": "ffprobe_codec_name",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T17:55:59Z accepted ffprobe_codec_name scope=key attempt=0eab6840-ac97-4714-b22c-62e2b14ffeed ids=set4.d17-audio-001-media-primary-audio-codec-name"
+    ]
+  },
+  "metadata.media.primary_audio_codec_name/mp4+mp4a_40": {
+    "accepted": "ffprobe_codec_name",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-23T17:55:59Z accepted ffprobe_codec_name scope=key attempt=0eab6840-ac97-4714-b22c-62e2b14ffeed ids=set6.d17-audio-001-media-primary-audio-codec-name"
+    ]
+  },
+  "metadata.format/macho.cpu_type_set+order#candidates": {
+    "accepted": "sorted",
+    "rejected": [
+      "file_order"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-23T17:55:44Z rejected file_order scope=key attempt=61a81fdf-d584-4165-b3bb-ff755d48fbd4 ids=d20-macho-001-macho-cpu-type-set",
+      "2026-10-23T17:55:45Z accepted sorted scope=key attempt=61a81fdf-d584-4165-b3bb-ff755d48fbd4 ids=d20-macho-001-macho-cpu-type-set"
+    ]
+  },
+  "metadata.format/evtx.record_count": {
+    "accepted": "integer",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-24T13:00:05Z accepted integer scope=key attempt=b04a16cf-1668-42b5-9b78-7d6dd37cf0eb ids=d24-evtx-001-evtx-record-count"
+    ]
+  },
+  "metadata.media.primary_audio_codec_name/ogg+opus": {
+    "accepted": "ffprobe_codec_name",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-24T13:04:06Z accepted ffprobe_codec_name scope=key attempt=7f1dd3f6-430b-42b4-a786-a227049fc37d ids=set1.d17-audio-001-media-primary-audio-codec-name"
+    ]
+  },
+  "metadata.media.primary_audio_codec_name/ogg+vorbis": {
+    "accepted": "ffprobe_codec_name",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-24T13:04:07Z accepted ffprobe_codec_name scope=key attempt=7f1dd3f6-430b-42b4-a786-a227049fc37d ids=set2.d17-audio-001-media-primary-audio-codec-name"
+    ]
+  },
+  "metadata.format/registry_hive_root_name": {
+    "accepted": "raw~regf.root_name",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-25T13:00:04Z accepted raw~regf.root_name scope=key attempt=5d2e9b39-980d-43ac-9c08-eeb16f796255 ids=d25-registry-001-registry-hive-root-name"
+    ]
+  },
+  "metadata.format/prefetch.executable_name": {
+    "accepted": "raw",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-26T13:00:05Z accepted raw scope=key attempt=5f9783e7-20db-46e8-9d17-251d05653dd7 ids=d26-prefetch-001-prefetch-executable-name"
+    ]
+  },
+  "metadata.format/pcap.packet_count": {
+    "accepted": "integer",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-27T13:00:06Z accepted integer scope=key attempt=19329455-9212-42f5-bc83-a18001236864 ids=d27-pcap-001-pcap-packet-count"
+    ]
+  },
+  "metadata.format/disk.partition_start_lba_sequence+gpt": {
+    "accepted": "json_numbers_table_order",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-28T13:01:11Z accepted json_numbers_table_order scope=key attempt=760c40cf-0860-4f84-98da-852c2f0d4614 ids=d28-disk-001-disk-partition-start-lba-sequence"
+    ]
+  },
+  "metadata.format/x509.sha256_fingerprint": {
+    "accepted": "hex_lower",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-29T13:09:55Z accepted hex_lower scope=key attempt=14b7188e-2a52-4ea9-a1eb-c0135c8b27ae ids=d29-x509-001-x509-sha256-fingerprint"
+    ]
+  },
+  "metadata.d30-cluster-001-relation-identical-sha256-groups/proposed.8837e262#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:kv:sha256",
+      "enum:kv:sha256#2",
+      "enum:kv:sha256#3"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:00:04Z rejected enum:kv:sha256 scope=key attempt=8837e262-c4a1-4acc-85c7-ec85bb976b9d ids=d30-cluster-001-relation-identical-sha256-groups",
+      "2026-10-30T13:00:05Z rejected enum:kv:sha256#2 scope=key attempt=8837e262-c4a1-4acc-85c7-ec85bb976b9d ids=d30-cluster-001-relation-identical-sha256-groups",
+      "2026-10-30T13:00:06Z rejected enum:kv:sha256#3 scope=key attempt=8837e262-c4a1-4acc-85c7-ec85bb976b9d ids=d30-cluster-001-relation-identical-sha256-groups"
+    ]
+  },
+  "metadata.relation.identical_sha256_groups/zip#candidates": {
+    "accepted": "stems_first_seen",
+    "rejected": [
+      "paths_first_seen",
+      "paths_sha_order",
+      "basenames_first_seen",
+      "objects_sha256_paths",
+      "objects_sha256_members",
+      "objects_sha256_files",
+      "basenames_sha_order"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:01:04Z rejected paths_first_seen scope=key attempt=8837e262-c4a1-4acc-85c7-ec85bb976b9d ids=d30-cluster-001-relation-identical-sha256-groups",
+      "2026-10-30T13:01:04Z rejected paths_sha_order scope=key attempt=8837e262-c4a1-4acc-85c7-ec85bb976b9d ids=d30-cluster-001-relation-identical-sha256-groups",
+      "2026-10-30T13:01:04Z rejected basenames_first_seen scope=key attempt=8837e262-c4a1-4acc-85c7-ec85bb976b9d ids=d30-cluster-001-relation-identical-sha256-groups",
+      "2026-10-30T13:01:04Z rejected objects_sha256_paths scope=key attempt=8837e262-c4a1-4acc-85c7-ec85bb976b9d ids=d30-cluster-001-relation-identical-sha256-groups",
+      "2026-10-30T13:01:05Z rejected objects_sha256_members scope=key attempt=8837e262-c4a1-4acc-85c7-ec85bb976b9d ids=d30-cluster-001-relation-identical-sha256-groups",
+      "2026-10-30T13:01:05Z rejected objects_sha256_files scope=key attempt=8837e262-c4a1-4acc-85c7-ec85bb976b9d ids=d30-cluster-001-relation-identical-sha256-groups",
+      "2026-10-30T13:01:06Z rejected basenames_sha_order scope=key attempt=8837e262-c4a1-4acc-85c7-ec85bb976b9d ids=d30-cluster-001-relation-identical-sha256-groups",
+      "2026-10-30T13:01:06Z accepted stems_first_seen scope=key attempt=8837e262-c4a1-4acc-85c7-ec85bb976b9d ids=d30-cluster-001-relation-identical-sha256-groups"
+    ]
+  },
+  "metadata.d30-cluster-001-relation-identical-sha256-groups/proposed.7034dec7#candidates": {
+    "accepted": null,
+    "rejected": [
+      "enum:fact:file.sha256",
+      "enum:fact:file.sha256~spell:items_prefix_lower"
+    ],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:03:57Z rejected enum:fact:file.sha256 scope=key attempt=7034dec7-da2a-46eb-9292-6b2b756ad137 ids=d30-cluster-001-relation-identical-sha256-groups",
+      "2026-10-30T13:03:58Z rejected enum:fact:file.sha256~spell:items_prefix_lower scope=key attempt=7034dec7-da2a-46eb-9292-6b2b756ad137 ids=d30-cluster-001-relation-identical-sha256-groups"
+    ]
+  },
+  "metadata.relation.identical_sha256_groups/zip+order#candidates": {
+    "accepted": "stems_sorted_groups_by_first",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-30T13:04:15Z accepted stems_sorted_groups_by_first scope=key attempt=7034dec7-da2a-46eb-9292-6b2b756ad137 ids=d30-cluster-001-relation-identical-sha256-groups"
+    ]
+  },
+  "metadata.graph.execution_chain_artifact_ids/zip+chain#candidates": {
+    "accepted": "stems_chain",
+    "rejected": [],
+    "split": false,
+    "evidence": [
+      "2026-10-31T13:03:00Z accepted stems_chain scope=key attempt=77a5a3cc-714b-439a-be06-c5d0f240e238 ids=d31-case-001-graph-execution-chain-artifact-ids"
+    ]
+  }
+}

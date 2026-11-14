@@ -1,0 +1,34 @@
+# Engine manifest (docs/CONTRACTS.md section 6). Written by hand for B-065.
+# Rebuilds a Linux md (superblock v0.90 / v1.x) or bare RAID-0/1/4/5 array from member images, one
+# lost member by XOR, a blind order x layout x chunk-size sweep scored by filesystem structure and
+# file CRCs, then takes the files out without mounting and sweeps them for the event's flag.
+id = "toolkits.raid_rebuild"
+lane = "toolkits"
+entry = "solvers.toolkits.raid_rebuild:solve"
+capabilities = ["executes", "raid", "mdadm", "xor", "crc", "ext4", "fat", "disk", "deleted"]
+inputs = ["magic:0xfc4e2ba9", "ext:.img", "ext:.raw", "ext:.dd"]
+needs_tools = ["py:numpy"]
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-065: an md member whose superblock starts the file (v1.1; magic a92b4efc, little-endian on disk)
+files = ["magic:0xfc4e2ba9"]
+priority = 66
+
+[[routes]]  # B-065: the words of a degraded-array brief
+keywords = [" raid", "raid-5", "raid5", "raid-0", "raid0", "raid-1", "raid1", "mdadm", "md array", "md superblock",
+            "storage member", "members survived", "surviving member", "degraded array", "left-symmetric",
+            "right-symmetric"]
+priority = 66
+
+# B-065: at intake, on any raw image. The md magic matcher sees only a v1.1 superblock (a matcher reads
+# the start of a file; v1.2 sits at byte 4096, v1.0 and v0.90 at the end), so raw-image names select
+# too; the engine probes every position itself and returns `none` at once when no file is a member.
+# spawns: the flag sweep it runs over the extracted files starts 7-Zip for a 7z or RAR member.
+[intake]
+select = "files"
+run = "challenge"
+match = ["magic:0xfc4e2ba9", "ext:.img", "ext:.raw", "ext:.dd", "name:*raid*", "name:*.md[0-9]", "name:disk[0-9]*",
+         "name:member[0-9]*"]
+timeout = 120
+spawns = true

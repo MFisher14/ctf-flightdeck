@@ -1,0 +1,24 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-251 (long-tail formats).
+# Regeneration never overwrites this file.
+id = "toolkits.lt_model_meta"
+lane = "toolkits"
+entry = "solvers.toolkits.lt_model_meta:solve"
+capabilities = ["executes", "tflite", "coreml", "ml", "model-metadata", "flatbuffers", "protobuf"]
+inputs = ["ext:.tflite", "ext:.mlmodel"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # a TFLite or Core ML model anywhere in the handout
+files = ["ext:.tflite", "ext:.mlmodel"]
+priority = 31
+
+[[routes]]
+keywords = ["tflite", "tensorflow lite", "coreml", "core ml", "mlmodel", "mlpackage"]
+priority = 61
+
+[intake]  # B-002: read model metadata at intake (nothing is loaded or run)
+select = "files"
+run = "challenge"
+match = ["ext:.tflite", "ext:.mlmodel"]
+timeout = 60

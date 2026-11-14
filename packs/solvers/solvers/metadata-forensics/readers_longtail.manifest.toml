@@ -1,0 +1,15 @@
+# Engine manifest (docs/CONTRACTS.md section 6, B-186). Hand-written for B-251 (long-tail formats).
+# Regeneration never overwrites this file.
+# import-only: register(M) is called by properties_strict (MORE_FILES); `ctf run` refuses library engines
+id = "metadata_forensics.readers_longtail"
+lane = "metadata-forensics"
+entry = "solvers.metadata-forensics.readers_longtail:register"
+capabilities = ["library", "avro", "parquet", "tnef", "jxl", "tflite", "coreml"]
+inputs = ["magic:Obj\u0001", "magic:PAR1", "name:winmail.dat", "ext:.jxl", "ext:.tflite", "ext:.mlmodel"]
+needs_tools = []
+cost_class = "cheap"
+status = "active"
+
+[[routes]]  # B-251: members of these formats reach the metadata lane, as readers_riff does for RIFF (below the toolkit readers' 31)
+files = ["magic:Obj\u0001", "magic:PAR1", "name:winmail.dat", "ext:.jxl", "ext:.tflite", "ext:.mlmodel"]
+priority = 28

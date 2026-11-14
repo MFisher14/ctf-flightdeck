@@ -360,13 +360,19 @@ def test_no_switch_shows_a_bool_placeholder_and_every_argument_is_named_in_capit
                 arguments[(" ".join(path[1:]), param.name)] = param.metavar
     assert arguments == {
         ("play", "board"): "BOARD",
+        ("start", "folder"): "FOLDER",
+        ("add", "folder"): "FOLDER",
+        ("vpn add", "folder"): "FOLDER", ("vpn add", "file"): "FILE",
+        ("vpn up", "target"): "FOLDER", ("vpn status", "target"): "FOLDER", ("vpn down", "target"): "FOLDER",
         ("report", "run_dir"): "RUN_DIR", ("writeups", "run_dir"): "RUN_DIR", ("score", "run_dir"): "RUN_DIR", ("gaps", "run_dir"): "RUN_DIR", ("share", "run_dir"): "RUN_DIR",
         ("models", "entry"): "ID", ("preflight", "event"): "EVENT.toml",
         ("ctfd pull", "url"): "URL", ("ctfd pull", "dest"): "DEST",
+        ("gm list", "url"): "URL", ("gm pull", "url"): "URL", ("gm pull", "dest"): "DEST",
         ("team init", "folder"): "FOLDER", ("team status", "folder"): "FOLDER", ("l1 import", "folder"): "FOLDER",
         ("l1 list", "pack"): "PACK", ("l1 route", "pack"): "PACK", ("l1 run", "pack"): "PACK", ("build check", "pack"): "PACK",
         ("l1 route", "challenge_dir"): "CHALLENGE_DIR", ("l1 run", "challenge_dir"): "CHALLENGE_DIR",
         ("build gap", "challenge_dir"): "CHALLENGE_DIR",
+        ("pack install", "source"): "SOURCE", ("pack image", "pack"): "PACK", ("pack info", "pack"): "PACK",
     }
     for command in (["writeups"], ["models"], ["init"], ["l1", "run"]):  # as printed: no <bool> but --help's own
         shown = CliRunner().invoke(cli.app, [*command, "--help"], terminal_width=200).output
@@ -725,6 +731,8 @@ def test_screenshots_are_byte_identical_on_every_run(flag_runs):
 MOUNTED = {
     ("preflight",): "event profile",
     ("ctfd", "pull"): "CTFd",
+    ("gm", "pull"): "Game Master",
+    ("gm", "list"): "Game Master",
     ("team", "init"): "",
     ("team", "status"): "",
     ("l1", "list"): "",
@@ -751,7 +759,7 @@ def test_the_root_help_groups_the_commands():
     out = CliRunner().invoke(cli.app, ["--help"], terminal_width=200).output
     for panel in ("Play", "Set up", "Before and during an event", "Solvers (L1)", "After a run"):
         assert panel in out
-    for name in ("preflight", "ctfd", "team", "l1", "report", "writeups", "score", "eval-local", "gaps"):
+    for name in ("preflight", "ctfd", "gm", "team", "l1", "report", "writeups", "score", "eval-local", "gaps"):
         assert f" {name} " in out
 
 
@@ -768,10 +776,10 @@ def test_the_root_help_shows_the_panels_in_the_order_a_player_meets_them():
     panels.pop("Options")
     assert panels == {
         "Set up": ["init", "doctor", "config", "eval-local", "models", "image"],
-        "Play": ["mock", "play", "practice"],
-        "Before and during an event": ["preflight", "ctfd", "team"],
+        "Play": ["mock", "play", "practice", "start"],
+        "Before and during an event": ["add", "preflight", "ctfd", "gm", "team", "vpn"],
         "After a run": ["report", "writeups", "score", "gaps", "share"],  # gaps reads a run folder, like the three before it
-        "Solvers (L1)": ["l1", "build"],
+        "Solvers (L1)": ["l1", "pack", "build"],
     }
 
 
