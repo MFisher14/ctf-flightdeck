@@ -4,6 +4,11 @@ The console is the product: a fleet view to watch every lane and a focus view to
 with one-key interventions in the fleet and a chat box with slash commands in both.
 `flightdeck mock` shows it on scripted data; `play` and `practice` drive it with real lanes.
 
+It draws in one of two layouts (P51). **deck** is the whole dashboard, and what the two sections
+below describe. **simple**, the default, shows the same two views with less in them:
+[Layouts](#layouts) says what it leaves out. Its colours come from a theme (P52,
+[Themes](#themes)).
+
 ## Fleet view (the default screen)
 
 ```
@@ -57,6 +62,15 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   clears after 12 seconds. When the queue is held it says so and how to lift it: "queue held until
   you /unhold it: <why>". Lifting a hold that an API outage caused says how many of the challenges
   it parked were queued again.
+- **An empty board**: while the board has no challenge, the page says so where the tables would
+  be, and stays until there is one (a status line would expire). On a board the player fills:
+  `No challenges yet. Type /new to hand one over (its text, files, a screenshot).`, and the
+  command bar reads `/new to add a challenge · / for commands`. On a board that fills by itself:
+  `Waiting for the board: challenges appear here when the event releases them.` A board with
+  challenges and no lane has `No lanes yet.` on the why line.
+- **The `/` menu**: every command that matches what is typed, eight rows at a time; the arrow
+  keys scroll to the rest. A lane's suggested answers come first; with no lane to act on,
+  `/new`, `/help`, `/config` and `/queue` come first, then the rest in their usual order.
 
 ## Focus view (enter on a lane)
 
@@ -89,6 +103,89 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 - **Chat box**: plain text is a message the lane reads on its next turn; `/` runs a command. Typing
   reaches it from any pane. An unsent message stays with its lane when you switch lanes.
 - **ctrl+n** goes through the lanes that need you in attention order, then round to the first.
+
+## Layouts
+
+`[console] layout` in the config is `simple` (the default) or `deck`; `/layout [simple|deck]`
+switches for the rest of the run (alone: the other one), keeping the selection, the filter, the
+sort and anything typed. `deck` is the console as the two sections above describe it. At 64
+columns or fewer the compact layout (below) is drawn, whichever is chosen. `mock --screenshot`
+takes its pictures in `deck`, and saves the simple layout as `simple-open`, `simple-alert` and
+`simple-focus`.
+
+`simple` shows what needs the player and little else:
+
+```
+ flightdeck ╱ event ╱ team ╱ queue 33 ╱ ▲ 3 need you ╱ $2.76
+╭ lanes 16/16 · 33 waiting · ✓ 1 solved ─────────────────────────────────────────────────────────────╮
+│   !          lane chall         state    cost  last action                                         │
+│   [flag]     L04  Ticket Desk   wait     $.16  candidate flag mock{…}                              │
+│ ▌ [offhint]  L01  Static Hiss   run      $.10  python3 diff_channels.py --window 512 left.wav …    │
+│   ...                                                                                              │
+│ ▌L01 ▲ Ignores the hint: The description hints at slow-scan TV …                                   │
+│    1  redirect with the hinted technique   2  hint   x  dismiss   enter open                       │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ● Wave 2: 43 challenges · 10 lanes started · 33 queued
+╭ / for commands · enter opens the selected lane · or type a message to it ──────────────────────────╮
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ 1-9 answer  x dismiss  enter open  / commands  ? help  q quit
+```
+
+- **Header.** Only what is not the usual: flightdeck, the event's name, the mock tag, `team` in
+  team mode, `host` when lanes run on this machine, `queue N` when the queue is not empty,
+  `AUTOPILOT` while it is engaged, `▲ N need you` when any do, `queue held` and why, and the
+  run's dollars. No solo, docker, lane count, "all clear", tokens or clock. On a narrow terminal
+  the event's name goes first, then the mock tag, the queue, `host` and `team`; flightdeck,
+  `AUTOPILOT`, the need-you count, a held queue and the dollars never drop.
+- **Lane list.** One panel, no board. Columns: the attention cell (`!`), lane, challenge, state,
+  cost, last action. The model, turns and idle time are in the focus view's title. The panel's
+  title is `lanes n/m`, then ` · N waiting` when the queue is not empty, ` · ✓ N solved` when
+  any are, ` · sort X` only when the sort is not by attention, and the filter as in `deck`.
+- **Why line.** Why the selected lane is flagged and its answers, as in `deck`, for a lane with
+  an alert or an approval waiting; blank for any other lane (its row says what it is doing).
+- **Key line.** Only the keys that apply to the selected lane now. Every other key still acts,
+  and `?` lists them all:
+
+  | The selected lane | Key line |
+  |---|---|
+  | none, on a board the player fills | `/new add a challenge  ? help  q quit` |
+  | none, on a platform's board | `? help  q quit` |
+  | needs nothing, or has finished | `enter open  / commands  ? help  q quit` |
+  | waits for an approval | `a approve  d decline  enter open  / commands  ? help  q quit` |
+  | has an alert with numbered answers | `1-9 answer`, and `x dismiss` when the alert is about its course, then `enter open  / commands  ? help  q quit` |
+
+- **Focus view.** A part shows only when it has something in it: the files pane once the lane
+  has changed a file, the strip of other lanes while one of them needs the player, the
+  needs-you card while this lane does. The title is the same as in `deck` (the lane, its
+  challenge, model, state, turns, tokens, cost and idle time). Key line: `esc lanes  / commands
+  /help all keys`, with `1-9 answer` first while the lane has numbered answers.
+- **The first lane.** On a board the player fills, the first lane of the run that a `/new`
+  starts opens in the focus view, once it exists: only while the player is still in the lane
+  list with nothing typed in the command bar, and only while it is the one lane. Later lanes
+  start in the list. Never in `deck`, and never on a platform's board.
+- **The welcome screen** names the lanes as the middle of the screen, and no board.
+
+`flightdeck doctor` measures the terminal in the layout the config names: the simple layout has
+no board to leave out, and nothing is left out of it from the first width that is not compact
+and fits its header and its longest key line.
+
+## Themes
+
+`[console] theme` in the config names the palette the console draws every colour from (P52):
+`flightdeck` (the default), `light`, `nord`, `gruvbox`, `dracula`, or the player's own
+`themes/NAME.toml` beside the config ([GUIDE.md](GUIDE.md#themes) has the file's keys). `/theme`
+lists them and marks the one in use; `/theme NAME` repaints what is on screen, a transcript's
+lines included, for the rest of the run. `mock --screenshot` takes its pictures in the default
+theme, and saves the fleet in the light one as `theme-light`.
+
+A theme is colours only. The chips stay solid labels, the header's segments solid blocks, the
+marks and glyphs the same plain Unicode, and what never drops from the header never drops in
+any theme. A palette has 17 colours by role (the page, text, a muted text, an accent, the
+states `ok`, `error`, `warn`, `info` and `pending`, the ink on their chips, and the surfaces),
+whether it is dark, and the style of the diff view. Because the roles carry meaning (`error` is
+"needs you", `warn` is a held queue), a theme whose pairs the player could not read is refused:
+19 pairs, each at a WCAG contrast of 3.0 or more. A theme that cannot be used is an error when
+the config loads and a warning from `/theme`; the default is never drawn in its place.
 
 ## Attention order
 
@@ -137,6 +234,8 @@ more, as it does at 100%; escalate is offered at 80% only.
 | enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back` returns) |
 |  | `/diff [file]` | Show the files the lane changed |
 |  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` | Alone: a dialog with this run's settings (lanes at once, what happens to a flag); Enter applies, esc cancels. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run. |
+|  | `/layout [simple\|deck]` | The console's layout for the rest of this run: `simple` (one list of lanes, what needs you, the keys that apply now) or `deck` (the board and every column); alone, the other one. The status line says the config line that keeps it (`layout = "deck"` under `[console]`), and that the compact layout shows when the terminal is narrow. Any other word is refused: `/layout takes simple or deck`. |
+|  | `/theme [name]` | Alone: the themes there are, the one in use marked. With a name: the console's colours for the rest of this run, and the status line says the config line that keeps it. A name that is no theme, or a theme file that cannot be used, is a warning with the reason, and the theme in use stays. |
 |  | `/note <text>` | A note for every lane (an organizer's ruling, a replaced handout): each running lane reads it on its next turn, and every lane started later in this run reads it at its start. At most 12 stand at once. |
 |  | `/new [name]` | Hand a challenge over, on a board you fill yourself: a form with the challenge's name and a box for its description and its instance's address; its files and screenshots are attached by a drop on the terminal, `ctrl+o` or `ctrl+v`, and listed on the form (a path written in the description is only text; the address is `https://...` or `nc host port`, on a line of its own); category and points are optional. A line under the box says what is attached. `ctrl+v` pastes a screenshot from the clipboard, and the lanes' model reads an image's text into the description. `ctrl+s` adds it and a lane starts on it; `esc` cancels. Refused on a board that comes from a platform, and in the mock. |
 |  | `/attach [challenge] <files>` | Add files to a challenge on a board you fill yourself: drag them onto the command bar. Its lanes start afresh with them. Without a challenge: the open lane's. |
@@ -234,7 +333,8 @@ the hold as always, and autopilot stays off until `/autopilot on`.
 
 ## Narrow terminals
 
-What gives way when the terminal is narrow, least needed first:
+What gives way when the terminal is narrow, least needed first (in the `deck` layout; the simple
+layout's header and key line are under [Layouts](#layouts)):
 
 - **Header.** The dollars go first, then tokens, the event clock, the event name, the mock tag and
   docker/host; flightdeck, solo/team, lanes, the need-you count and a held queue stay. A held
@@ -254,7 +354,8 @@ leaves out is what the console leaves out.
 ### Compact layout (64 columns or fewer)
 
 For a phone over SSH (flightdeck in tmux, 50 to 60 columns). At 64 columns or fewer both views
-switch to a layout made for that width; from 65 columns the rules above apply. It keeps what
+switch to a layout made for that width, whether the console is in `simple` or `deck`; from 65
+columns the rules above apply. It keeps what
 matters there: what needs you and why, the one-key answers, and each lane's state and cost.
 
 ```
