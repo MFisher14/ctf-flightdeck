@@ -792,20 +792,45 @@ def lane_dollars(lane: Lane, *, short: bool = False) -> str:
     return cost + LATER if lane.dollars_later else cost
 
 
-def lane_cells(deck: Deck, lane: Lane, selected: bool = False, *, compact: bool = False) -> dict[str, Text]:
+STARTING = "starting"  # the simple layout's state for a lane that has done nothing yet (starting())
+
+
+def starting(lane: Lane) -> bool:
+    """`lane` has started and done nothing yet: running, no turn and no step of its own, and
+    nothing spent, nor a turn under way whose cost is still to come. The simple layout's row
+    says `starting` for it, in muted text, with a blank cost (P66): `run` and `$.00` would
+    say it works and has spent nothing, before it has begun."""
+    return (
+        lane.state is LaneState.RUNNING
+        and lane.turns == 0
+        and not any(action.kind is ActionKind.STEP for action in lane.actions)
+        and lane.tokens == 0
+        and lane.dollars == 0
+        and not lane.known_dollars
+        and not lane.unpriced
+        and not lane.dollars_later
+    )
+
+
+def lane_cells(deck: Deck, lane: Lane, selected: bool = False, *, compact: bool = False, simple: bool = False) -> dict[str, Text]:
     """A lane's row, by column. `compact`: the attention chip and the state in short
-    (COMPACT_LANE_COLUMNS has no room for more)."""
+    (COMPACT_LANE_COLUMNS has no room for more). `simple`: a lane that has done nothing yet
+    (starting()) says `starting`, muted, and has a blank cost (the compact layout wins)."""
     ch = deck.challenges[lane.challenge_id]
     dim = theme.MUTED if lane.finished else ""
     idle = lane.idle(deck.now)
     cost = lane_dollars(lane, short=True)
+    if simple and not compact and starting(lane):
+        state, cost = Text(STARTING, style=theme.MUTED), ""
+    else:
+        state = Text(COMPACT_STATE[lane.state] if compact else lane.state.value, style=state_color(lane.state))
     return {
         "bar": Text("▌", style=theme.ACCENT) if selected else Text(" "),
         "!": attention_cell(lane, bool(deck.sending(lane.id)), compact=compact),
         "lane": Text(lane.id, style=theme.MUTED if lane.finished else "bold"),
         "chall": safe(ch.name, dim),
         "model": safe(lane.model, dim or theme.CYAN),
-        "state": Text(COMPACT_STATE[lane.state] if compact else lane.state.value, style=state_color(lane.state)),
+        "state": state,
         "turns": Text(str(lane.turns), style=dim, justify="right"),
         "cost": Text(cost, style=dim or theme.MUTED, justify="right"),
         "idle": Text("-" if lane.finished else fmt.duration(idle), style=dim or (theme.ACCENT if idle >= 600 else ""), justify="right"),
@@ -902,6 +927,7 @@ def lane_matches(deck: Deck, lane: Lane, query: str) -> bool:
     ch = deck.challenges[lane.challenge_id]
     hay = " ".join(
         [lane.id, ch.name, ch.category, ch.category_guess, ch.family, lane.model, lane.state.value, lane.last_action, lane.plan]
+        + ([STARTING] if starting(lane) else [])  # what the simple list says of it (lane_cells)
         + [a.kind.tag for a in lane.alerts]
         + ([PENDING_TAG[lane.pending.kind]] if lane.pending else [])
     ).lower()

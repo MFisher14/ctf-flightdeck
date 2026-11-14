@@ -365,11 +365,11 @@ class FleetScreen(Screen, inherit_bindings=False):
         ]
         active = [lane for lane in lanes if not lane.finished]
         done = [lane for lane in lanes if lane.finished]
-        rows = [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact)) for lane in active]
+        rows = [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact, simple=self.simple)) for lane in active]
         if done:
             rows.append((views.FINISHED_ROW, views.finished_cells(done, self.show_finished)))
             if self.show_finished:
-                rows += [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact)) for lane in done]
+                rows += [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact, simple=self.simple)) for lane in done]
         return rows
 
     def _render_lanes(self, rebuild: bool = False) -> None:
