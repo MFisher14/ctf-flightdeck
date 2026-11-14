@@ -171,6 +171,9 @@ def install_fake_docker(tmp_path: Path, monkeypatch) -> Path:
 
 REQUIRE_DOCKER = "FLIGHTDECK_REQUIRE_DOCKER"  # =1: a test that needs Docker and DOCKER_IMAGE fails where it cannot run
 REQUIRE_LANE_IMAGE = "FLIGHTDECK_REQUIRE_LANE_IMAGE"  # =1: the same for the tests that need the lane image
+# =1: the same for the test that needs the solver pack's image as today's Dockerfile builds it. No CI job
+# sets it: none builds that image (some 3 GB, and the pack's 250 pinned libraries).
+REQUIRE_PACK_IMAGE = "FLIGHTDECK_REQUIRE_PACK_IMAGE"
 
 
 def docker_skip_reason(image: str = DOCKER_IMAGE) -> str | None:

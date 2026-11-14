@@ -72,7 +72,9 @@ real lane image (a Python L1 engine in it, gdb and the decompiler in a lane's co
 only when `flightdeck image build` has built it from the Dockerfile in your checkout: after a
 change to `lane/Dockerfile` they report as not run until you build it again. One test runs the
 solver pack's decompile engine in the pack's image, when `flightdeck pack image` has built
-today's. No test pulls or builds an image.
+today's (no CI job builds that image, so only your machine runs it;
+`FLIGHTDECK_REQUIRE_PACK_IMAGE=1` makes it fail instead of reporting as not run). No test
+pulls or builds an image.
 
 CI runs the tests (with `-n auto`) and the secret scan on Linux and macOS for every push and
 pull request; the release workflow runs them one after the other before it publishes. CI's

@@ -65,17 +65,19 @@ def test_in_the_packs_image_a_lane_can_run_the_packs_decompile_engine(tmp_path):
     /usr/bin/true, read and never run; the container is a lane's, with no network.
 
     Needs Docker and the pack's image as today's Dockerfile builds it (`flightdeck pack image`):
-    reports as not run otherwise, and no test builds or pulls it."""
+    reports as not run otherwise (it fails instead under FLIGHTDECK_REQUIRE_PACK_IMAGE=1), and
+    no test builds or pulls it."""
     import asyncio
 
     from ctf_flightdeck.agent.workspace import DockerWorkspace
-    from l1_kit import docker_skip_reason
+    from l1_kit import REQUIRE_PACK_IMAGE, docker_not_run, docker_skip_reason
 
     reason = docker_skip_reason(PACK_IMAGE)
     if reason:
-        pytest.skip(f"not run: {reason} (`flightdeck pack image` builds it)")
+        docker_not_run(f"not run: {reason} (`flightdeck pack image` builds it)", require=REQUIRE_PACK_IMAGE)
     if packs.missing_in_image(PACK_IMAGE, ["r2"]):
-        pytest.skip(f"not run: {PACK_IMAGE} on this machine was built before the pack's image had r2 (`flightdeck pack image` builds today's)")
+        docker_not_run(f"not run: {PACK_IMAGE} on this machine was built before the pack's image had r2 (`flightdeck pack image` "
+                       "builds today's)", require=REQUIRE_PACK_IMAGE)
     handout = challenge_dir(tmp_path / "board", "demo", {"note.txt": "a native binary\n"}, id="demo", category="rev")
     box = DockerWorkspace(tmp_path / "lane", handout, image=PACK_IMAGE, name=f"flightdeck-test-pack-{os.getpid()}",
                           mounts=[(PACK, str(PACK))], probe_tools=True)
