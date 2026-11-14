@@ -102,7 +102,7 @@ def ready_items(ready: Ready) -> list[Item]:
     out = [new, practice] if ready.first == "new" else [practice, new]
     if ready.build:
         out.insert(0, Item(("image", ready.first), "Build the lane image",
-                           "what a Docker lane's shell has inside: built once (about 700 MB), then you are back here"))
+                           "what a Docker lane's shell has inside: built once (about 830 MB), then you are back here"))
     out.append(Item(("menu",), "Home", "everything else: the demo, the solver pack"))
     return out
 
