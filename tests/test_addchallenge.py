@@ -914,8 +914,14 @@ def copy_of(run, name: str, n: int = 1) -> Path:
 
 
 async def on_bar(pilot, value: str) -> None:
-    """Wait until the command bar holds `value`: a drop lands on it once its files are copied, in a thread."""
+    """Wait until the command bar holds `value`: a drop lands on it once its files are copied, in a thread.
+
+    Then until the console has nothing left to do: the drop gives the bar the focus too, and
+    Textual sets a focus on the console's next turn (Widget.focus), after the value is there.
+    A test that asked for the focus as soon as it saw the value failed now and then when
+    the suite ran in parallel."""
     await until(pilot, lambda: pilot.app.screen.query_one("#bar-input").value == value)
+    await pilot.pause()
 
 
 def test_the_name_takes_any_character_and_a_file_dropped_while_it_has_the_focus_is_attached(tmp_path):
