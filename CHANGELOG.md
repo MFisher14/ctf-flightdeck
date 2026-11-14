@@ -2,6 +2,18 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+- Claude lanes were checked against a real Claude Code (2.1.325), and what differed is fixed. A
+  message you send mid-turn now ends claude's turn with an interrupt request instead of Ctrl-C,
+  which made claude quit when the turn had just ended. A lane's tokens now count all that
+  claude's model calls wrote (they were low), and a call cut short by your message is charged
+  at your config price, since claude leaves it out of its cost. `claude started on ...` is noted
+  once, not every turn; a subscription's usage limit, near or reached, is a note on the lane; and
+  a turn that fails for want of a login says `api_error`, not `success`. The guide says what was
+  checked, and that a lane needs `CLAUDE_CODE_OAUTH_TOKEN` for a subscription: it does not see
+  the login `claude` uses on your machine.
+
 ## 0.5.0 (2026-11-14)
 
 A calm console: the simple layout, a lane view of one row per step, a peek at the selected lane,

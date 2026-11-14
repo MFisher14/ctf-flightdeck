@@ -1342,6 +1342,13 @@ the same controls. Each uses its own models (`[agents]` in your config: claude d
   `CLAUDE_CODE_OAUTH_TOKEN` (your Claude subscription; `claude setup-token` makes one).
 - **codex** takes `CODEX_API_KEY` or, on the host only, a saved `codex login`.
 
+A claude lane does not see the login `claude` itself uses on your machine (`/login`): its CLI
+keeps its own configuration folder, away from yours and from the challenge's files, and a login
+saved there is not found from it. So a subscription needs `CLAUDE_CODE_OAUTH_TOKEN`. When both
+it and `ANTHROPIC_API_KEY` are set, the key is the one claude uses unless you pick the token
+with `--agent-auth oauth-token`; `flightdeck doctor --agent claude` says which one a lane gets
+and how it is billed.
+
 Put the credential in your keys file or your environment; `--agent-auth` picks one when both are
 set. In Docker the lane image needs the CLI, and the image `flightdeck image build` makes has
 neither: build an image `FROM ctf-flightdeck-lane:1` that installs it and set `[lanes] image` to
@@ -1357,6 +1364,23 @@ does not ask before it reaches its instance, so an event whose instance policy i
 refuses agent lanes. A CLI says what a
 turn cost only when the turn ends, so its lane's cost ends in `…` until then; codex reports no
 cost at all, so give its models a `[prices."<model>"]` table for their lanes to show dollars.
+
+What a claude lane does has been compared with a real Claude Code (2.1.325, on a prompt that
+used no tools): the events it writes, its cost and token counts, how a turn is ended for your
+message, and pause and resume. Its tool calls, the Docker fence and codex have not been checked
+with the real CLIs yet. What that run settled, and what a lane does about it:
+
+- A message you send mid-turn ends claude's turn with an interrupt request on its input, never
+  a signal: claude quits on Ctrl-C when it is already waiting, and a turn can end just as you
+  send. An interrupt that comes as the turn ends does nothing, and the turn counts as finished.
+- claude's step-by-step events undercount what a model call wrote; the lane's tokens are put
+  right when the turn ends. A turn claude never reports (it crashed or was stopped) is counted
+  from those events, so its output tokens are low.
+- claude leaves a model call cut short by your message out of its cost. The lane charges that
+  call at your `[prices."<model>"]` rate, for the tokens claude had shown, and says so once when
+  the model has no price.
+- With a subscription, claude says when a usage limit is near or reached; the lane notes it,
+  with the time it resets.
 
 With a pack ([Your solvers first](#your-solvers-first-l1)), a coding-agent lane runs your L1
 engines before its CLI is started, by the same rules as flightdeck's own lanes. While a flag an

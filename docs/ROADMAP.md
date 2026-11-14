@@ -291,8 +291,10 @@ Planned in a milestone and not built:
 
 - **ACP agents.** The coding-agent lanes are the `claude` and `codex` CLIs only.
 - **A real capture of the `claude` and `codex` streams.** The driver is tested against a fake CLI
-  built from their docs, and so is a coding-agent lane's fenced network (below): it has not been
-  run with the real CLIs.
+  built from their docs, and so is a coding-agent lane's fenced network (below). Claude Code's
+  stream was compared with a real run on 2026-11-14 (P86: 2.1.325, a prompt with no tools), and
+  the differences fixed; still open: claude's tool calls, a whole `practice --agent claude` run,
+  the fenced network with a real CLI, and all of codex.
 - **Timeline replay in `play`.** Releasing a board wave by wave from its `timeline.json` is built
   and tested, but `play` releases the whole board at the start. Scoring a past run against the
   board's answers works (`flightdeck score`).
