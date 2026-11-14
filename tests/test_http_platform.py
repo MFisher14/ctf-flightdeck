@@ -416,6 +416,20 @@ def test_a_pull_signs_in_once_lists_with_the_session_and_fetches_a_file_without_
     assert (tmp_path / "0000" / "note.txt").read_bytes() == b"a synthetic handout\n"
 
 
+def test_two_sign_ins_at_once_both_end_with_the_platforms_session():
+    """Two calls that find no session both sign in. The second answer holds the session the
+    first one got, which every answer has cut out of it: it must not become the session."""
+    with FakeRCTF(sample()) as fake:
+        caller = rctf(fake)
+
+        async def both():
+            return await asyncio.gather(caller.solved(), caller.solved())
+
+        assert run(both()) == [{"done-a4d0"}, {"done-a4d0"}]
+        assert fake.kinds() == ["login", "login", "me", "me"] and caller._session == AUTH_TOKEN
+        assert {r.headers["authorization"] for r in fake.of("me")} == {f"Bearer {AUTH_TOKEN}"}
+
+
 def test_a_challenge_on_the_board_already_gets_no_second_download(tmp_path):
     with FakeRCTF(sample()) as fake:
         reply = run(rctf(fake).pull(tmp_path, known=["warm-7f3a"]))

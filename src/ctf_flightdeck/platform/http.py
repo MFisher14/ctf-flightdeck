@@ -1140,7 +1140,9 @@ class HttpCaller:
         if auth.kind == "cookie":
             return {"Cookie": f"{auth.cookie}={self.token}"}
         if self._session is None:
-            self._session = await self._sign_in(http)
+            session = await self._sign_in(http)
+            if self._session is None:  # another sign-in (the instancer's thread, another call) may have ended first
+                self._session = session
         return {"Authorization": f"{auth.scheme} {self._session}"}
 
     async def _sign_in(self, http: httpx.AsyncClient) -> str:
@@ -1159,6 +1161,9 @@ class HttpCaller:
                              + (f": {said}" if said else "") + " (is the token the right one for this event?)")
         found = auth.token_path.find(answer.doc)
         session = found[0] if len(found) == 1 else None
+        if session == TOKEN_MARK and self._session is not None:
+            # the answer was cut (_cut) of the session another sign-in got meanwhile: the platform gave that one again
+            return self._session
         if not isinstance(session, str) or not _HEADER_VALUE.fullmatch(session) or len(session) > MAX_SESSION:
             raise CallFailed(f"could not sign in: {answer.endpoint} answered, but auth.token_path ({auth.token_path.text}) "
                              "matched no session token in its answer")
