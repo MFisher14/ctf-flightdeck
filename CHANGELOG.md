@@ -39,7 +39,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   line and every output, and hides them again. The deck layout shows every line as before, and
   `ctrl+o` gives the calm view there. The transcript wraps again when the terminal is resized.
   A long transcript draws its newest 300 entries, and never more than 600: a first or last row
-  counts the rest, and `pgup` or `pgdn` there shows 300 more.
+  counts the rest, and `pgup` or `pgdn` there shows 300 more. Help (`?`, `/help`) lists
+  `ctrl+o` and, new there, `pgup` and `pgdn`.
 - The "needs you now" card in a lane's view is calm in the simple layout too: three rows where
   it could take twenty. What the lane asks (the approval it waits for, or its most urgent alert
   and why it fired), the numbered answers (`1 more budget   0 stop the lane`), and a row for

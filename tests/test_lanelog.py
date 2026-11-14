@@ -32,6 +32,7 @@ from test_console import (
     open_focus,
     osc,
     press,
+    prompt_text,
     quiet_deck,
     region_text,
     screen_lines,
@@ -814,11 +815,24 @@ def test_the_simple_key_line_names_the_details_key_last_and_the_edge_cuts_it_fir
     assert "ctrl+o details" not in room.room(65, 40, max_lanes=4, containerized=True, layout="deck").focus_keys
 
 
-def test_help_lists_the_details_key_and_command():
+def test_help_lists_the_details_key_and_command_and_the_keys_that_page_the_transcript():
     from ctf_flightdeck.console.commands import BY_NAME, complete, needs_lane, parse
-    from ctf_flightdeck.console.screens import KEY_HELP
+    from ctf_flightdeck.console.screens import KEY_HELP, HelpScreen
 
-    assert dict(KEY_HELP)["ctrl+o"].startswith("In a lane: details on or off")
+    keys = dict(KEY_HELP)
+    assert keys["ctrl+o"] == "In a lane: details on or off. Off: a row for each entry, and the needs-you card in three"
+    assert keys["pgup pgdn"] == f"In a lane: scroll its transcript; pgup at the top of a long one shows {MOUNTED} more entries"
+    _, app, _ = one_lane("simple")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await send(pilot, app, "/help")  # what the simple layout's key line names: "/help all keys"
+        assert isinstance(app.screen, HelpScreen)
+        said = prompt_text(app)
+        assert "ctrl+o In a lane: details on or off. Off: a row for each entry, and the needs-you card in three" in said
+        assert f"pgup pgdn In a lane: scroll its transcript; pgup at the top of a long one shows {MOUNTED} more entries" in said
+
+    drive(app, script, (160, 60))
     parsed = parse("/details")
     assert parsed.command is BY_NAME["details"] and not needs_lane(parsed) and BY_NAME["details"].args == ""
     assert [c.text for c in complete("/det")] == ["/details "]
