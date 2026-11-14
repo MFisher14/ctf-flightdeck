@@ -1277,7 +1277,7 @@ def entry_text(deck: Deck, lane: Lane, entry: Entry) -> Text:
 
 PEEK_ROWS = 6  # the rows of a lane's log the peek shows at most; a short terminal has fewer (fleet.peek_rows)
 PEEK_EMPTY = "nothing yet: the lane has taken no step"
-PEEK_NO_LANE = "no lane selected: pick one in the lane list"
+PEEK_NO_LANE = "the peek shows the lane the keys act on: there is none here"
 
 
 def peek_lines(deck: Deck, lane: Lane, rows: int) -> list[Text]:
@@ -1304,8 +1304,8 @@ def peek_lines(deck: Deck, lane: Lane, rows: int) -> list[Text]:
 def peek(deck: Deck, lane: Lane | None, rows: int) -> RenderableType:
     """The peek: a rule that names the lane and its challenge (a message typed in the bar goes
     to that lane), then the last `rows` rows of its log (peek_lines), each cut at the edge.
-    With no lane to show (the board has the focus on a challenge that no lane or several
-    work), it says so."""
+    With no lane to show (no lane yet, the filter hides the selected one, or the board has the
+    focus on a challenge that no lane or several work), it says so."""
     title = Text(no_wrap=True, overflow="ellipsis")
     if lane is None:
         title.append("no lane", theme.MUTED)

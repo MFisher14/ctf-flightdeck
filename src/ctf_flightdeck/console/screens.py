@@ -812,7 +812,7 @@ KEY_HELP = (
     ("tab", "Move focus: board, lanes, command bar (the board hides under 100 columns)"),
     ("enter on ▸", "Expand or collapse finished lanes"),
     ("enter on board", "Open the challenge's lane; with none or several, its card: queue, claim, 1-9 open a lane"),
-    ("esc", "Leave the command bar, clear the filter, or go back to the fleet"),
+    ("esc", "Leave the command bar, close the peek, clear the filter, or go back to the fleet"),
     ("ctrl+n", "In a lane: the next lane that needs you, in attention order, round to the first"),
     ("ctrl+o", "In a lane: details on or off. Off: one row for each entry, a run of tool calls on two"),
     ("mouse drag", "Select text: copied as you let go (double-click: a whole entry; triple-click: all)"),

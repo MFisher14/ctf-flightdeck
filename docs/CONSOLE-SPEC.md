@@ -60,7 +60,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
     through a lane's view, `/layout` and a resize.
   - Its first row is a rule that names the lane and its challenge: the lane the keys and the
     command bar act on, so with the board in focus it is the challenge's only lane, and `no
-    lane` when no lane or several work it. It follows the selection.
+    lane` when no lane or several work it, or when the filter hides the selected lane. It
+    follows the selection.
   - Under the rule, six rows at most, oldest first, each cut at the edge and never wrapped.
     They are the calm transcript's rows (Focus view, below) with a run of tool calls opened:
     every call is a row (`⏺ the call → the first line of its output`, each with ` …+N lines`

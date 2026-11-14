@@ -21,7 +21,10 @@ from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Call, Challenge, DeckConfig
 from test_console import (
+    JWT,
+    OPENROUTER,
     OSC,
+    VALUES,
     assert_warning,
     bar,
     drive,
@@ -257,9 +260,24 @@ def test_on_the_board_the_peek_shows_the_challenges_only_lane_and_says_so_when_t
         assert peek_text(app)[0].startswith("L02 · Beta ─") and peek_rows(app) == ["⏺ cat beta.txt → nothing"]
         app.fleet.select_challenge("omega")
         await pilot.pause()
-        assert peek_text(app)[0].startswith("no lane ─") and peek_rows(app) == ["no lane selected: pick one in the lane list"]
+        assert peek_text(app)[0].startswith("no lane ─") and peek_rows(app) == ["the peek shows the lane the keys act on: there is none here"]
 
     drive(app, script, (160, 40))
+
+
+def test_a_selected_lane_that_the_filter_hides_is_not_peeked_at_since_no_key_acts_on_it():
+    deck, app = busy()
+
+    async def script(pilot):
+        await select(pilot, app, "L01")
+        await press(pilot, "space", "slash", *"filter beta", "enter")
+        assert app.fleet.selected_lane == "L01" and app.fleet.bar_lane() is None  # as test_console has it: p warns there
+        assert peek_text(app)[0].startswith("no lane ─") and "step-8" not in " ".join(peek_text(app))
+        await press(pilot, "p")
+        assert_warning(app, "L01 is hidden by the filter; esc clears it")
+        assert deck.lanes["L01"].state.value == "run"
+
+    drive(app, script, SIZE)
 
 
 def test_space_on_an_empty_board_opens_nothing_and_says_why():
@@ -416,6 +434,51 @@ def test_lane_and_challenge_text_in_the_peek_never_reaches_the_terminal_raw_and_
     drive(app, script, (160, 40))
 
 
+def test_the_peek_shows_a_credentials_name_and_never_its_value_and_keeps_the_flag_the_run_knows():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
+    deck.release([Challenge("c", "C", "misc", 50)], [QueueEntry("c", "glm")])
+    deck.report("L01", TurnReport(action=f"curl -H 'Authorization: Bearer {JWT}' 127.0.0.1", output=f"OPENROUTER_API_KEY={OPENROUTER}",
+                                  calls=(Call("cat keys.env", f"OPENROUTER_API_KEY={OPENROUTER}\nmore"),)))
+    deck.report("L01", TurnReport(action=f"says: I will send Authorization: Bearer {JWT}"))
+    deck.report("L01", TurnReport(action="cat flag.txt", flag="flag{synthetic}"))
+    app = FlightdeckApp(deck, refresh_seconds=None, layout="simple")
+
+    async def script(pilot):
+        await press(pilot, "space")
+        frame = terminal_frame(app)
+        assert not [value for value in VALUES if value in frame]
+        assert peek_rows(app) == [
+            "⏺ cat keys.env → OPENROUTER_API_KEY=[redacted] …+1 line",
+            "⏺ I will send Authorization: Bearer [redacted]",
+            "⏺ cat flag.txt",
+            "· candidate flag flag{synthetic}",
+            "▲ Flag found alert · turn 3",
+            "◆ asked you · turn 3: submit flag{synthetic}",
+        ]
+
+    drive(app, script, (160, 40))
+
+
+def test_dragging_the_mouse_over_the_peek_and_clicking_it_leave_the_console_as_it_was():
+    deck, app = busy()
+
+    async def script(pilot):
+        await select(pilot, app, "L01")
+        await press(pilot, "space")
+        peek = app.fleet.query_one("#peek")
+        before = peek_text(app)
+        await pilot.click(peek, offset=(4, 2))
+        await pilot.mouse_down(peek, offset=(2, 1))
+        await pilot.hover(peek, offset=(30, 3))
+        await pilot.mouse_up(peek, offset=(30, 3))
+        await pilot.pause()
+        assert peek_text(app) == before and app.fleet.selected_lane == "L01" and isinstance(app.screen, FleetScreen)
+        await press(pilot, "escape", "escape")  # a selection, if the drag made one, then the peek
+        assert not peek_open(app)
+
+    drive(app, script, SIZE)
+
+
 # ---------------------------------------------------------------------- help, and the mock's clock
 
 
@@ -427,6 +490,7 @@ def test_help_lists_space_as_the_peek():
         assert isinstance(app.screen, HelpScreen)
         said = prompt_text(app)
         assert "space Peek: the selected lane's last steps under the lane list" in said and "space or esc closes it" in said
+        assert "esc Leave the command bar, close the peek, clear the filter" in said
         assert "mock clock" not in said  # a run has no clock to freeze
 
     drive(app, script, SIZE)
