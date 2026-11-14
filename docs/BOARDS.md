@@ -428,10 +428,46 @@ max_running = 3                 # the most kept running at once: the site's cap 
   queue the challenge again. A flightdeck that is killed leaves its instances to the platform,
   which stops them at their expiry.
 
-`docker_per_team` is the one plugin seen working (`POST /containers/api/request`, `stop`, `renew`
-and `view_info`, each with `{"chal_id": N}`). `ctfd_docker` is a guess at CTFd-Docker-Plugin's
-routes and was never confirmed. For any other plugin, give the four routes yourself instead of
-`plugin`; look at what the site's "start instance" button sends in your browser's network tab:
+### Which plugin
+
+`plugin` names the site's container plugin. A container challenge's `type` in its
+`challenge.json` tells you which one the site runs:
+
+| `plugin` | The site runs | Challenge `type` | How far it was taken |
+|---|---|---|---|
+| `docker_per_team` | [CTFd-Docker-Plugin](https://github.com/andyjsmith/CTFd-Docker-Plugin) or a fork of it | `container` | Seen working at an event |
+| `ctfd_owl` | [ctfd-owl](https://github.com/D0g3-Lab/H1ve/tree/master/CTFd/plugins/ctfd-owl) | `dynamic_check_docker` | Built from the plugin's source; never run against a site |
+| `chall_manager` | [ctfd-chall-manager](https://github.com/ctfer-io/ctfd-chall-manager) | `dynamic_iac` | Built from the plugin's source; never run against a site |
+
+For the two that were never run against a site, try a practice challenge before you rely on
+one, and tell us what happened in an issue.
+
+- **`docker_per_team`.** `POST /containers/api/request`, `stop`, `renew` and `view_info`, each
+  with `{"chal_id": N}`.
+- **`ctfd_owl`.** The plugin runs one container per account (your team's, in team mode), so
+  `max_running` is 1 and need not be written; a larger one is refused. The on-demand
+  challenges in your queue take turns. When a teammate runs a container of another challenge,
+  the plugin refuses the start ("You have boot ... before"), and flightdeck treats that as the
+  cap: it says so once and asks again every 30 seconds. The plugin's stop takes whatever
+  container the account runs, so flightdeck asks which challenge it belongs to first and stops
+  only its own. It leaves a second between two requests that change something, because the
+  plugin refuses faster ones. The site allows a set number of renewals; past it, flightdeck
+  says so and starts the instance again when it ends.
+- **`chall_manager`.** The address is a line the organiser wrote. flightdeck takes the first
+  URL in it, else the first `nc host port`, else the first `host:port`. A line with none of
+  these (an `ssh` command, say) is shown to you as it is, and no lane starts on the challenge;
+  the instance stays up on the site, for you to use or stop there. A start the team's mana
+  cannot pay for is treated as the cap. An instance with no end is never renewed.
+- **ctfd-whale has no name here yet.** From its source: a start first removes whatever
+  container the account runs, of any challenge; asking about a challenge other than the
+  running one is refused; and the address comes as an `nc` line, a link, a pwntools snippet
+  or `[ssl] host port`, some of them TLS endpoints flightdeck cannot hand a lane yet. Until it
+  is built ([ROADMAP.md](ROADMAP.md)), start a whale instance on the site yourself.
+  `plugin = "ctfd_docker"`, a guess of 0.4.0 that matched no plugin, is refused: write
+  `docker_per_team` for CTFd-Docker-Plugin.
+
+For any other plugin, give the four routes yourself instead of `plugin`; look at what the
+site's "start instance" button sends, and what comes back, in your browser's network tab:
 
 ```toml
 [instances]
@@ -440,9 +476,26 @@ stop = ["DELETE", "/plugins/example/container?challenge_id={id}"]
 renew = ["PATCH", "/plugins/example/container?challenge_id={id}"]
 status = ["GET", "/plugins/example/container?challenge_id={id}"]
 api = true                      # the paths are under /api/v1 (false: under the site's root)
-# body_key = "chal_id"          # the number goes in a JSON body under this key, instead of {id}
+# body_key = "chal_id"          # for a route with no {id}: the number goes in a JSON body under this key
+# address_key = "connectionInfo"  # the answer's key that holds the address
+# port_key = "port"             # ... the port, when the address has none
+# expires_key = "until"         # ... the seconds left, or the moment it ends (a number or a timestamp)
 types = ["container"]
 ```
 
-flightdeck asks the plugin only about challenges on your board, sends each request once, and
-never calls a route that spends points.
+- **The number.** A route whose path has `{id}` carries the number there and sends no body;
+  any other route sends `{"<body_key>": N}`. A plugin may mix the two.
+- **The answer's keys.** Each is one key name or a list tried in order, looked for in the
+  answer and then in its `data`. Left out, flightdeck tries `hostname`, `host`, `ip`,
+  `connect`, `url`, `address` for the address, `port` for the port, and `remaining_time`,
+  `remaining`, `expires`, `timeout` for the end. A named plugin's keys can be named too.
+- **The address** must be a URL, `host:port`, `nc host port` or a bare host with a port beside
+  it. Only a host and a port are ever taken from an answer; nothing in it is run or followed.
+- **A start that answers without an address.** Some plugins say only that the start is done.
+  flightdeck then asks the status, up to three times two seconds apart, and gives up with the
+  plugin's own words if no address comes. The start itself is never sent twice.
+- **A refusal** is shown in the plugin's words, whether it sends them as `error`, `errors`,
+  `message` or `msg`.
+
+flightdeck asks the plugin only about challenges on your board, sends each request that
+changes something once, and never calls a route that spends points.

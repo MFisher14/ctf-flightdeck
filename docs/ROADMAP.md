@@ -19,8 +19,18 @@ the lines for players are under Unreleased in [CHANGELOG.md](../CHANGELOG.md)).
   player's own that flightdeck runs out of process: `flightdeck plugin new`, `add` and `pull`,
   and `platform = "NAME"` in the event profile ([PLUGINS.md](PLUGINS.md)).
 
+Built after them, and waiting for the same release:
+
+- **Two more CTFd container plugins** (P57). `plugin = "ctfd_owl"` and `plugin = "chall_manager"`
+  in `[instances]`, the keys of a plugin's answer by name (`address_key`, `port_key`,
+  `expires_key`), a start that answers without an address followed by a look at the status,
+  and a refusal's reason read from `msg` ([BOARDS.md](BOARDS.md#which-plugin)). The guessed
+  `ctfd_docker` shape is gone.
+
 Known limits, each said where it applies:
 
+- `ctfd_owl` and `chall_manager` were built from the two plugins' public source, against fakes
+  of that source. Neither has met a real site, a fork or an older release of its plugin.
 - No plugin has met a real platform: the plugin path was built against synthetic plugins and a
   stand-in on 127.0.0.1.
 - A plugin is not sandboxed: it runs as the player, and `plugin add` says so before it asks.
@@ -74,6 +84,7 @@ Known limits of what was ported, each said where it applies:
 
 - The Game Master adapter and the `ctfd_docker` plugin shape were built against fakes and have
   not met a real service; `docker_per_team` is the plugin shape seen working at an event.
+  (`ctfd_docker` matched no plugin and was dropped after this release: P57.)
 - Instances are started in the queue's order, not highest value first, and a Docker lane whose
   instance came back at another address must be killed and queued again.
 - Rotating-flag windows are counted on this machine's clock, not the platform's.
@@ -191,6 +202,13 @@ the guardrail Autopilot needs: nothing reached but a challenge's own instance.
 
 ## Later (not scheduled)
 
+- **ctfd-whale instances.** Not built (P57). Read from its source, not run: a start first
+  removes whatever container the account runs, so a careless second start resets a lane's own
+  target; asking about a challenge other than the running one is refused, not answered "none";
+  and the address comes as an `nc` line, a link's HTML, a pwntools snippet or `[ssl] host port`,
+  some of them TLS endpoints that are no web server, for which a lane's instance has no form
+  yet. It wants its own reader, a fake of each form, and a run against a local CTFd with the
+  plugin before anyone relies on it.
 - **Phone control.** Today: run flightdeck in tmux and attach over SSH (the console has a compact
   layout from 64 columns down). Option: serve the same console in a browser (textual-serve);
   touches D4 and must be locked down. Best: push a notification when a lane needs you, with approve and decline from the
