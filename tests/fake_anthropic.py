@@ -39,6 +39,7 @@ from collections.abc import Callable, Iterable
 from urllib.parse import urlsplit
 
 from fake_model import STOP_WAIT, FakeReply, _Server
+from serving import Serving
 
 MESSAGES_PATH = "/v1/messages"
 MODELS_PATH = "/v1/models"
@@ -88,25 +89,23 @@ class FakeAnthropicServer:
         self.aliases = dict(aliases or {})  # alias -> model id, as GET /v1/models/{alias} resolves it
         self.key = key  # the x-api-key every request must carry; None: any
         self._lock = threading.Lock()
+        self.leaving = threading.Event()  # set as the context is left: what a responder that never answers waits on
         self._httpd = _Server(self)
         self.base_url = f"http://127.0.0.1:{self._httpd.server_address[1]}"
-        self._thread: threading.Thread | None = None
+        self._serving: Serving | None = None
 
     def add(self, *replies: dict | FakeReply) -> None:
         with self._lock:
             self._replies.extend(replies)
 
     def __enter__(self) -> FakeAnthropicServer:
-        self._thread = threading.Thread(
-            target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05}, name="fake-anthropic-server", daemon=True
-        )
-        self._thread.start()
+        self._serving = Serving(self._httpd, "fake-anthropic-server")
         return self
 
     def __exit__(self, *exc: object) -> None:
-        if self._thread is not None:
-            self._httpd.shutdown()
-            self._thread.join()
+        self.leaving.set()
+        if self._serving is not None:
+            self._serving.stop()
         self._httpd.close(wait=STOP_WAIT)
 
     def _answer(self, method: str, path: str, headers: dict[str, str], body: object) -> FakeReply:

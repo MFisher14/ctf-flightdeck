@@ -39,6 +39,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from fake_ctfd import STOP_WAIT, Reply, Request, _Server
+from serving import Serving
 
 TOKEN = "fake-platform-token-for-tests-9d2c"  # synthetic, and not shaped like any real token
 FLAG_FORMAT = r"t\{\w+\}"  # the flags of the invented challenges below
@@ -144,19 +145,15 @@ class FakePlatform:
         self._lock = threading.Lock()
         self._httpd = _Server(self, None)
         self.url = f"http://127.0.0.1:{self._httpd.server_address[1]}"
-        self._thread: threading.Thread | None = None
+        self._serving: Serving | None = None
 
     def __enter__(self) -> FakePlatform:
-        self._thread = threading.Thread(
-            target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05}, name="fake-platform", daemon=True
-        )
-        self._thread.start()
+        self._serving = Serving(self._httpd, "fake-platform")
         return self
 
     def __exit__(self, *exc: object) -> None:
-        if self._thread is not None:
-            self._httpd.shutdown()
-            self._thread.join()
+        if self._serving is not None:
+            self._serving.stop()
         self._httpd.close(wait=STOP_WAIT)
 
     # ------------------------------------------------------------------ for tests

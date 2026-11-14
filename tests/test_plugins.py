@@ -24,6 +24,7 @@ from ctf_flightdeck.plugins.call import CallFailed, Caller, Verdict, child_env
 from ctf_flightdeck.plugins.manifest import PluginError
 
 from plugin_kit import TOKEN, calls, challenge, make_plugin, set_replies
+from serving import Serving
 
 runner = CliRunner()
 URL = "https://ctf.example.test"
@@ -490,7 +491,6 @@ def test_the_skeleton_works_as_written_against_a_platform_with_its_placeholder_r
     """The adapter `plugin new` writes is run as it is, against a stand-in platform on 127.0.0.1
     that serves the skeleton's placeholder routes: what a player starts from must work."""
     import http.server
-    import threading
 
     tasks = [{"id": 17, "title": "Warm Up", "category": "misc", "points": 50, "text": "a synthetic task", "solved": True},
              {"id": 23, "title": "Web Thing", "category": "web", "points": 250, "text": "another", "urls": ["http://127.0.0.1:8080"]}]
@@ -518,7 +518,7 @@ def test_the_skeleton_works_as_written_against_a_platform_with_its_placeholder_r
             self.answer({"status": {"flag{right}": "ok", "flag{again}": "dup", "flag{odd}": "frozen"}.get(flag, "bad")})
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Platform)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    serving = Serving(server, "a-platform")
     try:
         assert invoke("new", "harbour", "--dir", tmp_path).exit_code == 0
         url = f"http://127.0.0.1:{server.server_address[1]}"
@@ -534,7 +534,7 @@ def test_the_skeleton_works_as_written_against_a_platform_with_its_placeholder_r
         assert run(harbour.submit("23", "flag{odd}")) == Verdict("unjudged", "frozen")  # a word it does not know is no verdict
         assert run(harbour.solved()) == {"17"}
     finally:
-        server.shutdown()
+        serving.stop()
         server.server_close()
     assert [path for path, _, _ in seen] == ["/api/tasks", "/api/tasks/17/flag", "/api/tasks/17/flag", "/api/tasks/17/flag",
                                              "/api/tasks/23/flag", "/api/tasks"]
