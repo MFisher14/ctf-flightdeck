@@ -665,18 +665,36 @@ def write_setup(answers: Answers, path: Path, *, keys: Mapping[str, str] | None 
     """Write the config and keep the keys the player gave for it: each of `keys` ({variable:
     key}) goes to the keys file (keys.save: the owner's only, never shown, never in the
     config). Only a variable the config names is taken (its API's, its fallback's:
-    ValueError otherwise). The config is checked first (check_config) and the keys are kept
-    before it is written, so a config that would be refused keeps no key, and a key that
-    cannot be kept (keys.KeysError) leaves no config behind that names a key nobody has."""
+    ValueError otherwise). The config is checked first (check_config) and written before the
+    keys are kept, so a config that would be refused, or cannot be written (OSError), keeps no
+    key; and a key that cannot be kept (keys.KeysError) takes the config back out (the one it
+    replaced, with `force`, goes back), so none is left that names a key nobody has."""
     from . import keys as keys_file
 
     check_config(answers, path, force=force)
     named = {answers.key_env, answers.fallback.key_env if answers.fallback is not None else ""} - {""}
-    for variable, value in (keys or {}).items():
-        if variable not in named:
-            raise ValueError("a key was given for a variable the config does not name")
-        keys_file.save(variable, value)
-    return write_config(answers, path, force=force)
+    if any(variable not in named for variable in keys or {}):
+        raise ValueError("a key was given for a variable the config does not name")
+    from .config_edit import replace_file
+
+    try:
+        before: bytes | None = path.read_bytes()  # only with force: check_config refuses one that is there
+    except FileNotFoundError:
+        before = None
+    except OSError as exc:  # said by the callers as "cannot write <path>: <strerror>"
+        raise OSError(exc.errno, f"the config there cannot be read ({exc.strerror or type(exc).__name__}), so it is not "
+                                 "replaced: it could not be put back if the key cannot be kept") from None
+    write_config(answers, path, force=force)
+    try:
+        for variable, value in (keys or {}).items():
+            keys_file.save(variable, value)
+    except BaseException:
+        if before is None:
+            path.unlink(missing_ok=True)
+        else:
+            replace_file(path, before)  # byte for byte, in one step, with the file's mode
+        raise
+    return path
 
 
 @dataclass(frozen=True)

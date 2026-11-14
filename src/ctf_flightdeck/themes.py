@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import stat
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -184,7 +186,11 @@ def load(name: str, folder: Path | None) -> Palette:
         raise ThemeError("a theme's name is lower-case letters, digits, - and _, at most 32 characters")
     if folder is not None:
         file = folder / f"{name}.toml"
-        if file.exists() or file.is_symlink():
+        try:
+            there = file.exists() or file.is_symlink()
+        except OSError as exc:  # a folder that cannot be searched: said, not a bare PermissionError
+            raise ThemeError(f"{file}: cannot look for it ({exc.strerror})") from None
+        if there:
             if name in BUILTIN:
                 raise ThemeError(f"{file} has a built-in theme's name: rename the file")
             return parse(_read(file), file)
@@ -264,8 +270,23 @@ def _colours(source: Path, table: object, base: Palette | None) -> dict[str, str
 
 
 def _read(file: Path) -> str:
+    """The file's text. It is opened without waiting (O_NONBLOCK) and read only when it is a
+    regular file: a FIFO or a device would otherwise hold the console until something writes to it.
+    The kind is checked on the bare descriptor, before it is wrapped (os.fdopen raises on a
+    directory and leaves the descriptor open), and the descriptor is closed on every path."""
     try:
-        with file.open("rb") as handle:
+        descriptor = os.open(file, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            mode = os.fstat(descriptor).st_mode
+            if stat.S_ISDIR(mode):
+                raise IsADirectoryError
+            if not stat.S_ISREG(mode):
+                raise ThemeError(f"{file}: is not a regular file, so it is not read")
+            handle = os.fdopen(descriptor, "rb")
+        except BaseException:
+            os.close(descriptor)
+            raise
+        with handle:  # the handle owns the descriptor now: closing it closes the descriptor
             raw = handle.read(MAX_BYTES + 1)
     except IsADirectoryError:
         raise ThemeError(f"{file}: is a directory, not a theme file") from None

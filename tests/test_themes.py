@@ -353,6 +353,92 @@ def test_a_file_that_is_not_text_or_not_a_file_is_refused(tmp_path):
     assert message.startswith(f"{tmp_path / 'themes' / 'gone.toml'}: cannot read it (") and not isinstance(caught.value, NoSuchTheme)
 
 
+def test_a_theme_file_that_is_a_directory_leaves_no_descriptor_open(tmp_path):
+    """The directory opens (O_RDONLY works on one): the descriptor must be closed when it is
+    refused, or every /theme on it leaks one until the console runs out."""
+    import os
+
+    folder = tmp_path / "themes"
+    folder.mkdir()
+    directory = folder / "x.toml"
+    directory.mkdir()
+    seen = os.stat(directory)
+
+    def open_on_it() -> list[int]:
+        fds = []
+        for entry in os.listdir("/dev/fd"):
+            try:
+                found = os.fstat(int(entry))
+            except OSError:  # the listing's own descriptor, closed by now
+                continue
+            if (found.st_dev, found.st_ino) == (seen.st_dev, seen.st_ino):
+                fds.append(int(entry))
+        return fds
+
+    assert open_on_it() == []
+    for _ in range(3):
+        with pytest.raises(ThemeError) as caught:
+            themes.load("x", folder)
+        assert str(caught.value) == f"{directory}: is a directory, not a theme file"
+    assert open_on_it() == []
+
+
+def test_a_theme_file_that_is_a_fifo_is_refused_and_never_waited_on(tmp_path):
+    """A FIFO (or a link to one) would block the open until something writes to it: the
+    console would freeze on /theme. It is refused at once instead."""
+    import os
+    import threading
+
+    folder = tmp_path / "themes"
+    folder.mkdir()
+    fifo = folder / "pipe.toml"
+    os.mkfifo(fifo)
+    (folder / "linked.toml").symlink_to(fifo)
+    for name in ("pipe", "linked"):
+        caught: list[BaseException] = []
+
+        def load(name: str = name) -> None:
+            try:
+                themes.load(name, folder)
+            except BaseException as exc:  # noqa: BLE001 - the thread hands it to the test
+                caught.append(exc)
+
+        worker = threading.Thread(target=load, daemon=True)
+        worker.start()
+        worker.join(5)
+        if worker.is_alive():  # let the blocked open go, so the test ends
+            os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+            worker.join(5)
+            pytest.fail(f"themes.load({name!r}) waited on the FIFO")
+        assert len(caught) == 1 and isinstance(caught[0], ThemeError) and not isinstance(caught[0], NoSuchTheme)
+        assert str(caught[0]) == f"{folder / f'{name}.toml'}: is not a regular file, so it is not read"
+
+
+def test_a_themes_folder_that_cannot_be_searched_is_a_theme_error_for_every_name(tmp_path):
+    """Path.exists() raises PermissionError there: it is said as a ThemeError (and so as a
+    ConfigError by the config), never a bare traceback."""
+    import os
+
+    from ctf_flightdeck.config import ConfigError, load_console
+
+    if os.geteuid() == 0:
+        pytest.skip("not run: as root, a folder's mode does not stop a search in it")
+    theme_file(tmp_path, DUSK)
+    folder = tmp_path / "themes"
+    config = tmp_path / "config.toml"
+    config.write_text('[console]\ntheme = "nord"\n')
+    folder.chmod(0)
+    try:
+        for name in ("nord", "dusk"):
+            with pytest.raises(ThemeError) as caught:
+                themes.load(name, folder)
+            assert str(caught.value) == f"{folder / f'{name}.toml'}: cannot look for it (Permission denied)"
+        with pytest.raises(ConfigError, match="cannot look for it"):
+            load_console(config)
+    finally:
+        folder.chmod(0o700)
+
+
 SENTINEL = "zqSentinelValue4471"  # as tests/test_config.py: letters and digits only, like many real keys
 
 SECRETS = {

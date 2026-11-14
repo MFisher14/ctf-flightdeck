@@ -194,13 +194,78 @@ def test_a_write_that_fails_part_way_is_put_back(tmp_path, monkeypatch):
                                  "(No space left on device): look at it before the next run")
 
 
+def test_a_check_that_fails_with_another_error_puts_the_config_back(tmp_path):
+    """Not only a ConfigError: a check that meets an OSError (a themes folder it cannot look
+    in, say) still has the old text written back, and is said as an EditError."""
+    path = write(tmp_path, "a = 1\n")
+
+    def check() -> None:
+        raise PermissionError(13, "Permission denied")
+
+    with pytest.raises(EditError) as caught:
+        rewrite(path, lambda text: text + "b = 2\n", check, what="the theme")
+    assert str(caught.value) == "the config did not load with the theme in it, so it was put back as it was: Permission denied"
+    assert read(path) == "a = 1\n"
+
+
+def test_the_config_is_replaced_in_one_step_and_keeps_its_mode(tmp_path, monkeypatch):
+    """The new text goes to a file beside the config and is renamed over it: while it is being
+    written, and when that write fails, the config holds the old text, never an empty or half
+    one, and no new file is left beside it."""
+    path = write(tmp_path, LADDER)
+    path.chmod(0o640)
+    seen, real = [], os.fsync
+
+    def full(descriptor: int) -> None:
+        seen.append(read(path))
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "fsync", full)
+    with pytest.raises(EditError) as caught:
+        rewrite(path, lambda text: text + "# more\n", lambda: None, what="x")
+    assert seen == [LADDER] and read(path) == LADDER
+    assert str(caught.value) == f"cannot write the config {path} (No space left on device): it is as it was"
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["config.toml"]
+    monkeypatch.setattr(os, "fsync", real)
+    assert save_console(path, theme="nord") is True
+    assert read(path) == LADDER + '\n[console]\ntheme = "nord"\n' and (path.stat().st_mode & 0o777) == 0o640
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["config.toml"]
+
+
 def test_a_config_that_is_a_link_stays_a_link(tmp_path):
     (tmp_path / "dotfiles").mkdir()
     real = write(tmp_path / "dotfiles", LADDER)
+    real.chmod(0o640)
     link = tmp_path / "config.toml"
     link.symlink_to(real)
     assert save_console(link, theme="nord") is True
-    assert link.is_symlink() and read(real) == LADDER + '\n[console]\ntheme = "nord"\n'
+    assert link.is_symlink() and os.readlink(link) == str(real)
+    assert read(real) == LADDER + '\n[console]\ntheme = "nord"\n' and (real.stat().st_mode & 0o777) == 0o640
+    assert sorted(entry.name for entry in (tmp_path / "dotfiles").iterdir()) == ["config.toml"]
+
+
+def test_a_config_whose_folder_cannot_take_a_new_file_is_refused_and_says_why(tmp_path):
+    """The file can be written but its folder cannot: the new text cannot be put in place in
+    one step, and it is never written in place instead. The message names the folder (for a
+    link, the folder of the file it points at), and the config is as it was."""
+    if os.geteuid() == 0:
+        pytest.skip("not run: as root, a folder's mode does not stop a new file in it")
+    (tmp_path / "dotfiles").mkdir()
+    real = write(tmp_path / "dotfiles", "a = 1\n")
+    link = tmp_path / "config.toml"
+    link.symlink_to(real)
+    (tmp_path / "dotfiles").chmod(0o500)
+    try:
+        for path in (real, link):
+            with pytest.raises(EditError) as caught:
+                rewrite(path, lambda text: text + "b = 2\n", lambda: None, what="x")
+            assert str(caught.value) == (
+                f"cannot write the config {path} (its folder {tmp_path / 'dotfiles'} does not let a new file be made in it, "
+                "and the config is only ever replaced whole, never written over in place): it is as it was")
+            assert read(real) == "a = 1\n"
+    finally:
+        (tmp_path / "dotfiles").chmod(0o700)
+    assert sorted(entry.name for entry in (tmp_path / "dotfiles").iterdir()) == ["config.toml"]
 
 
 # ---------------------------------------------------------------------- save_console
