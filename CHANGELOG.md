@@ -71,6 +71,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - Under autopilot, a lane that ignores the hint or goes the wrong way again after autopilot
   redirected it is escalated one rung, and at the top rung killed and its challenge parked, as
   a stalled lane is. It used to wait for you (#33).
+- "Settings and health" on the home screen: your main settings (the config file, the model API,
+  whether its key is set, the models, where lanes run, and the layout, theme, bell, title and
+  mouse), each with where it is set, and the checks of `flightdeck doctor` with the fix under
+  each problem. A key shows as `set` or `not set`, never its value. The checks run while the
+  screen stays yours: `esc` leaves at once and stops them, `r` runs them again
+  ([the guide](docs/GUIDE.md#install-and-first-run)).
 
 ## 0.5.0 (2026-11-14)
 

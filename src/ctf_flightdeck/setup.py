@@ -710,8 +710,12 @@ API_CHECKS = ("api key", "fallback key", "model server", "fallback server")  # w
 
 
 def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.environ,
-           agent: str | None = None, clean: bool = False) -> list[Check]:
-    """Every check, in order. Never prints or returns the API key. `agent` ("claude" or
+           agent: str | None = None, clean: bool = False,
+           terminal: tuple[int, int] | None = None) -> list[Check]:
+    """Every check, in order. Never prints or returns the API key. `terminal`: the size the
+    terminal check measures (columns, lines), for a caller whose output is not the player's
+    terminal (the home screen's checks run in a child process: health.py); None asks the
+    terminal on standard output, and there is no terminal check without one. `agent` ("claude" or
     "codex") also checks that coding-agent CLI and its credential, and in the docker runtime
     that the lane image has it, as play --agent does; the [api] checks are then warnings,
     since that CLI's lanes never use the [api] key or server. The last checks are what runs
@@ -719,7 +723,7 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
     removed only with `clean`."""
     from dataclasses import replace
 
-    checks = _checks(config_path, environ, agent)
+    checks = _checks(config_path, environ, agent, terminal)
     checks += _leftover_checks(config_path, docker=any(c.name == "docker" and c.ok for c in checks), clean=clean)
     if agent is None:
         return checks
@@ -727,7 +731,8 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
     return [replace(c, essential=False, detail=c.detail + ("" if c.ok else why)) if c.name in API_CHECKS else c for c in checks]
 
 
-def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | None) -> list[Check]:
+def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | None,
+            terminal: tuple[int, int] | None = None) -> list[Check]:
     from .config import ConfigError, default_config_path, load_config
 
     checks: list[Check] = []
@@ -794,10 +799,13 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     image_there = any(c.name == "lane image" and c.ok for c in docker)
     if agent is not None and found and image_there and config is not None and config.lanes.runtime == "docker":
         checks.append(_agent_image_check(agent, config))  # play --agent runs the CLI inside that image
-    try:
-        columns, lines = os.get_terminal_size()
-    except OSError:
-        columns = lines = 0
+    if terminal is not None:
+        columns, lines = terminal
+    else:
+        try:
+            columns, lines = os.get_terminal_size()
+        except OSError:
+            columns = lines = 0
     if columns:
         checks.append(_terminal_check(columns, lines, config))
     return checks

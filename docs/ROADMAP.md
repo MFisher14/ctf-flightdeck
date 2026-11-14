@@ -56,6 +56,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   disengages with `--agent` too; and a hint or wrong-way alert that comes back after
   autopilot's redirect escalates the lane one rung (at the top it is killed and parked), where
   it used to wait for you. This was the first item left of M5.
+- **Settings and health on the home screen** (P79). The config's main settings, each with
+  where it is set, and doctor's checks with their fixes, run in a child process that leaving
+  the screen stops. A key is `set` or `not set`. Not built: changing a setting there, and the
+  checks shown one by one.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
