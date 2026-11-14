@@ -227,11 +227,14 @@ back at any time (D20; the details are P19 to P28 in [DECISIONS.md](DECISIONS.md
   flag ([the guide](GUIDE.md#headless-runs-and-notifications)). Still open: a phone push, and
   approving from the phone (Later: phone control).
 
+Built since, not released (P78, [#33](https://github.com/MFisher14/ctf-flightdeck/issues/33)):
+the `claude` and `codex` lanes hold the queue on a model API outage as flightdeck's own lanes do,
+so autopilot disengages with `--agent` too; and a hint or wrong-way alert that comes back after
+autopilot's redirect escalates the lane one rung (at the top it is killed and parked), where it
+used to wait for you.
+
 Left of M5:
 
-- **An outage with coding-agent lanes.** flightdeck's own lanes hold the queue when the model API
-  fails for every lane, and autopilot disengages on that hold; the `claude` and `codex` lanes do
-  not hold the queue yet.
 - **A refusal inside a coding-agent CLI.** flightdeck reroutes no refused request, and switches
   Anthropic's server-side refusal fallback off for its own lanes; what a CLI does with a refusal
   on its own API is not flightdeck's to see.

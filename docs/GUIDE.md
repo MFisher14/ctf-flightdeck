@@ -454,7 +454,10 @@ The queue is held too when the model API keeps failing in a way that may pass (a
 5xx, an overload): two lanes in a row end on it within a few minutes, with no reply in between.
 The challenges still queued stay queued instead of each being parked in turn. Once the API answers
 again, `/unhold` puts the challenges that outage parked back in front of the queue and starts lanes
-again. With a `[fallback]` API, a lane moves to it instead of ending.
+again. With a `[fallback]` API, a lane moves to it instead of ending. Coding-agent lanes
+(`--agent claude` or `--agent codex`) hold the queue on an outage the same way, once the CLI has
+retried and given up on its turn; with them, a failure that hits every lane (a refused key, say)
+ends each lane with the CLI's own words, and the queue is not held for it.
 
 When several lanes wait with a flag each, `A` (or `/approve all`) answers them together: a prompt
 lists each flag by lane and challenge, and `y` approves them, each as `a` would. The flags of one
@@ -1290,7 +1293,7 @@ as quitting does. Under the pull policy `auto`, new waves are pulled on the usua
 |---|---|
 | A lane stalls | escalates it one rung; at the top rung, kills it and parks the challenge |
 | A lane loops | kills it and parks the challenge for the next round |
-| A lane ignores the hint, or goes the wrong way on a web challenge | redirects it to the alert's suggestion, once per lane |
+| A lane ignores the hint, or goes the wrong way on a web challenge | redirects it to the alert's suggestion, once per lane; if the same alert comes back, escalates it one rung, and at the top rung kills it and parks the challenge |
 | A lane's effort is out of proportion to the challenge | kills it and parks the challenge for the next round |
 | A lane asks for more budget (its own cap) | approves it while the run budget has room: the lane's caps go up a step and it carries on (a lane whose spend has no price waits for you) |
 | The queue is dry and no lane runs | queues each unsolved challenge a lane gave up on, on the next model up, lowest points first, once per rung |

@@ -64,7 +64,8 @@ on its own (Deck._keeps_last_try).
 
 It disengages (disengage) when something needs a human: the run budget reached; spend with
 no price under a budget in dollars alone; the queue held by anything else (a model API that
-fails for every lane, an outage: agent/driver.py); the platform failing, or answering with a
+fails for every lane, an outage: agent/driver.py, and agent/external.py for the coding-agent
+lanes); the platform failing, or answering with a
 human check (run.py tells it: platform()); the event's end (ended()). A disengage holds the
 queue, logs a warning whose data is {"autopilot": "disengaged", "reason": ...} (what a
 notifier listens for, and what the post-flight report lists) and stops the rules.

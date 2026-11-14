@@ -4,6 +4,14 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- Coding-agent lanes (`--agent claude` or `--agent codex`) hold the queue when the model API
+  keeps failing in a way that may pass (a rate limit, a 5xx, an overload), as flightdeck's own
+  lanes do: two lanes in a row whose CLI gave up on it, with no answer in between, hold the
+  queue, so the rest of the queue is not spent on an API that does not answer, and autopilot
+  disengages. `/unhold` puts the challenges they parked back in front of the queue (#33).
+- Under autopilot, a lane that ignores the hint or goes the wrong way again after autopilot
+  redirected it is escalated one rung, and at the top rung killed and its challenge parked, as
+  a stalled lane is. It used to wait for you (#33).
 - `space` peeks at the selected lane. A panel opens under the lane list with the lane's last
   six steps, each on one row (a command and the first line of its output, the model's words,
   your messages, an alert, the question it waits on), over the line that says why the lane is

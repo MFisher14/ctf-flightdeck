@@ -103,6 +103,13 @@ makes before every start, owner-only (a symlink or a file of that name is remove
 followed; a folder another user owns stops the CLI, saying why), and keeps for the lane's
 later starts (codex's resume finds its thread there).
 
+A model API outage (P78). A CLI retries a failed call by itself; a turn that fails once its
+retries ran out ends the lane. When it failed on something that may pass (a rate limit, a 5xx,
+an overload: claude_passing, codex_passing), it counts toward the run's outage as AgentDriver's
+lanes do (Outage in agent/driver.py): OUTAGE_LANES lanes in a row ending so, with no answer from
+the API in between, hold the deck's queue before the last of them ends, so autopilot disengages,
+and their challenges go back on the queue when the player lifts the hold.
+
 What this module assumes about the CLIs is listed in tests/fake_agent_cli.py, which plays
 them in the tests (a real run spends the player's money). Nothing here has been checked
 against a real run yet; claude_argv() and codex_argv() hold every flag in one place.
