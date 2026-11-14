@@ -113,8 +113,9 @@ def _home_choice(menu, status: str):
 
 
 def _start_new(new) -> None:
-    """Set up the event the home screen's form described, and play it: the token to the keys
-    file, the event folder, the VPN file (its tool installed on a yes), then the console."""
+    """Set up the event the home screen's form described, and play it: the event folder, the
+    token to the keys file, the VPN file (its tool installed on a yes), then the console. The
+    folder comes first, so no token is kept for an event that could not be set up."""
     from . import events, keys, vpn, vpn_cli
     from . import start as starts
 
@@ -124,15 +125,24 @@ def _start_new(new) -> None:
 
     answers = new.answers
     try:
-        if new.token:
-            keys.save(answers.token_env, new.token)
         starts.write(new.folder, answers)
-        if new.vpn is not None:
-            vpn_cli.ensure_tool(vpn.keep(new.folder, new.vpn))
-    except (keys.KeysError, starts.StartError, vpn.VPNError) as exc:
+    except starts.StartError as exc:
         fail(str(exc))
     events.remember(new.folder)
     typer.echo(f"flightdeck: set up {new.folder}", err=True)
+    for note in new.notes:
+        typer.echo(f"flightdeck: token: {note}", err=True)
+    try:
+        if new.token:
+            keys.save(answers.token_env, new.token)
+    except keys.KeysError as exc:
+        fail(f"{exc}. The event is set up, but its token is not kept: put {answers.token_env}=<your CTFd access token> in "
+             f"{keys.keys_path()} (chmod 600), then `flightdeck` resumes this event")
+    try:
+        if new.vpn is not None:
+            vpn_cli.ensure_tool(vpn.keep(new.folder, new.vpn))
+    except vpn.VPNError as exc:
+        fail(f"{exc}. The event is set up without its VPN file: `flightdeck vpn add {new.folder} FILE` keeps one")
     if answers.platform == "ctfd" and not new.token:
         try:
             there = keys.source(answers.token_env) is not None
