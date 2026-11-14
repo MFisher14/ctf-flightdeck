@@ -39,7 +39,8 @@ the same in both layouts: the lane's model, turns, tokens and idle time are ther
 
 In every layout the chat box's border names the lane a message goes to (views.bar_title, P64):
 this lane, another one while a command names it (`/kill L07`), `the run` while a command
-that takes no lane is typed.
+that takes no lane is typed, and `L01 has finished` once the lane has ended and would refuse
+what is typed.
 """
 
 from __future__ import annotations

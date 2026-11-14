@@ -12,8 +12,8 @@ Menu entries can carry lane text (a suggested redirect, a candidate flag), so th
 drawn through text.untrusted() like everything else from a lane.
 
 The bar's border carries a title: who what is typed goes to (P64). The screen that hosts
-the bar says it (views.bar_title: the lane, `no lane`, `the run`), for the text typed so
-far; the bar asks again at every key, and the screen has it ask whenever its lane changes.
+the bar says it (views.bar_title: the lane, `no lane`, `the run`, or that the lane has
+finished or takes no more turns), for the text typed so far; the bar asks again at every key, and the screen has it ask whenever its lane changes.
 """
 
 from __future__ import annotations

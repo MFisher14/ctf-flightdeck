@@ -61,7 +61,7 @@ from ..runrecord import L1 as BY_L1
 from ..runrecord import Credit, EventLine, Solve, accepted
 from ..text import NEWLINE, untrusted
 from . import theme
-from .commands import KEY_COMMAND, goes_to, lane_id
+from .commands import KEY_COMMAND, Ask, goes_to, lane_id
 
 CATEGORY_ORDER = ("web", "for", "rev", "pwn", "cry", "misc", "osint")
 
@@ -1123,13 +1123,30 @@ BAR_RUN = "the run"  # the bar's title while a command that takes no lane is typ
 BAR_NO_LANE = "no lane"  # and while what is typed has no lane to go to
 
 
+def lane_refuses(lane: Lane, ask: Ask) -> str:
+    """Why `lane` would refuse what is typed (commands.Ask), in the bar's words; "" when it
+    takes it. The deck's own rules (Deck._apply), and the console's for a bare /fork: a lane
+    that has ended takes only what reads it, and a fork with its approach unless it solved
+    its challenge; a lane that gave up and is open only for its flag's answer
+    (gave_up_later) takes anything but what it would read on a next turn."""
+    if lane.finished:
+        if ask is Ask.READ or (ask is Ask.FORK and lane.state is not LaneState.SOLVED):
+            return ""
+        return f"{lane.id} has finished"
+    if lane.gave_up_later and ask is Ask.TURN:
+        return f"{lane.id} takes no more turns"
+    return ""
+
+
 def bar_title(deck: Deck, typed: str, lane: Lane | None) -> Text:
     """The title on the command bar's border: who what is typed in it goes to (P64).
     `to L04 · Ticket Desk` for `lane`, the lane the bar acts on (the selected one in the lane
     list, the open one in a lane's view), or for the lane a command names (`/kill L07`);
-    `no lane` when there is none (`no lane L07` when the one named is not there); `the run`
-    while a command that takes no lane is typed. commands.goes_to reads what is typed as
-    enter would. The challenge's name is challenge text: made safe, and never markup."""
+    `no lane` when there is none (`no lane L07` when the one named is not there); `L04 has
+    finished` or `L04 takes no more turns` when the lane would refuse what is typed
+    (lane_refuses); `the run` while a command that takes no lane is typed. commands.goes_to
+    reads what is typed as enter would. The challenge's name is challenge text: made safe,
+    and never markup."""
     aim = goes_to(typed)
     if aim.run:
         return Text(BAR_RUN, theme.MUTED)
@@ -1139,6 +1156,9 @@ def bar_title(deck: Deck, typed: str, lane: Lane | None) -> Text:
             return Text(f"{BAR_NO_LANE} {aim.lane}", theme.MUTED)
     if lane is None:
         return Text(BAR_NO_LANE, theme.MUTED)
+    refused = lane_refuses(lane, aim.ask)
+    if refused:
+        return Text(refused, theme.MUTED)
     out = Text("to ", theme.MUTED)
     out.append(lane.id, f"bold {theme.TEXT}")
     out.append(" · ", theme.MUTED)

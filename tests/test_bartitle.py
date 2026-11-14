@@ -2,9 +2,11 @@
 and in a lane's view.
 
 `to L04 · Ticket Desk` for the lane the keys point at or the lane a command names, `no lane`
-when there is none, `the run` while a command that takes no lane is typed. The title is read
-off the screen as a player sees it (test_console's helpers rebuild the terminal from the SVG
-export), and each test also sends what was typed, to see that it went where the title said.
+when there is none, `the run` while a command that takes no lane is typed, and `L04 has
+finished` or `L04 takes no more turns` for a lane that would refuse what is typed. The title
+is read off the screen as a player sees it (test_console's helpers rebuild the terminal from
+the SVG export), and each test also sends what was typed, to see that it went where the title
+said.
 
 Decks are synthetic (test_layout's: a driver that does no work); nothing needs a model or a
 network.
@@ -14,19 +16,23 @@ from __future__ import annotations
 
 import pytest
 from rich.cells import cell_len
+from textual import events
 
 from ctf_flightdeck import themes
 from ctf_flightdeck.console import fleet, theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
-from ctf_flightdeck.console.commands import COMMANDS, Aim, goes_to
+from ctf_flightdeck.console.commands import COMMANDS, Aim, Ask, goes_to
 from ctf_flightdeck.console.fleet import FleetScreen
 from ctf_flightdeck.console.focus import FocusScreen
 from ctf_flightdeck.console.widgets import BAR
 from ctf_flightdeck.core import interventions as iv
-from ctf_flightdeck.core.deck import QueueEntry
+from ctf_flightdeck.core.deck import Deck, QueueEntry
+from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Challenge, ChallengeStatus, DeckConfig, LaneState
+from ctf_flightdeck.mock.world import ManualClock
 from test_console import (
     OSC,
+    QuietDriver,
     assert_warning,
     bar,
     color_of,
@@ -37,7 +43,9 @@ from test_console import (
     press,
     quiet_deck,
     region_text,
+    send,
     shown,
+    status_line,
     terminal_frame,
     type_line,
 )
@@ -72,10 +80,14 @@ def hints(deck, lane_id: str) -> list[str]:
     ("/hi", Aim()),  # not a command yet
     ("/hint", Aim()),
     ("/hint look at the header", Aim()),
-    ("/kill L07", Aim(lane="L07")),
-    ("/kill l7 park", Aim(lane="L07")),
-    ("/hint L2 look again", Aim(lane="L02")),
-    ("/open L3", Aim(lane="L03")),
+    ("/kill L07", Aim(lane="L07", ask=Ask.ACT)),
+    ("/kill l7 park", Aim(lane="L07", ask=Ask.ACT)),
+    ("/hint L2 look again", Aim(lane="L02")),  # read on a turn, as a message is
+    ("/escalate", Aim()),
+    ("/open L3", Aim(lane="L03", ask=Ask.READ)),
+    ("/copy all", Aim(ask=Ask.READ)),
+    ("/fork", Aim(ask=Ask.ACT)),  # its prompt
+    ("/fork L2 try the other port", Aim(lane="L02", ask=Ask.FORK)),
     ("/note", Aim(run=True)),
     ("/note the flag format is flag{...}", Aim(run=True)),
     ("/config", Aim(run=True)),
@@ -83,8 +95,8 @@ def hints(deck, lane_id: str) -> list[str]:
     ("/queue", Aim(run=True)),
     ("/queue L02", Aim(run=True)),  # a word that looks like a lane names none to a command that takes none
     ("/q", Aim(run=True)),
-    ("/approve", Aim()),
-    ("/approve L02", Aim(lane="L02")),
+    ("/approve", Aim(ask=Ask.ACT)),
+    ("/approve L02", Aim(lane="L02", ask=Ask.ACT)),
     ("/approve all", Aim(run=True)),  # over every lane, so no one lane's
     ("/approve 2", Aim()),  # refused: it goes nowhere, and is never read as L02
     ("/approve all L02", Aim()),
@@ -99,7 +111,13 @@ def test_every_command_that_takes_no_lane_is_the_runs_and_every_lane_command_is_
     no_lane = {command.name for command in COMMANDS if goes_to(f"/{command.name}").run}
     assert {"note", "config", "queue", "new", "theme", "layout", "help", "quit"} <= no_lane
     assert not no_lane & {"hint", "redirect", "fork", "kill", "approve", "decline", "dismiss", "escalate", "pause", "takeover", "diff", "copy", "open"}
-    assert all(goes_to(f"/{command.name}") == Aim() for command in COMMANDS if command.name not in no_lane)
+    to_a_lane = {command.name: goes_to(f"/{command.name}") for command in COMMANDS if command.name not in no_lane}
+    assert all(not aim.run and aim.lane is None for aim in to_a_lane.values())
+    assert {name: aim.ask for name, aim in to_a_lane.items()} == {  # what each asks of its lane, with nothing after its name
+        "hint": Ask.TURN, "redirect": Ask.TURN, "escalate": Ask.TURN,
+        "fork": Ask.ACT, "kill": Ask.ACT, "approve": Ask.ACT, "decline": Ask.ACT, "dismiss": Ask.ACT, "pause": Ask.ACT, "takeover": Ask.ACT,
+        "diff": Ask.READ, "copy": Ask.READ, "open": Ask.READ,
+    }
 
 
 def test_the_title_names_the_lane_no_lane_or_the_run():
@@ -386,5 +404,171 @@ def test_an_unsent_message_and_the_title_each_stay_with_their_lane():
         app.screen.show_lane("L01")
         await pilot.pause()
         assert bar(app).field.value == "/note for every" and title(app) == "the run"
+
+    drive(app, script, SIZE)
+
+
+# ---------------------------------------------------------------------- a lane that would refuse what is typed
+
+FINISHED = "L01 has finished"
+NO_TURNS = "L02 takes no more turns"
+ARGS = {"hint": "look again", "redirect": "a new plan", "fork": "another way", "kill": "park", "diff": "alpha.bin", "copy": "command", "open": "L01"}
+
+
+def lane_commands() -> list[str]:
+    """Every lane command as it can be typed: alone, and with an argument where it takes one
+    (/approve's only word is `all`, which is the run's)."""
+    takes_words = {command.name for command in COMMANDS if command.lane and command.args}
+    assert takes_words - {"approve"} == set(ARGS)  # a new command with an argument gets a line in ARGS
+    typed = []
+    for command in COMMANDS:
+        if command.lane:
+            typed.append(f"/{command.name}")
+            if command.name in ARGS:
+                typed.append(f"/{command.name} {ARGS[command.name]}")
+    return typed
+
+
+def ended_lanes(**kw) -> tuple[Deck, FlightdeckApp]:
+    """A console whose platform takes every flag, with L01 solved, L02 killed and L03 at work."""
+    deck = Deck(DeckConfig(event="ev", models=("glm",), max_lanes=4), QuietDriver(), ManualClock(1000.0), lambda challenge_id, flag: True)
+    app = FlightdeckApp(deck, refresh_seconds=None, layout="simple", copier=lambda text: "", **kw)  # no clipboard but the test's
+    release(deck, "alpha", "beta", "gamma")
+    deck.report("L01", TurnReport(action="cat flag.txt", flag="flag{synthetic}"))
+    assert deck.apply(iv.Approve("L01")).ok and deck.lanes["L01"].state is LaneState.SOLVED
+    deck.report("L02", TurnReport(action="file beta.bin", output="data"))
+    assert deck.apply(iv.Kill("L02", requeue=False)).ok and deck.lanes["L02"].state is LaneState.KILLED
+    return deck, app
+
+
+def test_the_title_names_a_lane_that_has_ended_only_for_what_it_still_takes():
+    deck, app = ended_lanes()
+    solved, killed, at_work = (deck.lanes[lane_id] for lane_id in ("L01", "L02", "L03"))
+    for typed in ("", "a message", "/hint", "/hint look again", "/redirect a new plan", "/kill", "/kill park", "/pause", "/escalate",
+                  "/approve", "/decline", "/dismiss", "/takeover", "/fork", "/ope", "/approve 2"):
+        assert views.bar_title(deck, typed, solved).plain == "L01 has finished", typed
+        assert views.bar_title(deck, typed, killed).plain == "L02 has finished", typed
+    for typed in ("/open", "/diff", "/diff beta.bin", "/copy", "/copy all"):  # they read the lane, and ask nothing of it
+        assert views.bar_title(deck, typed, solved).plain == "to L01 · Alpha", typed
+        assert views.bar_title(deck, typed, killed).plain == "to L02 · Beta", typed
+    assert views.bar_title(deck, "/fork another way", killed).plain == "to L02 · Beta"  # a sibling on the challenge it left
+    assert views.bar_title(deck, "/fork another way", solved).plain == "L01 has finished"  # its challenge is solved
+    assert views.bar_title(deck, "/hint l2 look again", at_work).plain == "L02 has finished"  # the lane a command names
+    assert views.bar_title(deck, "/open L02", at_work).plain == "to L02 · Beta"
+    assert views.bar_title(deck, "/pause L01", None).plain == "L01 has finished"
+    assert views.bar_title(deck, "/note x", killed).plain == "the run"  # a note is for the lanes to come as well
+    assert views.bar_title(deck, "a message", at_work).plain == "to L03 · Gamma"
+    refused = views.bar_title(deck, "a message", killed)
+    assert str(refused.style) == theme.MUTED and not refused.spans  # as `no lane`: it names nobody
+
+
+def test_the_title_names_a_lane_that_takes_no_more_turns_only_for_what_asks_no_turn_of_it():
+    deck, app = three_lanes()
+    deck.report("L02", TurnReport(turn=False, gave_up="the model gave up"))  # its flag still waits for the player
+    lane = deck.lanes["L02"]
+    assert lane.gave_up_later and not lane.finished and lane.pending is not None
+    for typed in ("", "a message", "/hint", "/hint look again", "/redirect", "/redirect a new plan", "/escalate", "/nope"):
+        assert views.bar_title(deck, typed, lane).plain == NO_TURNS, typed
+    for typed in ("/approve", "/decline", "/kill", "/kill park", "/fork", "/fork another way", "/pause", "/dismiss", "/takeover", "/open", "/copy", "/diff"):
+        assert views.bar_title(deck, typed, lane).plain == "to L02 · Beta", typed
+    assert views.bar_title(deck, "/escalate L02", deck.lanes["L01"]).plain == NO_TURNS
+    assert str(views.bar_title(deck, "", lane).style) == theme.MUTED
+    assert deck.apply(iv.Decline("L02")).ok and lane.state is LaneState.GAVE_UP
+    assert views.bar_title(deck, "", lane).plain == "L02 has finished"
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_lane_that_has_ended_is_not_named_as_where_a_message_goes_in_its_view_or_in_the_list(layout):
+    deck, app = three_lanes(layout)
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        assert title(app) == "to L01 · Alpha"
+        await send(pilot, app, "/kill park")
+        assert deck.lanes["L01"].state is LaneState.KILLED and app.screen.lane_id == "L01"  # parked: the view stays
+        assert title(app) == FINISHED  # the title follows the lane's end, with nothing typed
+        row = app.screen.query_one("#bar-input").region.y
+        assert color_of(app, FINISHED, row) == theme.MUTED.lower()
+        await press(pilot, *"hi")
+        assert title(app) == FINISHED
+        await press(pilot, "enter")
+        assert_warning(app, "L01 has finished (killed)")  # what the title said beforehand
+        assert not hints(deck, "L01")
+        await press(pilot, *"/open")
+        assert title(app) == "to L01 · Alpha"  # a command the lane still takes
+        await press(pilot, *(["backspace"] * len("/open")))
+        assert title(app) == FINISHED
+        await press(pilot, "escape")
+        assert isinstance(app.screen, FleetScreen) and app.fleet.selected_lane == "L01"
+        assert title(app) == FINISHED  # in the list: the selection is still the lane that ended
+        app.fleet.select_lane("L01")  # opens the finished group, the cursor on L01's row
+        await pilot.pause()
+        assert cursor_key(app) == "L01" and title(app) == FINISHED
+        await press(pilot, "tab", *"anyone", "enter")
+        assert_warning(app, "L01 has finished (killed)")
+        assert not hints(deck, "L01")
+        app.fleet.select_lane("L03")
+        await pilot.pause()
+        assert title(app) == "to L03 · Gamma"
+        await press(pilot, *"/hint L01 look")
+        assert title(app) == FINISHED  # the lane the command names, whichever is selected
+        await press(pilot, "enter")
+        assert_warning(app, "L01 has finished (killed)")
+        assert not any(hints(deck, lane_id) for lane_id in deck.lanes)
+
+    drive(app, script, (120, 36))
+
+
+@pytest.mark.parametrize("lane_id, name, forks", [
+    ("L01", "Alpha", False),  # solved: nothing is left to fork for
+    ("L02", "Beta", True),  # killed: a sibling can take up its challenge
+], ids=["solved", "killed"])
+def test_on_a_lane_that_has_ended_the_title_names_it_exactly_when_enter_does_not_refuse_it(lane_id, name, forks):
+    """Every lane command, alone and with its argument, and a plain message: typed in the
+    ended lane's view, the title names the lane for the ones enter carries out, and says the
+    lane has finished for the ones enter refuses with those words."""
+    deck, app = ended_lanes()
+    finished, named = f"{lane_id} has finished", f"to {lane_id} · {name}"
+    takes = ["/diff", "/diff alpha.bin", "/copy", "/copy command", "/open", "/open L01"] + (["/fork another way"] if forks else [])
+    expected = {typed: named for typed in takes}
+
+    async def script(pilot):
+        await open_focus(pilot, app, lane_id)
+        for typed in ["a message", *lane_commands()]:
+            typed = typed.replace("L01", lane_id)
+            app.say("nothing yet")  # what the status line says when enter says nothing
+            app.post_message(events.Paste(typed))
+            await pilot.pause()
+            was = title(app)
+            assert was == expected.get(typed.replace(lane_id, "L01"), finished), typed
+            await press(pilot, "enter")
+            assert app.screen.lane_id == lane_id and bar(app).field.value == "", typed
+            assert (finished in status_line(app)) == (was == finished), (typed, status_line(app))
+
+    drive(app, script, SIZE)
+    assert [lane.id for lane in deck.lanes.values() if not lane.finished] == (["L03", "L04"] if forks else ["L03"])  # the fork was made
+
+
+def test_a_lane_open_only_for_its_flags_answer_is_not_named_for_a_message_and_is_for_the_answer():
+    deck, app = three_lanes()
+    deck.report("L02", TurnReport(turn=False, gave_up="the model gave up"))
+    assert deck.lanes["L02"].gave_up_later and not deck.lanes["L02"].finished
+
+    async def script(pilot):
+        assert cursor_key(app) == "L02" and title(app) == NO_TURNS  # in the list, with nothing typed
+        await open_focus(pilot, app, "L02")
+        assert title(app) == NO_TURNS
+        for typed in ("try the other port", "/redirect a new plan", "/escalate"):
+            app.post_message(events.Paste(typed))
+            await pilot.pause()
+            assert title(app) == NO_TURNS, typed
+            await press(pilot, "enter")
+            assert_warning(app, "L02 gave up and takes no more turns")
+        assert not hints(deck, "L02") and deck.lanes["L02"].model == "glm"
+        app.post_message(events.Paste("/decline"))
+        await pilot.pause()
+        assert title(app) == "to L02 · Beta"  # its flag's answer is what it is open for
+        await press(pilot, "enter")
+        assert deck.lanes["L02"].state is LaneState.GAVE_UP and title(app) == "L02 has finished"
 
     drive(app, script, SIZE)
