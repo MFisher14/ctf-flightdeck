@@ -78,7 +78,7 @@ import httpx
 from .. import __version__
 from ..plugins.call import MAX_CHALLENGES, MAX_SHOWN, TOKEN_MARK, VERDICTS, CallFailed, PullReply, Verdict, valid_ref
 from ..text import untrusted
-from .ctfd import CONNECT_TIMEOUT, MAX_FILE_BYTES, MAX_REDIRECTS, _message, _retry_after
+from .ctfd import API, CONNECT_TIMEOUT, MAX_FILE_BYTES, MAX_REDIRECTS, _message, _retry_after
 from .instances import ON_DEMAND, InstanceError, InstancesConfig
 
 NAME = "http"  # event.platform, and the name on the board's record (plugin.json): no plugin can take it (config.RESERVED_PLATFORMS)
@@ -694,8 +694,10 @@ def plan(config: HttpConfig, instances: InstancesConfig | None = None) -> list[s
         lines.append("submit    no route: flightdeck sends no flag (the submit policy must be manual or off)")
     lines.append(f"solved    {config.solved.request}, {carried}")
     if instances is not None:  # the [instances] table's routes go the same way, with the same token
+        under = API if instances.routes.api else ""  # InstanceClient asks these paths under /api/v1 when `api` is true
         for action in ("status", "start", "renew", "stop"):
             method, path = getattr(instances.routes, action)
+            path = under + path
             lines.append(f"instance  {action} {method} {path}, {carried}: only for an on-demand challenge of the board")
     return lines
 

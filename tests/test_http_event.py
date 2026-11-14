@@ -88,6 +88,13 @@ def test_an_http_profile_needs_no_leave_from_the_players_config_and_its_plan_is_
     assert [line for line in describe(boxed, chosen, environ={}) if line.startswith("http      instance")] == [
         f"http      instance  {action} {method} {route} of the board"
         for action, method in (("status", "GET"), ("start", "PUT"), ("renew", "PATCH"), ("stop", "DELETE"))]
+    own = '\n[instances]\napi = true\nstart = ["POST", "/x/start"]\nstop = ["POST", "/x/stop"]\nrenew = ["POST", "/x/renew"]\n' \
+          'status = ["GET", "/x?c={id}"]\nbody_key = "c"\n'
+    routed, chosen = load_profile(event_file(tmp_path, extra=own))
+    shown = [line for line in describe(routed, chosen, environ={}) if line.startswith("http      instance")]
+    assert [line.split(",")[0] for line in shown] == [  # the paths InstanceClient asks under /api/v1, as it asks them
+        "http      instance  status GET /api/v1/x?c={id}", "http      instance  start POST /api/v1/x/start",
+        "http      instance  renew POST /api/v1/x/renew", "http      instance  stop POST /api/v1/x/stop"]
     manual, chosen = load_profile(event_file(tmp_path, pull="manual"))
     assert f"pull      manual   {HTTP_BOARD['manual']} (the rules allow auto)" in describe(manual, chosen, environ={})
     assert "it plays the board `flightdeck http pull` wrote" in HTTP_BOARD["manual"]
