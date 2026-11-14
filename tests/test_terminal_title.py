@@ -239,7 +239,7 @@ def test_no_text_of_a_challenge_or_of_a_hold_reaches_the_title(written):
 
 
 def test_a_shell_that_takes_the_terminal_gets_the_old_title_and_the_console_takes_it_again(written):
-    """Take over and ctrl+z suspend the console: Textual says so before it lets the terminal go
+    """Take over suspends the console: Textual says so before it lets the terminal go
     (app_suspend_signal) and after it has it again (app_resume_signal)."""
     world = FakeWorld(scenarios.get("sstv"))
     app = FlightdeckApp(world.deck, ticker=world.tick, mock="MOCK · test", refresh_seconds=None)
@@ -260,6 +260,23 @@ def test_a_shell_that_takes_the_terminal_gets_the_old_title_and_the_console_take
 
     run(app, script)
     assert ours(written)[-1] == LEAVE
+
+
+def test_a_console_that_fails_still_puts_the_title_back(written):
+    world = FakeWorld(scenarios.get("sstv"))
+    app = FlightdeckApp(world.deck, ticker=world.tick, mock="MOCK · test", refresh_seconds=None)
+
+    def fail() -> None:
+        raise RuntimeError("the console failed")
+
+    async def script(pilot) -> None:
+        assert ours(written) == [SAVE, title("flightdeck")]
+        app.call_later(fail)
+        await pilot.pause()
+
+    with pytest.raises(RuntimeError, match="the console failed"):
+        run(app, script)
+    assert ours(written) == [SAVE, title("flightdeck"), LEAVE]
 
 
 def test_a_console_told_to_leave_the_title_and_the_bell_writes_neither(written):
@@ -333,3 +350,28 @@ def test_on_a_terminal_the_mock_sets_the_title_rings_and_puts_the_title_back_whe
     assert sent.rindex(LEAVE) > max(found.end() for found in re.finditer(r"\x1b\]0;[^\x07]+\x07", sent))  # the last title written
     for text in re.findall(r"\x1b\]0;([^\x07]+)\x07", sent):
         assert ALLOWED.fullmatch(text), text
+
+
+def test_a_run_stopped_by_sigterm_puts_the_title_back_before_it_prints_its_last_lines(tmp_path):
+    """A real run on a pty, its lane asking the fake model server on 127.0.0.1: SIGTERM stops
+    it as quitting does, and the terminal has its title back before `play` prints what it
+    prints on the way out."""
+    import signal
+
+    from fake_model import FakeModelServer, tool_call_reply
+    from test_play_signals import QUIET, Terminal, env_for, lane_pid_file, make_board, make_config, wait_for
+
+    with FakeModelServer([tool_call_reply("shell", {"command": QUIET, "timeout_seconds": 300})]) as server:
+        config = make_config(tmp_path, server.base_url)
+        term = Terminal(["play", str(make_board(tmp_path)), "--config", str(config)], env_for(tmp_path), tmp_path)
+        try:
+            wait_for(lambda: lane_pid_file(tmp_path), "the lane's command", term)
+            assert SAVE + title("flightdeck") in term.text() and LEAVE not in term.text()
+            os.kill(term.proc.pid, signal.SIGTERM)
+            assert term.proc.wait(timeout=60) == 128 + signal.SIGTERM, term.text()[-2000:]
+            wait_for(lambda: "the run's lanes were stopped" in term.text(), "play's last line", term, timeout=5.0)
+        finally:
+            term.close()
+    sent = term.text()
+    assert sent.count(SAVE) == 1 and sent.count(LEAVE) == 1
+    assert sent.index(LEAVE) < sent.index("the run's lanes were stopped")
