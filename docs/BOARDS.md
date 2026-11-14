@@ -1,8 +1,8 @@
 # Boards and event profiles
 
 A **board** is what flightdeck plays: a folder of challenge folders. `flightdeck play FOLDER` opens
-one, `flightdeck ctfd pull` writes one from a CTFd site, and the practice set that ships with
-flightdeck is one. An **event profile** (`event.toml`) says what an event's rules allow, and how
+one, `flightdeck ctfd pull` writes one from a CTFd site (`gm pull` from a Game Master, `plugin
+pull` through a plugin of yours), and the practice set that ships with flightdeck is one. An **event profile** (`event.toml`) says what an event's rules allow, and how
 far flightdeck goes on its own at each stage. This page is the format of both.
 
 ## The board folder
@@ -240,6 +240,36 @@ or finish, or nothing is started.
 `flightdeck play ~/ctf/gm-board` plays that board with you submitting each answer by hand. With an
 event profile whose platform is `gamemaster` (below), flightdeck submits them.
 
+## A board from a plugin
+
+For a platform that is neither CTFd nor a Game Master, a plugin of your own does the talking
+([PLUGINS.md](PLUGINS.md)): flightdeck runs its program to list the challenges and download
+their files, and writes the board itself.
+
+```sh
+export MYCTF_TOKEN=...                          # the variable event.toml names (never the token itself)
+flightdeck plugin pull ~/ctf/quals/event.toml   # into the profile's board folder; submits nothing
+```
+
+`plugin pull` writes this same format: a folder per challenge with its `challenge.json` and its
+files. The plugin never writes into the board: it downloads into a staging folder and says what
+each challenge is, and flightdeck builds each folder, reads it back with every check on this
+page ([A board is untrusted](#a-board-is-untrusted)) and only then moves it in. A challenge that
+does not pass is left out and named, with the reason, and the others land.
+
+It also writes `plugin.json`, flightdeck's own record of which plugin pulled the board, from
+which address, and which challenge on the platform each folder is; leave it where it is. A
+folder's name comes from the challenge's name (from the platform's id for it when the name has
+no letter or digit). Pulling again keeps what is there and adds what is new; a challenge on the
+board is never changed by a later pull. A folder that already holds something else (files and no
+`plugin.json`, or a board pulled by another plugin or from another address) is refused: use a
+new folder. It exits with status 1 when some challenges were left out, and 2 when the pull could
+not start or the plugin's call failed.
+
+You rarely need it before a run: with `pull = "auto"` or `"confirm"` in the profile, `flightdeck
+play --event event.toml` pulls the board itself. A plugin's board has no answers file, since the
+platform checks the flags.
+
 ## The event profile: `event.toml`
 
 An event profile says what one event's rules allow. Write it from the rules, check it, and play
@@ -287,6 +317,17 @@ pull policy does nothing there. Under `submit = "confirm"` or `"auto"` flightdec
 to the Game Master and reads its solved list; under `manual` or `off` it contacts the Game Master
 not at all. Set `flag_format` in the profile only to override the board's.
 
+An event on any other platform says `platform = "NAME"`, the name of a plugin you added with
+`flightdeck plugin add` ([PLUGINS.md](PLUGINS.md)), with the platform's `url`, the `token_env`
+of your token there (unless the plugin takes none) and the `board` folder its challenges are
+pulled into. `platform` is `ctfd`, `manual`, `gamemaster` or such a name: a name that is no
+plugin in your own config is refused, never played as a folder board, and a profile cannot add
+a plugin. Under `pull = "auto"` flightdeck pulls the board through the plugin before the
+console opens and again every 5 minutes; under `"confirm"`, once, after your yes; under
+`manual` or `off` the run pulls nothing and plays what `flightdeck plugin pull` wrote. Under
+`submit = "confirm"` or `"auto"` flags go to the platform through the plugin, and whenever the
+run uses the plugin it reads the platform's solved list through it each minute.
+
 `[event]` says where the board comes from. With `platform = "ctfd"`, flightdeck pulls the board
 from `url` into the folder you give `play`. With `platform = "manual"`, `board` names a folder
 board you made, and you submit the flags on the platform yourself.
@@ -326,7 +367,8 @@ The rules set the loosest policy a stage may have:
 - `platform_automation = false` makes `pull` and `submit` manual: you put the challenges in the
   board folder, and you submit each flag and tell flightdeck how it went. flightdeck then has no
   use for CTFd's API, so such a profile must say `platform = "manual"` and name its `board`; a
-  `ctfd` profile that may not pull is refused.
+  `ctfd` profile that may not pull is refused. A profile on a plugin's platform then plays as a
+  board you fill yourself: its plugin is not run, and `preflight` says so.
 - `live_targets` makes `instance` `auto` (for `"allowed"`), `confirm` or `off`.
 
 A stage you leave out of `[policies]` gets the loosest policy its rules allow, except `submit`,
