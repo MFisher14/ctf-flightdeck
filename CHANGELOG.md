@@ -33,6 +33,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A status line too long for the terminal goes on in a second row instead of being cut, so
   what `/layout` and `/theme` answer (the config line that keeps the choice, and its file) is
   read whole at 80 columns.
+- A lane's view is calm in the simple layout: one row for each thing the lane did, a run of
+  tool calls on two (`⏺ 12 tool calls`, and the last one), a long L1 note or command as its first
+  line and ` …+14 lines`, an alert as its name and turn. `ctrl+o` (or `/details`) shows every
+  line and every output, and hides them again. The deck layout shows every line as before, and
+  `ctrl+o` gives the calm view there. The transcript wraps again when the terminal is resized.
 - A lane that restarts takes its view with it: `/attach` or `/kill` typed in a lane's own view
   moves the view to the fresh lane, with what you were typing (before, the view stayed on the
   dead lane). `/attach` names the fresh lane (`L01 restarted as L02`), and the ended lane reads

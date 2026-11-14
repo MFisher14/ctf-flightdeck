@@ -166,6 +166,19 @@ challenge the fleet shows a page of its own in place of the tables (`fleet.EMPTY
 `EMPTY_PLATFORM`). `console/room.py` measures a terminal in the layout it is given
 (`room(..., layout=)`).
 
+**The lane's transcript** (P54). `FocusScreen.details` is the view's one switch: as the player
+set it there (`ctrl+o`, `/details`), else off in `simple` and on in `deck` and the compact
+layout. `FocusScreen._rows()` turns the lane's log into rows for `console/lanelog.py`: with
+details on, one row for each action, drawn by `views.transcript_lines` as before; off, one for
+each entry of `views.entries()` (a run of consecutive tool calls is one entry), drawn by
+`views.entry_text()`. A row has a key (the index of its first action), a token that changes
+when what it draws does, and a function that draws it, called only for a row that is mounted.
+`LaneLog` is a scroll container with one Static for each row: rows that are unchanged stay, the
+last one is drawn again when its run grows, new ones are mounted under it, and anything else
+(another lane, the switch, a theme) mounts the rows again. It mounts the newest 300, follows the
+lane at its end with Textual's anchor, and puts the first entry in view back where it was when
+the rows are mounted again while the player reads back.
+
 **Themes** (P52). `themes.py` is pure (no rich, no textual), so the config can load a palette
 without a console: `Palette` (17 colours by role, `dark`, the diff view's `syntax` style),
 `BUILTIN`, `parse()` and `load()` for a theme file, and `weak_pairs()`, the rows of `CONTRAST`

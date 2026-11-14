@@ -267,9 +267,17 @@ first, and the line under the list says why and numbers the answers: one key ans
 box (plain text is a message to the lane; `/redirect`, `/approve`, `/diff` and the rest are
 commands; `esc` goes back).
 
-![One lane full screen: the two other lanes that need you, its commands and their output, a needs-you box with two numbered answers, the files it changed and the diff of one of them, and the chat box](screenshots/simple-lane.png)
+![One lane full screen: the two other lanes that need you; its transcript in five rows, two runs of tool calls with the last call of each and the alert between them; a needs-you box with two numbered answers; the files it changed and the diff of one of them; and the chat box](screenshots/simple-lane.png)
 
 *A lane full screen, from `flightdeck mock` (invented challenges).*
+
+A lane's view is calm: each thing the lane did is one row, cut at the edge of the pane. A run
+of tool calls is two rows, how many and the last one (`⏺ 12 tool calls`, then what it is doing
+now); a long command or output shows its first line and ` …+6 lines`; an alert is its name and
+turn; the model's own words are the one thing that wraps. `ctrl+o` (or `/details`) shows every
+line of every command and output, and again hides them; it works while you are typing, and
+what you typed stays. `pgup` and `pgdn` scroll, and the view stays where you are reading until
+you are back at the end.
 
 `t` takes over a lane's shell (its container in Docker): exit it to hand the lane back, and the
 lane hears what you changed. The shell starts clean: it reads no startup file, and with `--host`
@@ -335,11 +343,13 @@ The console has two layouts.
 
 A lane's own view shows a part only when it has something in it: the files pane once the lane
 has changed a file, the strip of other lanes while one of them needs you. Its title has the
-lane's model, turns, tokens and idle time, which the list leaves out.
+lane's model, turns, tokens and idle time, which the list leaves out. Its transcript is the
+calm one, a row for each thing the lane did, and `ctrl+o` shows every line.
 
 **deck** is the whole dashboard: the board of every challenge beside the lanes, each lane's
 model, turns and idle time in its row, tokens and the event clock in the header, and every key
-on the key line.
+on the key line. A lane's view shows every line of its transcript there, and `ctrl+o` gives the
+calm one.
 
 ![The deck layout: the board of eight challenges on the left and six lanes on the right with their model, turns, cost and idle time](screenshots/fleet.png)
 
