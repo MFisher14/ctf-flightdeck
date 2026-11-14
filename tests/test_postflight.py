@@ -89,14 +89,18 @@ class RecordingDriver:
 class Script:
     """A run played by script; the real deck, EventLog and TranscriptLog write its folder."""
 
-    def __init__(self, folder: Path, *, flags=None, models=MODELS, team=True, max_lanes=8, clock=None, event="test") -> None:
+    def __init__(self, folder: Path, *, flags=None, models=MODELS, team=True, max_lanes=8, clock=None, event="test",
+                 submit="confirm", verify=None) -> None:
+        """`submit`: the deck's submit policy. `verify`: the board's verifier (default: one that
+        checks a flag against `flags`; platform.manual.cannot_check for a board the player
+        submits on by hand)."""
         self.folder = folder
         self.clock = clock if clock is not None else ManualClock(0.0)
         self.driver = RecordingDriver()
         self.flags = dict(flags or {})
         self.models = models
-        config = DeckConfig(event=event, team=team, max_lanes=max_lanes, flag_format=FLAG_FORMAT, models=models)
-        self.deck = Deck(config, self.driver, self.clock, lambda cid, flag: self.flags.get(cid) == flag)
+        config = DeckConfig(event=event, team=team, max_lanes=max_lanes, flag_format=FLAG_FORMAT, models=models, submit=submit)
+        self.deck = Deck(config, self.driver, self.clock, verify or (lambda cid, flag: self.flags.get(cid) == flag))
         self.log = EventLog(folder / "events.jsonl")
         self.log.attach(self.deck)
         self.transcripts = TranscriptLog(folder / "lanes")
