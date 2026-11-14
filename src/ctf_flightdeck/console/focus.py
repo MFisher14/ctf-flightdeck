@@ -6,7 +6,9 @@ changed and the diff of the selected one. Bottom: the chat box. Plain text is a 
 the lane reads on its next turn; `/` runs a command on this lane. Typing goes to the chat
 box from any pane. `esc` goes back to the fleet; a strip on top lists other lanes that
 need you (`ctrl+n` goes through them in attention order). An unsent message stays with
-the lane it was written for.
+the lane it was written for. When the lane is ended to start afresh (/attach, a kill that
+re-queues), the view goes to the fresh lane, and the unsent message with it
+(FlightdeckApp.follow_restart).
 
 At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: one pane, with
 what the lane needs from you above its transcript, and no files pane.
@@ -152,6 +154,9 @@ class FocusScreen(Screen, inherit_bindings=False):
         self._fit_layout(self.size.width)
         self.show_lane(self.lane_id, self._first_file)
 
+    def on_screen_resume(self) -> None:
+        self.fd.follow_restart()  # back from under a prompt: the lane this one restarted as may have started meanwhile
+
     def on_resize(self, event: events.Resize) -> None:
         if self._ready and self._fit_layout(event.size.width):
             self.call_after_refresh(self.refresh_view)
@@ -214,8 +219,9 @@ class FocusScreen(Screen, inherit_bindings=False):
         the simple layout shows only when they have something in them, and the key line."""
         self.refresh_view()
 
-    def show_lane(self, lane_id: str, file: str | None = None) -> None:
-        """Switch this view to another lane (or reopen it).
+    def show_lane(self, lane_id: str, file: str | None = None, *, carry: bool = False) -> None:
+        """Switch this view to another lane (or reopen it). `carry`: what is typed in the chat
+        box goes along (the lane was restarted as `lane_id`: the message is for the fresh one).
 
         Before the view is composed (a second open queued right behind the one that pushed
         it), only remember the lane: on_mount draws it."""
@@ -223,14 +229,14 @@ class FocusScreen(Screen, inherit_bindings=False):
             self.lane_id, self._first_file = lane_id, file
             return
         chat = self.query_one("#chat", CommandBar)
-        if lane_id != self.lane_id:
+        if lane_id != self.lane_id and not carry:
             if chat.field.value:
                 self._drafts[self.lane_id] = chat.field.value  # kept for when you come back
             chat.clear()
             draft = self._drafts.pop(lane_id, "")
             chat.field.value = draft
             chat.field.cursor_position = len(draft)
-        else:
+        elif not carry:  # carried: the chat box stays as it is (its text, the cursor, an open menu)
             chat.hide_menu()
         self.lane_id = lane_id
         self._written = 0

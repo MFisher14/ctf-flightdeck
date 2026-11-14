@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import signal
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 
 from rich.text import Text
@@ -96,6 +96,9 @@ class FlightdeckApp(App[None]):
             raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {layout!r}")
         self.layout = layout
         self._open_first = False  # the first lane a /new starts is still to open in the focus view (simple layout)
+        # (challenge, the lane that ended to start afresh, the lanes there were then): the focus view on that lane
+        # goes to the fresh one (follow_restart); None: nothing to follow
+        self._follow: tuple[str, str, frozenset[str]] | None = None
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
         self._use_textual_theme()
@@ -356,20 +359,25 @@ class FlightdeckApp(App[None]):
             (warn or self.warn)(str(exc))
             return []
 
-    async def _attach(self, cid: str, files: list) -> None:
+    async def _attach(self, cid: str, files: list, lane_id: str | None = None) -> None:
         """/attach's work, in a worker: the file window when no file was named, then the copy
-        (the attacher makes it in a thread), with a line that says it is going on."""
+        (the attacher makes it in a thread), with a line that says it is going on. `lane_id`:
+        the lane the command was typed on; a focus view still on it once the files are there
+        goes to the fresh lane (follow)."""
         if not files:
             files = await self.pick_files()
             if not files:
                 return
         self.say(f"copying {len(files)} file{'' if len(files) == 1 else 's'} into {cid}...")
+        known = set(self.deck.lanes)
         try:
             ok, message = await self.attacher(cid, files)
         except Exception as exc:  # a bug: said, and the console goes on
             ok, message = False, f"could not attach to {cid}: {type(exc).__name__}: {exc}"
         self.say(message, "information" if ok else "warning")
         self.refresh_view()
+        if ok and lane_id is not None:
+            self.follow(cid, lane_id, known)
 
     def attach(self, arg: str, lane_id: str | None = None) -> None:
         """/attach [challenge] <files>: the files named (dragged onto the command bar) go into
@@ -387,7 +395,7 @@ class FlightdeckApp(App[None]):
             return
         cid = self._challenge_arg(rest, lane_id)
         if cid is not None:
-            self.run_worker(self._attach(cid, files), exclusive=False)
+            self.run_worker(self._attach(cid, files, lane_id), exclusive=False)
 
     def new_challenge(self, name: str = "") -> None:
         """/new: ask for a challenge (NewChallengePrompt), which puts it on the board (the
@@ -441,6 +449,46 @@ class FlightdeckApp(App[None]):
         if not field.has_focus and not field.value:
             self.open_lane(next(iter(self.deck.lanes)))
 
+    def follow(self, challenge_id: str, old: str, known: Iterable[str]) -> None:
+        """The lane `old` ended so that its challenge starts afresh (/attach, a kill that
+        re-queues): a focus view that shows it goes to the fresh lane, now or when that lane
+        starts (follow_restart). `known`: the lanes there were before, so the fresh one is
+        told from them. Nothing to follow when the view is not on `old`, when `old` is not a
+        lane of that challenge, or when it still runs (the deck did not restart it)."""
+        focus, lane = self.focus_screen, self.deck.lanes.get(old)
+        if focus is None or focus.lane_id != old or lane is None or lane.challenge_id != challenge_id or not lane.finished:
+            return
+        self._follow = (challenge_id, old, frozenset(known))
+        self.follow_restart()
+
+    def follow_restart(self) -> None:
+        """Move the focus view from a lane that ended to start afresh to the fresh lane, once
+        (follow), with what is typed in its chat box: a message written for the ended lane is
+        for the fresh one. Looked at when the follow is set, when the deck says something
+        (_redraw) and when the view comes back from under a prompt
+        (FocusScreen.on_screen_resume); left for the next look while the fresh lane has not
+        started (the queue is held, no lane is free) or a prompt is over the view. Nobody is
+        moved from what they turned to meanwhile: a player back in the lane list, or on
+        another lane, stays there. Dropped too once no lane is on its way (the challenge was
+        parked or solved): a lane started on it later moves nobody. The fresh lane is the
+        first one on the challenge that was not there before and is no fork."""
+        if self._follow is None:
+            return
+        challenge_id, old, known = self._follow
+        focus = self.focus_screen
+        if focus is None or focus.lane_id != old:
+            self._follow = None
+            return
+        if self.screen is not focus:
+            return
+        fresh = next((lane for lane in self.deck.lanes.values()
+                      if lane.id not in known and lane.challenge_id == challenge_id and lane.parent is None), None)
+        if fresh is None and self.deck.queued(challenge_id):
+            return
+        self._follow = None
+        if fresh is not None:
+            focus.show_lane(fresh.id, carry=True)
+
     def inform(self, text: str) -> None:
         self.say(text)
 
@@ -484,6 +532,7 @@ class FlightdeckApp(App[None]):
         self._redraw_queued = False
         self.refresh_view()
         self.open_first_lane()
+        self.follow_restart()
 
     # ------------------------------------------------------------------ navigation
 
@@ -532,9 +581,14 @@ class FlightdeckApp(App[None]):
     # ------------------------------------------------------------------ interventions
 
     def apply(self, intervention: iv.Intervention) -> iv.Outcome:
+        """Apply the player's intervention and say its outcome. A kill that re-queues, made on
+        the lane the focus view shows, takes the view to the fresh lane (follow)."""
+        known = set(self.deck.lanes)
         outcome = self.deck.apply(intervention)
         self.say(outcome.message, "information" if outcome.ok else "warning")
         self.refresh_view()
+        if outcome.ok and isinstance(intervention, iv.Kill) and intervention.requeue:
+            self.follow(self.deck.lanes[intervention.lane].challenge_id, intervention.lane, known)
         return outcome
 
     def suggested(self, lane: Lane, key: str) -> str:

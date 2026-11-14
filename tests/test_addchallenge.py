@@ -920,7 +920,7 @@ def test_a_challenge_added_with_nothing_says_so_and_its_lane_is_told_to_stop_not
 
 def test_attach_puts_a_file_in_the_challenge_and_restarts_its_lane_with_it(tmp_path):
     """Typed in the lane's own view: the lane restarts with the file, the status line names the
-    fresh lane, and the ended lane's result says what it restarted with."""
+    fresh lane, the view is on it, and the ended lane's result says what it restarted with."""
     from fake_model import text_reply
 
     handout = tmp_path / "doll.bin"
@@ -950,6 +950,8 @@ def test_attach_puts_a_file_in_the_challenge_and_restarts_its_lane_with_it(tmp_p
                 assert app._status[0] == f"attached doll.bin to matryoshka; {first} restarted as {second.id}"
                 assert (run.options.board / "matryoshka" / "doll.bin").read_bytes() == b"inside"
                 assert run.deck.lanes[first].result == "to restart with doll.bin; re-queued fresh"
+                await pilot.pause()
+                assert type(app.screen).__name__ == "FocusScreen" and app.screen.lane_id == second.id  # the view went with it
                 for _ in range(500):
                     if second.id in run.driver.runs and run.driver.runs[second.id].messages:
                         break
