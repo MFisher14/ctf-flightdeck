@@ -1,16 +1,43 @@
 # Screenshots
 
 The console, from `flightdeck mock` (scripted data: every challenge, teammate and flag is invented).
-Make your own with `flightdeck mock --screenshot DIR`, which writes SVGs of these moments (the PNGs
-here were made from them) for each scenario (`--scenario default`, `wave`, `sstv`, `overthinking`,
-`web`, `team`, `flag`).
+Make your own with `flightdeck mock --screenshot DIR`, which writes SVGs of these moments for each
+scenario (`--scenario default`, `wave`, `sstv`, `overthinking`, `web`, `team`, `flag`). The PNGs
+here are those SVGs, drawn by a browser and saved with a 128-colour palette.
 
-## The fleet
+The console opens in the **simple** layout. Most pictures here show the **deck** layout, the whole
+dashboard, which `/layout deck` switches to
+([Layouts](GUIDE.md#layouts)). `mock --screenshot` takes its
+pictures in the deck layout and the default theme whatever your config says; the `simple-` moments
+and `theme-light` are switched to for their own shot.
+
+## The simple layout
+
+![The simple layout: a short header with the event, the team tag, three lanes that need you and the run's dollars; one list of six lanes with their alert chip, challenge, state, cost and last action; under the list, the found flag with 1 to submit it and 0 not to; a key line of approve, decline, open, commands, help and quit](screenshots/simple.png)
+
+What the console opens in: one list of lanes, sorted by what needs you. The header says only what
+is not the usual, the line under the list says why the selected lane is flagged, and the key line
+has only the keys that apply to that lane now. Every other key still acts, and `?` lists them.
+
+![The simple layout during a wave: the header also says queue 33, the list's title says 16 of 16 lanes, 33 waiting and 1 solved, and the selected lane ignores its description's hint, with 1 to redirect it, 2 to send a hint and x to dismiss the alert](screenshots/simple-alert.png)
+
+A wave has landed: the header has the queue because it is not empty, and the list's title counts
+the challenges that wait and the ones solved. The selected lane's alert has numbered answers, so
+the key line leads with `1-9 answer` and `x dismiss`.
+
+![A lane full screen in the simple layout: the strip of two other lanes that need you, the transcript, the needs-you card with two numbered answers, the files the lane changed with a diff, and a key line of answer, esc lanes, commands and /help](screenshots/simple-lane.png)
+
+`enter` opens a lane. In the simple layout the view shows a part only when it has something in
+it: the strip on top while another lane needs you, the card while this one does, the files pane
+once the lane has changed a file.
+
+## The fleet (the deck layout)
 
 ![The fleet view: the board of challenges on the left, every lane on the right sorted by what needs you, with alert chips and a flag waiting for approval](screenshots/fleet.png)
 
-The board on the left, every lane on the right, sorted by what needs you. The chips say why a lane
-needs you: a flag to approve, a live box to allow, a budget, an alert.
+`/layout deck`: the board on the left, every lane on the right with its model, turns and idle
+time, sorted by what needs you. The chips say why a lane needs you: a flag to approve, a live box
+to allow, a budget, an alert.
 
 ![A second wave of challenges arrives during the run](screenshots/wave.png)
 
@@ -77,8 +104,9 @@ back). The mock shows a placeholder.
 ## Autopilot
 
 `flightdeck mock --scenario autopilot --screenshot DIR` saves two moments of its own, after
-`01-open.svg`: `02-autopilot-rule.svg` (the `AUTOPILOT` chip in the header, and a lane autopilot
-just killed by rule: its row says "by autopilot; parked") and `03-autopilot-disengaged.svg` (the
+`01-open.svg` and `02-simple-open.svg`: `03-autopilot-rule.svg` (the `AUTOPILOT` chip in the
+header, and a lane autopilot just killed by rule: its row says "by autopilot; parked") and
+`04-autopilot-disengaged.svg` (the
 run budget reached: the chip is gone, the header says `queue held: autopilot disengaged: the run
 budget is reached`, and the lanes are paused). No picture of them here yet: make your own with
 that command.
@@ -99,13 +127,22 @@ A challenge's card: what it is, its files and lanes; `c` claims it for you in te
 
 On a 120x36 terminal: less goes in the header, and the key line keeps what you need most.
 
-At 64 columns or fewer (a phone over SSH) the console has a compact layout. `flightdeck mock
---screenshot DIR` saves it at 56x40, numbered like the rest (14 and 15 in the default scenario):
-`14-compact-56x40.svg` (the fleet: each lane's row has what needs you, its state and its cost;
-the line under the list has the reason and one answer a row) and `15-compact-focus-56x40.svg` (a
-lane: what it needs above its transcript, no files pane). No picture of it here yet: make your
-own with that command.
+At 64 columns or fewer (a phone over SSH) the console has a compact layout, whichever layout your
+config names. `flightdeck mock --screenshot DIR` saves it at 56x40, numbered like the rest (18 and
+19 in the default scenario): `18-compact-56x40.svg` (the fleet: each lane's row has what needs
+you, its state and its cost; the line under the list has the reason and one answer a row) and
+`19-compact-focus-56x40.svg` (a lane: what it needs above its transcript, no files pane). No
+picture of it here yet: make your own with that command.
 
 ![The help screen listing every key and command](screenshots/help.png)
 
 `?` shows every key and command.
+
+## Themes
+
+![The fleet view in the light theme: dark text on a pale page, the same chips, columns and marks in the light theme's colours](screenshots/theme-light.png)
+
+`theme = "light"` under `[console]` in your config, or `/theme light` in a running console. A
+theme changes colours only: the chips, marks and layout are the same. Built in: `flightdeck` (the
+default, every other picture here), `light`, `nord`, `gruvbox` and `dracula`; your own is a small
+file ([Themes](GUIDE.md#themes)).
