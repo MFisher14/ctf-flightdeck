@@ -106,10 +106,9 @@ back). The mock shows a placeholder.
 `flightdeck mock --scenario autopilot --screenshot DIR` saves two moments of its own, after
 `01-open.svg` and `02-simple-open.svg`: `03-autopilot-rule.svg` (the `AUTOPILOT` chip in the
 header, and a lane autopilot just killed by rule: its row says "by autopilot; parked") and
-`04-autopilot-disengaged.svg` (the
-run budget reached: the chip is gone, the header says `queue held: autopilot disengaged: the run
-budget is reached`, and the lanes are paused). No picture of them here yet: make your own with
-that command.
+`04-autopilot-disengaged.svg` (the run budget reached: the chip is gone, the header says `queue
+held: autopilot disengaged: the run budget is reached`, and the lanes are paused). No picture of
+them here yet: make your own with that command.
 
 ## Team play
 
