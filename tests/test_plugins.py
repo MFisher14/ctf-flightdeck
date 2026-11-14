@@ -757,8 +757,8 @@ def test_plugin_pull_runs_only_a_plugin_the_players_config_allows(tmp_path, conf
      "flightdeck: event.token_env names OPENAI_API_KEY, a variable for another service's key, not a token for this platform: "
      "flightdeck would hand its value to the acme plugin. Name the variable that holds your token for it, like ACME_TOKEN\n"),
     (("ACME_TOKEN", "MY_API_KEY"), True,
-     "flightdeck: event.token_env names MY_API_KEY, a name ending in _API_KEY like other services' key variables (a name with ACME "
-     "in it is fine), not a token for this platform: flightdeck would hand its value to the acme plugin. Name the variable that "
+     "flightdeck: event.token_env names MY_API_KEY, a name ending in _API_KEY like other services' key variables (a name that starts "
+     "with ACME_ is fine), not a token for this platform: flightdeck would hand its value to the acme plugin. Name the variable that "
      "holds your token for it, like ACME_TOKEN\n"),
 ])
 def test_plugin_pull_refuses_before_it_runs_the_plugin(tmp_path, config, monkeypatch, change, set_token, message):
@@ -769,6 +769,31 @@ def test_plugin_pull_refuses_before_it_runs_the_plugin(tmp_path, config, monkeyp
     result = invoke("pull", event_file(tmp_path, text=EVENT.replace(*change) if change[0] else EVENT))
     assert (result.exit_code, result.output) == (2, message)
     assert calls(root) == []
+
+
+def test_plugin_pull_hands_no_variable_that_is_not_named_for_the_plugin(tmp_path, config, monkeypatch):
+    root = make_plugin(tmp_path / "acme", LISTED)
+    enabled(config, root)
+    for name in ("NPM_TOKEN", "CTFD_TOKEN", "DISCORD_WEBHOOK_URL"):
+        monkeypatch.setenv(name, "another-secret-for-this-test")
+        result = invoke("pull", event_file(tmp_path, text=EVENT.replace("ACME_TOKEN", name)))
+        assert result.exit_code == 2 and calls(root) == [], name
+        assert f"event.token_env names {name}, a variable that is not named for this platform (its name does not start with ACME_)" in result.output
+        assert "another-secret-for-this-test" not in result.output
+
+
+def test_plugin_pull_warns_before_a_token_crosses_the_network_unencrypted(tmp_path, config, monkeypatch):
+    """A run's pre-flight warns of an http address; a pull by hand hands the same token over, and says the same first."""
+    root = make_plugin(tmp_path / "acme", LISTED)
+    enabled(config, root)
+    monkeypatch.setenv("ACME_TOKEN", TOKEN)
+    warning = "flightdeck: warning: event.url is http, not https: the token the acme plugin is given would cross the network unencrypted\n"
+    result = invoke("pull", event_file(tmp_path, text=EVENT.replace("https://ctf.example.test", "http://ctf.example.test")))
+    assert result.exit_code == 0 and result.output.startswith(warning)
+    for quiet in ("https://ctf.example.test", "http://127.0.0.1:8000"):  # encrypted, or this machine
+        (tmp_path / "quals" / "board").exists() and __import__("shutil").rmtree(tmp_path / "quals" / "board")
+        result = invoke("pull", event_file(tmp_path, text=EVENT.replace("https://ctf.example.test", quiet)))
+        assert result.exit_code == 0 and "warning" not in result.output, result.output
 
 
 def test_plugin_pull_never_hands_the_model_key_of_the_config_to_a_plugin(tmp_path, config, monkeypatch):

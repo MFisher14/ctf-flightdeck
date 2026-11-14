@@ -104,9 +104,20 @@ refused, by `flightdeck preflight` and by `play`. It is never played as a folder
 place, and nothing shows the profile's word for it until your config has made it a name.
 
 The token is read from the variable `token_env` names, in your environment or your keys file,
-as a CTFd token is. A variable that holds a model API key of your config, or is named as
-another service's key is (`OPENAI_API_KEY`), is refused: its value would be handed to the
-plugin.
+as a CTFd token is. Its value is handed to the plugin, and the profile that names the variable
+may be someone else's, so the only variable a profile can name is one named for the plugin:
+its name starts with the plugin's name in capitals and a `_` (`MYCTF_TOKEN`, `MYCTF_TOKEN_QUALS`;
+`-` in the name is `_`). Any other name is refused (`CTFD_TOKEN`, `NPM_TOKEN`, another event's
+token), and so is a variable your config names for a secret of its own (a model key in `[api]`,
+`[fallback]` or `[light]`, the `[notify]` webhook) and a well-known key of another service
+(`OPENAI_API_KEY`), whatever its name.
+
+The profile also names the address (`url`), as a CTFd profile does: the plugin is handed your
+token together with that address. flightdeck does not know which site a token is for, so
+read the first lines `flightdeck preflight EVENT.toml` and `play` print before you run a
+profile you did not write: `acme (a plugin) at <address>` and `token $ACME_TOKEN (set), given
+only to the acme plugin, for <address>`. An `http` address is warned of, by a run's pre-flight
+and by `flightdeck plugin pull`: the token would cross the network unencrypted.
 
 What each policy does on a plugin's platform:
 

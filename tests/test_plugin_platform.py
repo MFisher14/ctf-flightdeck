@@ -92,9 +92,10 @@ def test_a_profile_on_a_plugin_the_player_added_passes_the_check_and_says_what_a
     loaded, chosen = load_profile(profile_file(tmp_path, pull="confirm"))
     lines = describe(loaded, chosen, environ=TOKEN_SET, config=config)
     assert lines[0] == "event     Quals · acme (a plugin) at https://ctf.example.test · solo"
-    assert "token     $ACME_TOKEN (set), given only to the acme plugin" in lines
+    assert "token     $ACME_TOKEN (set), given only to the acme plugin, for https://ctf.example.test" in lines
     assert f"pull      confirm  {PLUGIN_BOARD['confirm']} (the rules allow auto)" in lines
-    assert "token     $ACME_TOKEN (NOT set), given only to the acme plugin" in describe(loaded, chosen, environ={}, config=config)
+    assert ("token     $ACME_TOKEN (NOT set), given only to the acme plugin, for https://ctf.example.test"
+            in describe(loaded, chosen, environ={}, config=config))
     by_policy = {}
     for policy in ("auto", "manual", "off"):
         loaded, chosen = load_profile(profile_file(tmp_path, pull=policy))
@@ -144,7 +145,7 @@ def test_a_platform_value_shaped_like_a_token_is_refused_when_the_profile_loads_
                                      "service's key, not a token for this platform: flightdeck would hand its value to the acme "
                                      "plugin. Name the variable that holds your token for it, like ACME_TOKEN"),
     ("OTHER_API_KEY", "", "event.token_env names OTHER_API_KEY, a name ending in _API_KEY like other services' key variables "
-                          "(a name with ACME in it is fine), not a token for this platform: flightdeck would hand its value to "
+                          "(a name that starts with ACME_ is fine), not a token for this platform: flightdeck would hand its value to "
                           "the acme plugin. Name the variable that holds your token for it, like ACME_TOKEN"),
 ])
 def test_a_token_variable_that_holds_another_services_key_is_refused(tmp_path, variable, key_env, said):
@@ -152,6 +153,53 @@ def test_a_token_variable_that_holds_another_services_key_is_refused(tmp_path, v
     refusals, _ = checked(tmp_path, config, token_env=variable, environ={variable: "set"})
     assert refusals == [said]
     assert checked(tmp_path, config, token_env="ACME_API_KEY", environ={"ACME_API_KEY": "set"})[0] == []  # the platform's own
+
+
+NOT_ITS_OWN = ("event.token_env names {name}, a variable that is not named for this platform (its name does not start with "
+               "{own}_), so it may hold another service's or another event's secret, not a token for this platform: flightdeck "
+               "would hand its value to the {plugin} plugin. Name the variable that holds your token for it, like {own}_TOKEN")
+
+
+@pytest.mark.parametrize("variable", ["NPM_TOKEN", "CTFD_TOKEN", "CTFD_TOKEN_OTHER_EVENT", "DISCORD_WEBHOOK_URL", "GM_TOKEN", "TOKEN",
+                                      "ACMETOKEN", "MY_ACME_TOKEN", "ACME"])
+def test_a_plugins_token_variable_is_one_named_for_the_plugin(tmp_path, variable):
+    """The profile may be a teammate's: the one variable it can have handed to the plugin is one
+    whose name starts with the plugin's own, never another event's token or a secret no list knows."""
+    config = player_config(tmp_path, "acme")
+    refusals, _ = checked(tmp_path, config, token_env=variable, environ={variable: "set"})
+    assert refusals == [NOT_ITS_OWN.format(name=variable, own="ACME", plugin="acme")]
+    for own in ("ACME_TOKEN", "ACME_TOKEN_QUALS", "ACME_KEY"):
+        assert checked(tmp_path, config, token_env=own, environ={own: "set"}) == ([], [])
+
+
+def test_a_short_plugin_name_does_not_let_a_variable_through_that_only_has_its_letters(tmp_path):
+    config = player_config(tmp_path, "ai")  # "AI" is in MAILGUN and in OPENAI
+    refusals, _ = checked(tmp_path, config, platform="ai", token_env="MAILGUN_API_KEY", environ={"MAILGUN_API_KEY": "set"})
+    assert refusals == ["event.token_env names MAILGUN_API_KEY, a name ending in _API_KEY like other services' key variables "
+                        "(a name that starts with AI_ is fine), not a token for this platform: flightdeck would hand its value to "
+                        "the ai plugin. Name the variable that holds your token for it, like AI_TOKEN"]
+    refusals, _ = checked(tmp_path, config, platform="ai", token_env="RAIL_TOKEN", environ={"RAIL_TOKEN": "set"})
+    assert refusals == [NOT_ITS_OWN.format(name="RAIL_TOKEN", own="AI", plugin="ai")]
+    assert checked(tmp_path, config, platform="ai", token_env="AI_TOKEN", environ={"AI_TOKEN": "set"}) == ([], [])
+
+
+@pytest.mark.parametrize("table, where, what", [
+    ('[fallback]\nbase_url = "http://127.0.0.1:11435/v1"\nkey_env = "{v}"\nladder = ["local-model"]\n', "fallback.key_env",
+     "a variable for another service's key"),
+    ('[light]\nengine = "openai"\nmodel = "small"\nbase_url = "http://127.0.0.1:11436/v1"\nkey_env = "{v}"\n', "light.key_env",
+     "a variable for another service's key"),
+    ('[notify]\nwebhook_env = "{v}"\n', "notify.webhook_env", "the variable that holds your notification webhook's URL"),
+])
+def test_no_secret_the_config_names_is_a_plugins_token_whatever_its_name(tmp_path, table, where, what):
+    """A variable the player's config uses for a key of its own is that key, named for the plugin or not."""
+    variable = "ACME_SECRET"
+    config_file = tmp_path / "config.toml"
+    player_config(tmp_path, "acme")
+    config_file.write_text(config_file.read_text() + "\n" + table.replace("{v}", variable))
+    refusals, _ = checked(tmp_path, load_config(config_file), token_env=variable, environ={variable: "set"})
+    assert refusals == [f"event.token_env names {variable} ({where} in your config), {what}, not a token for this platform: "
+                        "flightdeck would hand its value to the acme plugin. Name the variable that holds your token for it, "
+                        "like ACME_TOKEN"]
 
 
 def test_a_plugin_profile_must_name_the_url_and_the_token_variable_the_plugin_takes(tmp_path):
@@ -223,7 +271,7 @@ def test_flightdeck_preflight_checks_a_plugin_profile_against_the_config_it_is_g
     assert good.exit_code == 0, good.output
     out = good.stdout.splitlines()
     assert "event     Quals · acme (a plugin) at https://ctf.example.test · solo" in out
-    assert "token     $ACME_TOKEN (set), given only to the acme plugin" in out and out[-1].startswith("preflight: ok")
+    assert "token     $ACME_TOKEN (set), given only to the acme plugin, for https://ctf.example.test" in out and out[-1].startswith("preflight: ok")
     other = runner.invoke(preflight_cli.app, [str(profile_file(tmp_path, platform="harbourctf")), "--config", str(config.source), "--docker"])
     assert other.exit_code == 2 and "harbourctf" not in other.output
     assert "refuse: " + NO_TABLE.format(has="your config has: acme") in other.stdout.splitlines()

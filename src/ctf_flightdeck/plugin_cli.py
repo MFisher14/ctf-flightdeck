@@ -111,7 +111,7 @@ def pull(
     from .plugins import manifest
     from .plugins.board import load_refs, pull_into
     from .plugins.call import CallFailed, Caller
-    from .preflight import NO_CONFIG_FOR_PLUGIN, PLATFORMS, ProfileError, load_profile, no_such_plugin
+    from .preflight import NO_CONFIG_FOR_PLUGIN, PLATFORMS, ProfileError, load_profile, no_such_plugin, plugin_http_warning
 
     try:
         profile, _ = load_profile(event)  # it expands ~ itself, and says so when it cannot
@@ -137,6 +137,8 @@ def pull(
     if profile.url is None:
         _fail("event.url is required for a plugin's platform: the address its adapter talks to")
     token = _token(profile.token_env, plugin, config) if plugin.token else None
+    if token is not None and (unencrypted := plugin_http_warning(profile, plugin.name)) is not None:
+        typer.echo(f"flightdeck: warning: {unencrypted}", err=True)  # as a run's pre-flight warns: said before the plugin has it
     board = folder.expanduser() if folder is not None else profile.board
     if board is None:
         _fail("name the board folder: `flightdeck plugin pull EVENT.toml FOLDER`, or set event.board in the profile")

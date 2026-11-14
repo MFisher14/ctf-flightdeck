@@ -499,19 +499,57 @@ def no_such_plugin(config: Config) -> str:
             "`flightdeck plugin add FOLDER` adds one, after showing you what it runs")
 
 
+def config_secrets(config: Config) -> dict[str, str]:
+    """Every variable the player's config names for a secret of its own, and the setting that
+    names it: the model keys ([api], [fallback], [light] and its job tables) and the
+    notification webhook's URL. None of them is ever an event's token."""
+    named = [(config.api.key_env, "api.key_env")]
+    if config.fallback is not None:
+        named.append((config.fallback.key_env, "fallback.key_env"))
+    named.append((config.light.key_env, "light.key_env"))
+    named += [(light.key_env, f"light.{job}.key_env") for job, light in config.light_tables.items()]
+    named.append((config.notify.webhook_env, "notify.webhook_env"))
+    secrets: dict[str, str] = {}
+    for variable, setting in named:
+        if variable:
+            secrets.setdefault(variable, setting)
+    return secrets
+
+
 def plugin_token_env(name: str, plugin: str, config: Config) -> str | None:
     """Why event.token_env = `name` cannot be the token variable of an event on the `plugin`
-    plugin's platform, or None when it can: a variable that holds a model key of the config,
-    or is named as other services' keys are, would have its value handed to the plugin."""
+    plugin's platform, or None when it can. Its value is handed to the plugin, and the profile
+    that names it may be a teammate's, so the only variable a profile can name is one named
+    for the plugin: its name starts with the plugin's own and a _ (ACME_TOKEN for acme; a
+    name that merely has the letters in it does not count). Never a variable the config
+    names for a secret of its own (config_secrets), nor one of OTHER_SERVICE_KEYS, whatever
+    their names. So another event's token, another service's key and a secret no list knows
+    stay where they are."""
     own = plugin.upper().replace("-", "_")
-    api_env = config.api.key_env == name
-    fallback_env = config.fallback is not None and config.fallback.key_env == name
-    what = "a variable for another service's key" if api_env or fallback_env else _other_service(name, own=own)
-    if what is None:
+    setting = config_secrets(config).get(name)
+    where = f" ({setting} in your config)" if setting else ""
+    if setting == "notify.webhook_env":
+        what = "the variable that holds your notification webhook's URL"
+    elif setting or name in OTHER_SERVICE_KEYS:
+        what = "a variable for another service's key"
+    elif name.startswith(f"{own}_"):
         return None
-    where = " (api.key_env in your config)" if api_env else (" (fallback.key_env in your config)" if fallback_env else "")
+    else:
+        suffix = next((suffix for suffix in OTHER_SERVICE_SUFFIXES if name.endswith(suffix)), None)
+        what = (f"a name ending in {suffix} like other services' key variables (a name that starts with {own}_ is fine)" if suffix
+                else f"a variable that is not named for this platform (its name does not start with {own}_), so it may hold "
+                     "another service's or another event's secret")
     return (f"event.token_env names {name}{where}, {what}, not a token for this platform: flightdeck would hand its value "
             f"to the {plugin} plugin. Name the variable that holds your token for it, like {own}_TOKEN")
+
+
+def plugin_http_warning(profile: EventProfile, plugin: str) -> str | None:
+    """The warning for a profile whose address would carry the token the plugin is given over
+    plain http (a loopback address apart), or None."""
+    url = _split_url(profile.url) if profile.url else None
+    if url is not None and url.scheme == "http" and not _loopback(url.hostname or ""):
+        return f"event.url is http, not https: the token the {plugin} plugin is given would cross the network unencrypted"
+    return None
 
 
 def _check_plugin(
@@ -553,9 +591,8 @@ def _check_plugin(
             refuse.append(wrong)
         elif uses and not _is_set(env, variable):
             warn.append(f"the {name} token variable {variable} (event.token_env) is not set or is empty: export your token in it")
-        url = _split_url(profile.url) if profile.url else None
-        if url is not None and url.scheme == "http" and not _loopback(url.hostname or ""):
-            warn.append(f"event.url is http, not https: the token the {name} plugin is given would cross the network unencrypted")
+        if (unencrypted := plugin_http_warning(profile, name)) is not None:
+            warn.append(unencrypted)
     elif variable is not None:
         warn.append(f"event.token_env does nothing in this run: the {name} plugin takes no token (token = false in its plugin.toml)")
     board = profile.board
@@ -733,7 +770,8 @@ def describe(
         lines.append(f"token     ${profile.token_env} ({state}), sent only to {_shown_url(profile)}")
     if plugin is not None and profile.token_env is not None:
         state = "set" if _is_set(env, profile.token_env) else "NOT set"
-        lines.append(f"token     ${profile.token_env} ({state}), given only to the {plugin} plugin")
+        # where it goes is the address above: the profile's word, which the player reads here before the plugin has the token
+        lines.append(f"token     ${profile.token_env} ({state}), given only to the {plugin} plugin, for {_shown_url(profile)}")
     if profile.board is not None:
         lines.append(f"board     {_show(profile.board)}")
     if profile.start is not None or profile.end is not None:
