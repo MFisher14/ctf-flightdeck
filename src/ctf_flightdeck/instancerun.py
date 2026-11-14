@@ -60,8 +60,10 @@ challenge's open lanes are told so on their transcripts and the player is warned
 lane's network was fenced to the old address when the lane started, so such a lane is the
 player's to kill and queue again.
 
-close() stops every instance this run started. A flightdeck that is killed leaves them to
-the platform, which stops them at their expiry.
+close() stops every instance this run started. A start still going when the run ends (its
+task cancelled while the request was out) is waited for first, so an instance it started is
+stopped too. A flightdeck that is killed leaves them to the platform, which stops them at
+their expiry.
 
 Nothing here reaches an instance, submits a flag or reads a challenge's files.
 """
@@ -151,6 +153,7 @@ class InstanceRunner:
         self._said: set[tuple[str, str]] = set()  # (challenge id, message) warned of already
         self._full_said = False
         self._renew_refused: set[str] = set()
+        self._starting: dict[str, asyncio.Future[Instance]] = {}  # challenge id -> a start a cancel cut off, still going (close)
 
     # ------------------------------------------------------------------ what the run calls
 
@@ -187,6 +190,18 @@ class InstanceRunner:
     async def close(self) -> list[str]:
         """Stop every instance this run started. What could not be stopped, said for the player."""
         left: list[str] = []
+        for cid, task in list(self._starting.items()):  # a start the run's end cut off: its answer first
+            try:
+                got = await task
+            except InstanceError as exc:
+                if exc.maybe_done:
+                    self.unanswered[cid] = self.clock()
+            except Exception:  # whatever went wrong, the start went out: it may have been done
+                self.unanswered[cid] = self.clock()
+            else:
+                self.running[cid] = got
+                self.adopted.discard(cid)
+        self._starting.clear()
         for cid in [c for c in self.running if c not in self.adopted]:
             try:
                 await asyncio.to_thread(self.client.stop, cid)
@@ -228,7 +243,7 @@ class InstanceRunner:
         mine = cid in self.running and cid not in self.adopted  # ours, and thought ended: asked about again
         try:
             there = await asyncio.to_thread(self.client.status, cid)
-            got = there if there is not None else await asyncio.to_thread(self.client.start, cid)
+            got = there if there is not None else await self._send_start(cid)
         except InstanceError as exc:
             if exc.maybe_done:  # only a start is marked so: the platform may have started it all the same
                 self.unanswered[cid] = self.clock()
@@ -275,6 +290,19 @@ class InstanceRunner:
         if before is not None and (before.host, before.port) != (got.host, got.port):
             self._moved(cid, url)
         self.deck.ready(cid)
+
+    async def _send_start(self, cid: str) -> Instance:
+        """The start, in a worker thread that a cancel does not cut off: the request may be
+        out already, and the platform may start the instance all the same. A start still
+        going when the run's task is cancelled stays in `_starting`, and close() waits for
+        its answer before it stops anything (and before the run closes the client)."""
+        task = asyncio.ensure_future(asyncio.to_thread(self.client.start, cid))
+        self._starting[cid] = task
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if task.done():
+                self._starting.pop(cid, None)
 
     async def _stop(self, cid: str) -> None:
         try:

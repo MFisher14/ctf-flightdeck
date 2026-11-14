@@ -378,6 +378,41 @@ def test_a_wanted_start_that_got_no_answer_keeps_the_one_slot_ahead_of_a_challen
     assert not any(e.data.get("full") for e in deck.events)
 
 
+def test_a_start_the_runs_end_cuts_off_is_waited_for_and_its_instance_stopped_by_close():
+    """The run's end cancels the instances task while a start is out. The worker thread goes
+    on and the platform starts the instance: close() must know of it and stop it."""
+    import threading
+
+    deck, runner, platform, urls, clock = lab(n=1)
+    sent, release, done = threading.Event(), threading.Event(), threading.Event()
+    start = platform.start
+
+    def slow_start(cid):
+        sent.set()
+        release.wait(5)
+        try:
+            return start(cid)
+        finally:
+            done.set()
+
+    platform.start = slow_start
+
+    async def scenario():
+        task = asyncio.create_task(runner.step())
+        while not sent.is_set():
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()  # the platform answers after the cancel
+        left = await runner.close()
+        await asyncio.to_thread(done.wait, 5)
+        return left
+
+    assert asyncio.run(scenario()) == []
+    assert platform.calls == [("status", "c0"), ("start", "c0"), ("stop", "c0")] and platform.up == {}
+
+
 def test_an_adopted_instance_that_ended_and_is_started_again_by_this_run_is_this_runs():
     deck, runner, platform, urls, clock = lab(n=1, seconds=600)
     platform.up["c0"] = 40000  # a teammate's
