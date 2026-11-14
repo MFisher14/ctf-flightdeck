@@ -52,12 +52,10 @@ pack, run `flightdeck pack install` again after an upgrade so the pack matches t
 
 ### Install with Homebrew or apt
 
-Not yet: 0.2.0 is on PyPI only. Both arrive with the first release after 0.2.0, and until then
-the commands below find nothing.
+**apt:** from 0.3.0 on, each release's page has a `.deb` for amd64 and for arm64, with a
+`SHA256SUMS` file to check it against.
 
 ```sh
-brew install mfisher14/tap/ctf-flightdeck        # macOS or Linux, from flightdeck's own tap
-
 # Debian or Ubuntu: the .deb for your machine (amd64 or arm64) from the release's page,
 # https://github.com/MFisher14/ctf-flightdeck/releases
 sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb
@@ -66,7 +64,11 @@ sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb
 The `.deb` brings a Python of its own under `/opt/ctf-flightdeck` (Debian 12 has 3.11, and
 flightdeck needs 3.12), so it needs no Python from your system and changes none. There is no apt
 repository yet, so `apt upgrade` does not find a new release: install the next `.deb` over the
-old one. Neither way installs Docker.
+old one. It does not install Docker.
+
+**Homebrew:** not yet. flightdeck's tap does not exist yet, so
+`brew install mfisher14/tap/ctf-flightdeck` finds nothing: on macOS, install with `pipx` or `uv`
+as above.
 
 ## What a run costs
 
@@ -580,8 +582,27 @@ What it leaves:
 
 `flightdeck play ~/ctf/example-ctf` plays that event again, with no option to remember: a folder
 with an `event.toml` in it is played by that file. `flightdeck start ~/ctf/example-ctf` does the
-same for a folder already set up. Every question has an option (`flightdeck start --help`), for
-a script.
+same for a folder already set up.
+
+For a script, every question has an option (`flightdeck start --help`); away from a terminal
+`start` asks nothing and names any answer it still needs. The token is the one answer that is
+never an option's value, since a command line shows in the process list and stays in the shell's
+history. Give it one of two ways:
+
+```sh
+# the token is already in a variable of yours (your environment or your keys file): name the variable
+flightdeck start --name "Example CTF" --platform ctfd --url https://ctf.example.org \
+    --ai-allowed --token-env EXAMPLE_CTF_TOKEN --no-launch
+
+# or hand the token over on standard input, here from a file only you can read
+flightdeck start --name "Example CTF" --platform ctfd --url https://ctf.example.org \
+    --ai-allowed --token-stdin --no-launch < ~/example-ctf.token
+
+flightdeck play ~/ctf/example-ctf        # then play it (--launch on start does the same at once)
+```
+
+With neither, `start` still sets the event up and says which variable to put the token in;
+`play` does not start a CTFd event until that variable is set.
 
 By hand (a site that is not CTFd): the board starts empty and the console opens on it. Type
 `/new` to hand a challenge over. The form asks for its name and has one box for everything you
