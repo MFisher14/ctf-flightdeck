@@ -524,34 +524,87 @@ class WelcomeScreen(FittedModal, ModalScreen[bool]):
         self.dismiss(False)
 
 
-class ConfigPrompt(ModalScreen[tuple[str, str] | None]):
-    """/config: this run's settings in one place. Lanes at once and what happens to a flag a
-    lane finds; Enter applies both. The answer is (lanes as typed, submit), or None."""
+@dataclass(frozen=True)
+class Settings:
+    """What /config's dialog shows and answers: lanes at once as typed, what happens to a flag
+    (`submit`), the console's layout and theme, and whether the last two are also saved."""
 
-    DEFAULT_CSS = MODAL_CSS.format(name="ConfigPrompt") + "ConfigPrompt > Vertical { width: 110; }"
+    lanes: str
+    submit: str
+    layout: str
+    theme: str
+    save: bool = False
+
+
+class ConfigPrompt(FittedModal, ModalScreen["Settings | None"]):
+    """/config: the settings in one place. Lanes at once and what happens to a flag a lane
+    finds, which last for this run; and the console's layout and theme, which last for this
+    run unless the list under them says to save them: then they go in the config file too.
+    The answer is a Settings, or None; nothing changes before the answer.
+
+    `themes`: the names the theme list offers (the one in use is added when it is not among
+    them). `config_path`: the player's config file ("": none, and nothing to save in).
+
+    Enter in the lanes field applies, and ctrl+s applies from any field: Enter on a list opens
+    it. The keys are always on screen: the fields over them are one scrolling part, which
+    gives up its blank rows on a short terminal (FittedModal)."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="ConfigPrompt") + """
+    ConfigPrompt > Vertical { width: 110; }
+    ConfigPrompt #config-body { height: auto; max-height: 1fr; }
+    ConfigPrompt #config-foot { dock: bottom; height: auto; }
+    ConfigPrompt .group { margin-top: 1; }
+    ConfigPrompt SelectCurrent { margin-top: 0; }  /* a list's own row is a Horizontal, which a dialog sets down by one */
+    ConfigPrompt SelectCurrent Static#label { text-wrap: nowrap; text-overflow: ellipsis; }  /* cut, not a list one row taller */
+    ConfigPrompt #config-look Select { width: 1fr; margin-top: 0; }
+    ConfigPrompt.-short > Vertical { max-height: 100%; padding: 0 2; }
+    ConfigPrompt.-short Input, ConfigPrompt.-short Select, ConfigPrompt.-short Horizontal, ConfigPrompt.-short .group,
+    ConfigPrompt.-short .keys { margin-top: 0; }
+    """
+    SHORT_UNDER = 36  # rows: the dialog is 32 with a config file, and gets 90% of the terminal
     BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("ctrl+s", "apply", "apply", priority=True)]
 
-    def __init__(self, lanes: str, submit: str, *, lanes_note: str = "", submit_note: str = "", config_path: str = "") -> None:
+    def __init__(self, now: Settings, *, themes: tuple[str, ...] = (), lanes_note: str = "", submit_note: str = "",
+                 config_path: str = "") -> None:
         super().__init__()
-        self.lanes, self.submit = lanes, submit
+        self.now = now
+        self.themes = themes if now.theme in themes else (*themes, now.theme)
         self.lanes_note, self.submit_note, self.config_path = lanes_note, submit_note, config_path
 
     def compose(self) -> ComposeResult:
+        from ..config import LAYOUTS
+        from .commands import LAYOUT_HELP
+
+        now = self.now
         with Vertical():
-            yield Static(Text("Settings for this run", style="bold"))
-            yield Static(Text("Lanes at once: a number, or unlimited" + (f" ({self.lanes_note})" if self.lanes_note else "") + ":"),
-                         classes="muted")
-            yield Input(value=self.lanes, id="config-lanes")
-            yield Static(Text("When a lane finds a flag" + (f" ({self.submit_note})" if self.submit_note else "") + ":"), classes="muted")
-            yield Select([(Text("confirm: it waits for you, one key sends it"), "confirm"),
-                          (Text("auto: it is sent at once (auto approve)"), "auto")],
-                         value=self.submit, allow_blank=False, id="config-submit")
-            where = f"These last for this run. Your config file keeps the defaults: {self.config_path}" if self.config_path \
-                else "These last for this run."
-            yield Static(Text(where), classes="muted")
-            yield Static(_keys(("enter", "apply"), ("tab", "next field"), ("esc", "cancel")), classes="keys")
+            with VerticalScroll(id="config-body", can_focus=False):  # tab goes through the fields only
+                yield Static(Text("Settings", style="bold"))
+                yield Static(Text("Lanes at once: a number, or unlimited" + (f" ({self.lanes_note})" if self.lanes_note else "") + ":"),
+                             classes="muted")
+                yield Input(value=now.lanes, id="config-lanes")
+                yield Static(Text("When a lane finds a flag" + (f" ({self.submit_note})" if self.submit_note else "") + ":"),
+                             classes="muted")
+                yield Select([(Text("confirm: it waits for you, one key sends it"), "confirm"),
+                              (Text("auto: it is sent at once (auto approve)"), "auto")],
+                             value=now.submit, allow_blank=False, id="config-submit")
+                yield Static(Text("Console: its layout and its colours (/layout and /theme try each one first):"), classes="muted group")
+                with Horizontal(id="config-look"):
+                    yield Select([(Text(f"{name}: {LAYOUT_HELP[name]}"), name) for name in LAYOUTS], value=now.layout, allow_blank=False,
+                                 id="config-layout")
+                    yield Select([(Text(name), name) for name in self.themes], value=now.theme, allow_blank=False, id="config-theme")
+                if self.config_path:
+                    yield Static(Text("Keep that layout and those colours:"), classes="muted group")
+                    yield Select([(Text("for this run"), False), (Text("for this run, and saved in your config file"), True)],
+                                 value=now.save, allow_blank=False, id="config-save")
+            with Container(id="config-foot"):
+                where = (f"Lanes and flags last for this run. Your config file keeps their defaults: {self.config_path}" if self.config_path
+                         else "These last for this run: this console has no config file.")
+                yield Static(Text(where), classes="muted group")
+                yield Static(_keys(("enter", "apply"), ("ctrl+s", "apply from any field"), ("tab", "next field"), ("esc", "cancel")),
+                             classes="keys")
 
     def on_mount(self) -> None:
+        super().on_mount()
         field = self.query_one(Input)
         field.cursor_blink = False
         field.focus()
@@ -561,7 +614,11 @@ class ConfigPrompt(ModalScreen[tuple[str, str] | None]):
         self.action_apply()
 
     def action_apply(self) -> None:
-        self.dismiss((self.query_one(Input).value.strip(), str(self.query_one(Select).value)))
+        save = self.query("#config-save")
+        self.dismiss(Settings(
+            lanes=self.query_one(Input).value.strip(), submit=str(self.query_one("#config-submit", Select).value),
+            layout=str(self.query_one("#config-layout", Select).value), theme=str(self.query_one("#config-theme", Select).value),
+            save=bool(save) and save.first(Select).value is True))
 
     def action_cancel(self) -> None:
         self.dismiss(None)

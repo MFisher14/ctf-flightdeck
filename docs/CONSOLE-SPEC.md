@@ -234,9 +234,10 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 
 ## Layouts
 
-`[console] layout` in the config is `simple` (the default) or `deck`; `/layout [simple|deck]`
-switches for the rest of the run (alone: the other one), keeping the selection, the filter, the
-sort and anything typed. `deck` is the console as the two sections above describe it. At 64
+`[console] layout` in the config is `simple` (the default) or `deck`; `/layout simple` and
+`/layout deck` switch for the rest of the run, keeping the selection, the filter, the sort and
+anything typed, and `/layout` alone opens the list that tries and saves one (Choosing a look,
+below). `deck` is the console as the two sections above describe it. At 64
 columns or fewer the compact layout (below) is drawn, whichever is chosen. `mock --screenshot`
 takes its pictures in `deck`, and saves the simple layout as `simple-open`, `simple-alert` and
 `simple-focus`.
@@ -309,10 +310,11 @@ and fits its header and its longest key line.
 
 `[console] theme` in the config names the palette the console draws every colour from (P52):
 `flightdeck` (the default), `light`, `nord`, `gruvbox`, `dracula`, or the player's own
-`themes/NAME.toml` beside the config ([GUIDE.md](GUIDE.md#themes) has the file's keys). `/theme`
-lists them and marks the one in use; `/theme NAME` repaints what is on screen, a transcript's
-lines included, for the rest of the run. `mock --screenshot` takes its pictures in the default
-theme, and saves the fleet in the light one as `theme-light`.
+`themes/NAME.toml` beside the config ([GUIDE.md](GUIDE.md#themes) has the file's keys).
+`/theme NAME` repaints what is on screen, a transcript's lines included, for the rest of the
+run, and `/theme` alone opens the list that tries and saves one (Choosing a look, below).
+`mock --screenshot` takes its pictures in the default theme, and saves the fleet in the light
+one as `theme-light`.
 
 A theme is colours only. The chips stay solid labels, the header's segments solid blocks, the
 marks and glyphs the same plain Unicode, and what never drops from the header never drops in
@@ -322,6 +324,48 @@ whether it is dark, and the style of the diff view. Because the roles carry mean
 "needs you", `warn` is a held queue), a theme whose pairs the player could not read is refused:
 19 pairs, each at a WCAG contrast of 3.0 or more. A theme that cannot be used is an error when
 the config loads and a warning from `/theme`; the default is never drawn in its place.
+
+## Choosing a look
+
+`/theme` and `/layout` alone open a list (P67): the built-in themes and the player's own, or the
+two layouts, each with a few words (`built in`, `yours`, what the layout shows) and `in use` on
+the one the console is drawn in, where the cursor starts.
+
+- **The list is tried, not read.** The console behind it is drawn in the row the cursor is on,
+  at once: both views, a transcript's lines, the dialog's own rows and keys. The dialog is 54
+  columns at the right edge and the console behind it is not dimmed, so the header, the lane
+  list and the key line show what the choice looks like.
+- **enter** keeps the row for this run and writes nothing. **s** keeps it and saves it:
+  `theme = "NAME"` or `layout = "NAME"` under `[console]` in the config. **esc** closes the
+  list and puts back what was there, to the last cell. A click on a row is Enter on it.
+- **What is said.** After Enter, `theme nord for this run. To keep it: /theme, then s`; after
+  `s`, `theme nord, saved in your config file: PATH`; when the save could not be done, a
+  warning, `theme nord for this run; it was not saved: REASON`. The run keeps the look either
+  way. `/theme NAME` and `/layout NAME` answer as Enter does.
+- **A theme file that cannot be used** is listed with `cannot be used:` and its reason under
+  its name (the file by its name; the folder is said once, under the list), and takes neither
+  the cursor nor a click. The list reads every theme file in the folder when it opens, so it
+  shows a file as it is now.
+- **With no config file** (the mock before `flightdeck init`) the list has no `s` row and says
+  `This console has no config file, so a theme lasts for this run.`; `s` there says so in the
+  list and does nothing else.
+- **On a short terminal** the title and the keys stay on screen and the list between them
+  scrolls to the cursor; under 24 rows the dialog gives up its blank rows and the note under
+  the list.
+
+`/config` has the same two in its dialog, under the run's settings, with a third list: `for
+this run`, or `for this run, and saved in your config file`. Its theme list is the names only
+(no file is opened for it), so a theme that cannot be used is refused when the dialog is
+applied, with its reason, and then nothing in the dialog was changed. Saved from there, the
+layout and the theme are both written, as the dialog shows them.
+
+**The save** (`config_edit.save_console`) changes one line of the file, or adds one: over the
+line that sets the key, else under a commented example of it, else at the end of the
+`[console]` table, else in a `[console]` table added at the end of the file. Every other line
+stays, comments and line endings included, and a config that is a link stays a link. Before
+the write the new text must parse to the old text's settings with that key changed and
+nothing else; after it the `[console]` table is loaded as a console loads it. A file that
+fails either check, or cannot be written, is left as it was, and the reason is said.
 
 ## Attention order
 
@@ -371,9 +415,9 @@ more, as it does at 100%; escalate is offered at 80% only.
 | `ctrl+o` (focus) | `/details` | In a lane's focus view: details on or off. On: every line of the transcript, and the full needs-you card; off: one row for each entry, a run of tool calls on two, and the card in three rows at most. Typed in the fleet, `/details` says it is that view's |
 |  | `/diff [file]` | Show the files the lane changed |
 | `ctrl+c` | `/copy [output\|command\|flag\|all]` | `ctrl+c` copies the text selected with the mouse (a drag copies it as you let go; `esc` takes the selection down). `/copy` copies from the lane with no mouse: its last output (alone), that call's command, its flag, or all of its transcript (Focus view, Selecting and copying) |
-|  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` (also `/settings`) | Alone: a dialog with this run's settings (lanes at once, what happens to a flag); Enter applies, esc cancels. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run. |
-|  | `/layout [simple\|deck]` | The console's layout for the rest of this run: `simple` (one list of lanes, what needs you, the keys that apply now) or `deck` (the board and every column); alone, the other one. The status line says the config line that keeps it (`layout = "deck"` under `[console]`), and that the compact layout shows when the terminal is narrow. Any other word is refused: `/layout takes simple or deck`. |
-|  | `/theme [name]` | Alone: the themes there are, the one in use marked. With a name: the console's colours for the rest of this run, and the status line says the config line that keeps it. A name that is no theme, or a theme file that cannot be used, is a warning with the reason, and the theme in use stays. |
+|  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` (also `/settings`) | Alone: a dialog with this run's settings (lanes at once, what happens to a flag) and the console's layout and theme, which it can save (Choosing a look); Enter in the lanes field or `ctrl+s` applies, esc cancels. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run; only the layout and the theme can be saved, and only when the dialog is told to. |
+|  | `/layout [simple\|deck]` | The console's layout for the rest of this run: `simple` (one list of lanes, what needs you, the keys that apply now) or `deck` (the board and every column). Alone: the list that tries both and can save one (Choosing a look). The status line says how to keep it (`/layout, then s`), and that the compact layout shows when the terminal is narrow. Any other word is refused: `/layout takes simple or deck`. |
+|  | `/theme [name]` | Alone: the list that tries the themes and can save one (Choosing a look). With a name: the console's colours for the rest of this run, and the status line says how to keep it (`/theme, then s`). A name that is no theme, or a theme file that cannot be used, is a warning with the reason, and the theme in use stays. |
 |  | `/note <text>` | A note for every lane (an organizer's ruling, a replaced handout): each running lane reads it on its next turn, and every lane started later in this run reads it at its start. At most 12 stand at once. |
 |  | `/new [name]` | Hand a challenge over, on a board you fill yourself: a form with the challenge's name and a box for its description and its instance's address; its files and screenshots are attached by a drop on the terminal, `ctrl+o` or `ctrl+v`, and listed on the form (a path written in the description is only text; the address is `https://...` or `nc host port`, on a line of its own); category and points are optional. A line under the box says what is attached. A dropped file is copied into the run's folder as it lands, so one that is gone before `ctrl+s` is still added. `ctrl+v` pastes a screenshot from the clipboard (so does an empty paste, which is what a terminal's own paste key sends in Windows Terminal and Alacritty), and the lanes' model reads an image's text into the description. `ctrl+s` adds it and a lane starts on it; `esc` cancels. Refused on a board that comes from a platform, and in the mock. |
 |  | `/attach [challenge] <files>` | Add files to a challenge on a board you fill yourself: drag them onto the command bar, or give no file and choose them in the file window. A drop that lands is said with each file's name and size, and the `/attach` names the run's own copy of each file (`dropped/` in the run's folder), made as it landed. A paste that reads as a dropped file that is not on this machine is said with the likely reason, and is pasted as text. Its lanes start afresh with them, and the status line names the fresh ones (`attached extra.txt to doll; L01 restarted as L02`; `L01 ended, a fresh lane starts when one is free` while none has started). An ended lane's result reads `killed: to restart with extra.txt; re-queued fresh`. Typed in the lane's focus view, the view goes to the fresh lane. Without a challenge: the open lane's. |

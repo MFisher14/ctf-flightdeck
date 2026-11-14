@@ -44,7 +44,8 @@ What a pack.toml says is shown through untrusted(): it comes from the network.
 
 The config is edited as text, so its comments stay: only the `pack` and `image` lines of the
 [l1] table change (the table is added when it is missing). The edited file must load; when it
-does not, the file is put back as it was and the error says so.
+does not, the file is put back as it was and the error says so (config_edit.py, where every
+change to a config is made).
 """
 
 from __future__ import annotations

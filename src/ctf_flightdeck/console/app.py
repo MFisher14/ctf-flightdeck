@@ -1298,28 +1298,32 @@ class FlightdeckApp(App[None]):
                                 save_to=self.config_path, note=narrow), done)
 
     def keep_look(self, *, save: bool = False, theme: str | None = None, layout: str | None = None) -> None:
-        """Say that the console is in the theme or the layout just chosen (or both), and for
-        how long. `save`: write it under [console] in the player's config first
-        (config_edit.save_console, which leaves the file as it was when it cannot); the run
-        keeps the look whether that worked or not, and a save that failed is a warning with
-        the reason."""
+        """Say that the console is in the theme or the layout just chosen, and for how long
+        (look_said)."""
+        text, ok = self.look_said(save=save, theme=theme, layout=layout)
+        self.say(text, "information" if ok else "warning")
+
+    def look_said(self, *, save: bool = False, hint: bool = True, theme: str | None = None, layout: str | None = None) -> tuple[str, bool]:
+        """What to say once the console is in the theme or the layout just chosen (or both),
+        and whether it went well. `save`: write it under [console] in the player's config
+        first (config_edit.save_console, which leaves the file as it was when it cannot); the
+        run keeps the look whether that worked or not, and a save that failed is said with the
+        reason and is not well. `hint`: say how to keep a look that was not saved."""
         from ..config_edit import CONSOLE_KEYS, EditError, save_console
 
         chosen = {"theme": theme, "layout": layout}
         said = " and ".join(f"{key} {chosen[key]}" for key in CONSOLE_KEYS if chosen[key] is not None)
         narrow = "; this terminal is narrow, so the compact layout shows" if layout is not None and views.compact(self.size.width) else ""
         if not self.config_path:
-            self.say(f"{said} for this run (this console has no config file){narrow}")
-        elif not save:
+            return f"{said} for this run (this console has no config file){narrow}", True
+        if not save:
             command = " or ".join(f"/{key}" for key in CONSOLE_KEYS if chosen[key] is not None)
-            self.say(f"{said} for this run. To keep it: {command}, then s{narrow}")
-        else:
-            try:
-                save_console(Path(self.config_path), theme=theme, layout=layout)
-            except EditError as exc:
-                self.warn(f"{said} for this run; it was not saved: {exc}")
-                return
-            self.say(f"{said}, saved in your config file: {self.config_path}{narrow}")
+            return f"{said} for this run{f'. To keep it: {command}, then s' if hint else ''}{narrow}", True
+        try:
+            save_console(Path(self.config_path), theme=theme, layout=layout)
+        except EditError as exc:
+            return f"{said} for this run; it was not saved: {exc}", False
+        return f"{said}, saved in your config file: {self.config_path}{narrow}", True
 
     def switch_details(self) -> None:
         """/details: the lane view's details switch, as ctrl+o there (FocusScreen.action_details).
@@ -1397,39 +1401,67 @@ class FlightdeckApp(App[None]):
                                 save_to=self.config_path, note=own), done)
 
     def config_dialog(self) -> None:
-        """/config alone: the settings dialog (ConfigPrompt). What it changes goes through the
-        same deck calls as /config lanes and /config submit, so the event's rules hold."""
-        from .screens import ConfigPrompt
+        """/config alone: the settings dialog (ConfigPrompt). What it changes for the run goes
+        through the same deck calls as /config lanes and /config submit, so the event's rules
+        hold, and through set_layout and set_palette as /layout and /theme; asked to, it
+        saves the layout and the theme as the list's s does (look_said). Everything asked for
+        is checked before anything changes: lanes that are no number, or a theme that cannot
+        be used, is a warning and nothing was changed."""
+        from .screens import ConfigPrompt, Settings
 
         deck, cfg = self.deck, self.deck.config
-        before = ("unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes), cfg.submit)
+        before = Settings("unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes), cfg.submit, self.layout, theme.active().name)
 
-        def done(answer: tuple[str, str] | None) -> None:
+        def done(answer: Settings | None) -> None:
             if answer is None or answer == before:
                 return
-            lanes, submit = answer
-            said, ok = [], True
-            if lanes.lower() != before[0]:
-                value = lanes.lower()
-                if value in ("unlimited", "max", "∞"):
-                    outcome = deck.set_max_lanes(UNLIMITED_LANES)
-                elif value.isascii() and value.isdigit():
-                    outcome = deck.set_max_lanes(int(value))
-                else:
-                    self.warn("Lanes at once takes a whole number, 1 or more, or 'unlimited'; nothing was changed")
+            lanes, palette = answer.lanes.lower(), None
+            if lanes == before.lanes:
+                most = None
+            elif lanes in ("unlimited", "max", "∞"):
+                most = UNLIMITED_LANES
+            elif lanes.isascii() and lanes.isdigit():
+                most = int(lanes)
+            else:
+                self.warn("Lanes at once takes a whole number, 1 or more, or 'unlimited'; nothing was changed")
+                return
+            if answer.theme != before.theme:
+                try:
+                    palette = themes.load(answer.theme, self.themes_folder)
+                except themes.ThemeError as exc:  # its text names the theme file, or says the name is no theme
+                    why = f"theme {answer.theme} {exc}" if isinstance(exc, themes.NoSuchTheme) else str(exc)
+                    self.warn(f"{why}; nothing was changed")
                     return
+            said, ok = [], True
+            if most is not None:
+                outcome = deck.set_max_lanes(most)
                 said.append(outcome.message)
                 ok = ok and outcome.ok
-            if submit != before[1]:
-                outcome = deck.set_submit(submit)
+            if answer.submit != before.submit:
+                outcome = deck.set_submit(answer.submit)
                 said.append(outcome.message)
                 ok = ok and outcome.ok
-            self.say(" ".join(said), "information" if ok else "warning")
+            if palette is not None:
+                self.set_palette(palette)
+            if answer.layout != before.layout:
+                self.set_layout(answer.layout)
+            if answer.save:  # both, as the dialog shows them: what the console is in is what the config then says
+                look = {"layout": answer.layout, "theme": answer.theme}
+            else:
+                look = {key: getattr(answer, key) for key in ("layout", "theme") if getattr(answer, key) != getattr(before, key)}
+            if look:
+                text, fine = self.look_said(save=answer.save, hint=False, **look)
+                said.append(text[0].upper() + text[1:])
+                ok = ok and fine
+            if said:  # (lanes typed another way, "04" for 4, change nothing and say so; "UNLIMITED" for unlimited says nothing)
+                self.say(". ".join(said), "information" if ok else "warning")
             self.refresh_view()
 
         lanes_note = f"the event's rules allow {cfg.lanes_ceiling} at most" if cfg.lanes_ceiling is not None else ""
         submit_note = "the event's rules do not let flightdeck submit, so auto is refused" if cfg.submit_ceiling != "auto" else ""
-        self.push_screen(ConfigPrompt(*before, lanes_note=lanes_note, submit_note=submit_note, config_path=self.config_path), done)
+        built_in, own = themes.names(self.themes_folder)
+        self.push_screen(ConfigPrompt(before, themes=(*built_in, *own), lanes_note=lanes_note, submit_note=submit_note,
+                                      config_path=self.config_path), done)
 
     def unhold(self) -> None:
         """/unhold: lift the hold on the queue (Deck.release_hold), so queued lanes start again."""

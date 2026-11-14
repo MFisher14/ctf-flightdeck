@@ -82,6 +82,12 @@ Proposals built and waiting for a release, in the order of their numbers in
   lane restarted by `/attach` or `/kill` from its own view takes the view to the fresh lane.
   Not built: selecting in the full card, the diff and the tables (the terminal's own selection
   reaches them), and a calm card in the compact layout.
+- **`/theme` and `/layout` as lists that are tried and can be saved** (P67,
+  [#44](https://github.com/MFisher14/ctf-flightdeck/issues/44)). Alone, each opens a list; the
+  console behind it is drawn in the row the cursor is on; Enter keeps it for the run, `esc`
+  puts back what was there, and `s` saves it under `[console]` in the config. `/config` has
+  both, with a choice to save them. The config is changed in one place (`config_edit.py`),
+  which `pack install` and `plugin add` now use too.
 
 Known limits, each said where it applies:
 
@@ -101,8 +107,10 @@ Known limits, each said where it applies:
 - A plugin provides a platform and nothing else: no console commands, detectors, notification
   sinks or instances from one, no settings for it in the profile, no pinning of its files, and
   `flightdeck start` and the home screen's form do not offer a plugin's platform.
-- `/layout` and `/theme` last for the run; the config is edited by hand. There is no key for the
-  switch.
+- Saving a theme or a layout edits the config line by line: a `[console]` written as dotted
+  keys or as an inline table is refused and left as it was, with the line to write by hand.
+  There is no key for the layout switch, and the lists were driven by headless tests, not
+  looked at in a real terminal.
 - The five built-in palettes were checked for contrast, not judged by eye on many terminals.
 - The gallery has no picture of the compact layout or of autopilot yet
   ([SCREENSHOTS.md](SCREENSHOTS.md)).
