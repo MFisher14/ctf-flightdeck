@@ -560,6 +560,40 @@ def test_doctor_for_docker_agent_lanes_runs_plays_probe_of_the_lane_image(tmp_pa
     assert report(checks, agent="claude")[1] == 1  # play --agent claude would refuse this config
 
 
+def test_doctor_warns_of_a_lane_image_that_another_flightdecks_dockerfile_built(tmp_path, monkeypatch):
+    """The image is on this machine, so nothing else asks for a rebuild: the label `image build`
+    writes says whether today's Dockerfile built it. One an older flightdeck built (no label,
+    or another fingerprint) gets a warning that never fails doctor; a player's own image
+    without the label gets none, and no container is started to find out."""
+    from ctf_flightdeck import lane
+    from test_run import label_docker
+
+    label = "org.ctf-flightdeck.lane.dockerfile"
+    docker = label_docker(tmp_path, monkeypatch, {IMAGE: None, "mine:1": {"maintainer": "me"}, "theirs:2": {label: "0123456789abcdef"}})
+
+    def warning(image: str) -> list[Check]:
+        path = tmp_path / f"{image.replace(':', '-')}.toml"
+        path.write_text(f'[api]\nkey_env = ""\n[models]\nladder = ["a/b"]\n[lanes]\nruntime = "docker"\nimage = "{image}"\n')
+        checks = doctor(path, environ={})
+        assert {c.name: c for c in checks}["lane image"].ok
+        return [c for c in checks if c.name == "lane image build"]
+
+    (old,) = warning(IMAGE)  # built before the label, by flightdeck 0.4.0 or earlier
+    assert (old.ok, old.essential) == (False, False)
+    assert old.detail == (
+        f"{IMAGE} was not built from the Dockerfile this flightdeck ships (another flightdeck built it, or it was built by "
+        "hand), so its lanes' shells may lack programs this one's have"
+    )
+    assert old.fix == "run `flightdeck image build` to build it again (lanes run in the old one all the same)"
+    text, status = report([old])
+    assert status == 0 and text.startswith("warn lane image build: ")
+    assert warning("mine:1") == []  # the player's own image: what it holds is theirs
+    (other,) = warning("theirs:2")  # flightdeck's image under another tag, from another Dockerfile
+    assert other.detail.startswith("theirs:2 was not built from the Dockerfile this flightdeck ships")
+    (docker / "images.json").write_text('{"%s": {"%s": "%s"}}' % (IMAGE, label, lane.fingerprint()))
+    assert warning(IMAGE) == []  # today's
+
+
 def test_doctor_on_a_host_config_does_not_ask_for_docker_or_its_image_and_names_no_missing_option(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))  # no docker here
     host_cfg = write_config(Answers("https://openrouter.ai/api/v1", "", ("a/b",), "host"), tmp_path / "host.toml")
