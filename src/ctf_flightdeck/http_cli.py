@@ -1,6 +1,6 @@
 """`flightdeck http`: an event on a platform with a JSON API, played from a table of routes.
 
-    flightdeck http example [--preset NAME] [--routes]  # print an event profile to edit: a preset (rctf, noctf), or its routes written out
+    flightdeck http example [--preset NAME] [--routes]  # print an event profile to edit: a preset (rctf, noctf, gzctf), or its routes written out
     flightdeck http check EVENT.toml           # sign in, list, read the solved list; show what each path matched; submit nothing
     flightdeck http pull EVENT.toml [FOLDER]   # pull the event's board and read the solved list; submit nothing
 
@@ -23,7 +23,7 @@ from .text import untrusted
 app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
-    help="A platform with a JSON API (rCTF, noCTF and others): play it from the routes in the event profile's [http] table.",
+    help="A platform with a JSON API (rCTF, noCTF, GZCTF and others): play it from the routes in the event profile's [http] table.",
 )
 
 EXAMPLE = """\
@@ -63,12 +63,19 @@ preset = "noctf"                    # noCTF's routes, which ship with flightdeck
 # the host the requests to /challenges go to). The token is the session token the page keeps once you sign in
 # (the browser's storage for the site, under noctf-session-token); a session lasts a week.
 """,
+    "gzctf": """\
+[http]
+preset = "gzctf"                    # GZCTF's routes, which ship with flightdeck; a key written under [http] wins
+game = "1"                          # the game's number, as its address shows it: https://.../games/1
+# GZCTF: put the value of the GZCTF_Token cookie in the variable, in quotes. Sign in on the site, then
+# your browser's developer tools (Storage or Application, Cookies) show it. It lasts 7 days from your last visit.
+""",
 }
 ROUTES_HEAD = """\
 # The routes of the platform's API. These are {label}'s, written out: change them to the platform in
 # front of you (its browser's network tab shows its routes). `flightdeck http check` tries them.
 """
-LABELS = {"rctf": "rCTF", "noctf": "noCTF"}  # each preset's name as the platform writes it
+LABELS = {"rctf": "rCTF", "noctf": "noCTF", "gzctf": "GZCTF"}  # each preset's name as the platform writes it
 _TOKEN_LINE = 'token_env = "RCTF_TOKEN"            # the NAME of the variable that holds your token: RCTF_..., HTTP_TOKEN or HTTP_TOKEN_...'
 
 
@@ -89,12 +96,16 @@ def example_profile(routes: bool = False, preset: str = "rctf") -> str:
     table = "\n".join(line for line in table.splitlines() if not line.startswith("#")).strip("\n")
     own = EXAMPLE.replace(_TOKEN_LINE, 'token_env = "HTTP_TOKEN"            # the NAME of the variable that holds your token: HTTP_TOKEN or HTTP_TOKEN_...')
     assert own != EXAMPLE
+    if preset == "gzctf":  # its routes name {game}: a table with none does not load
+        table = '[http]\ngame = "1"                          # the game\'s number, as its address shows it: https://.../games/1\n\n' + table
+    own = EXAMPLE.replace(_TOKEN_LINE, 'token_env = "HTTP_TOKEN"            # the NAME of the variable that holds your token: HTTP_TOKEN or HTTP_TOKEN_...')
+    assert own != EXAMPLE
     return own + ROUTES_HEAD.format(label=LABELS[preset]) + table + "\n"
 
 
 @app.command("example")
 def example(
-    preset: Annotated[str, typer.Option("--preset", metavar="NAME", help="The platform: rctf or noctf.")] = "rctf",
+    preset: Annotated[str, typer.Option("--preset", metavar="NAME", help="The platform: rctf (the default), noctf or gzctf.")] = "rctf",
     routes: Annotated[bool, typer.Option("--routes", metavar="", help="Write every route of the preset out under [http], to edit for another platform.")] = False,
 ) -> None:
     """Print an event profile for the http platform, to edit: `flightdeck http example > event.toml`."""

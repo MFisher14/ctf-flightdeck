@@ -201,8 +201,8 @@ def test_the_noctf_example_profile_loads_and_passes_the_check(tmp_path, routes):
 
 def test_the_example_with_no_preset_named_is_rctfs_and_an_unknown_preset_is_refused_by_name():
     assert invoke("example").output == http_cli.example_profile(False, "rctf") and 'preset = "rctf"' in invoke("example").output
-    result = invoke("example", "--preset", "gzctf")
-    assert result.exit_code != 0 and "no preset of that name (known: rctf, noctf)" in result.output
+    result = invoke("example", "--preset", "ctfx")
+    assert result.exit_code != 0 and "no preset of that name (known: rctf, noctf, gzctf)" in result.output
 
 
 def test_http_check_against_noctf_shows_the_detail_route_and_submits_nothing(tmp_path, own_config, monkeypatch):

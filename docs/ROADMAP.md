@@ -36,6 +36,12 @@ Proposals built and waiting for a release, in the order of their numbers in
   ([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)). No change to the engine
   was needed: every route fits the `[http]` table as it was. Like the rctf preset, it has met a
   fake on 127.0.0.1 only, never a real noCTF.
+- **GZCTF as a preset** (P75). `preset = "gzctf"` with the game's number and the player's
+  `GZCTF_Token` cookie: the board, attachments and counted tries, a flag judged after it is
+  taken, the team's solves, and `[http.refuse]`, which keeps every flag back from a site that
+  wants it encrypted; `flightdeck http example --preset gzctf`. Written from GZCTF's public
+  source and tested against a fake on 127.0.0.1 only, never a real GZCTF; a site that encrypts
+  its flags gets none from flightdeck, and the player submits them on the site.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

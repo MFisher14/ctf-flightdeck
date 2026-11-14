@@ -44,6 +44,15 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   marked wrong. It was written from noCTF's source and tried against a stand-in only, not a
   real noCTF yet: run `flightdeck http check` first
   ([Boards](docs/BOARDS.md#a-board-from-a-platform-with-a-json-api)).
+- GZCTF ships as a preset of the http platform: `preset = "gzctf"` and the game's number
+  (`game = "3"`) under `[http]`, with the value of your `GZCTF_Token` cookie (from the browser,
+  once you have signed in) in a variable named `GZCTF_...`. `flightdeck http example --preset
+  gzctf` prints a profile. flightdeck pulls the game's board, files and counted tries, sends a
+  flag and waits for GZCTF to judge it, and reads your team's solves. A site that encrypts its
+  flags (GZCTF's `ApiEncryption`) gets none from flightdeck: each flag comes back to you with
+  the reason, and `http check` and each pull say so. A table for another platform can say the
+  same with `[http.refuse]`. The preset has met a stand-in only, not a real GZCTF yet
+  ([BOARDS.md](docs/BOARDS.md#a-board-from-a-platform-with-a-json-api)).
 
 ## 0.5.0 (2026-11-14)
 

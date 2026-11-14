@@ -1220,12 +1220,15 @@ flightdeck play ~/ctf/event-board --event event.toml
 flightdeck talks to CTFd and to a Game Master. For any other platform there are three ways. By
 hand: a folder board (`platform = "manual"` in `event.toml`), and you submit the flags on the
 site. By a table of routes, when the platform's own web page talks JSON to the site:
-`platform = "http"` and an `[http]` table in `event.toml`, with rCTF and noCTF as ready
+`platform = "http"` and an `[http]` table in `event.toml`, with rCTF, noCTF and GZCTF as ready
 presets ([Boards](BOARDS.md#a-board-from-a-platform-with-a-json-api)); no code runs, and
-`flightdeck preflight` shows every request and where your token goes:
+`flightdeck preflight` shows every request and where your token goes. On GZCTF your token is the
+`GZCTF_Token` cookie your browser holds once you have signed in, and a site that encrypts its
+flags gets none from flightdeck: each comes back to you, to submit on the site.
 
 ```sh
 flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset, to edit (--preset noctf for noCTF)
+flightdeck http example --preset gzctf > ~/ctf/quals/event.toml   # or with the gzctf preset
 flightdeck http check ~/ctf/quals/event.toml       # tries it: signs in, lists, reads the solved list; submits nothing
 flightdeck play --event ~/ctf/quals/event.toml
 ```
