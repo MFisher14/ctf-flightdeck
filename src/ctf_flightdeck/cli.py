@@ -389,14 +389,21 @@ def play(
 
 
 def _vpn_ready(folder: Path, *, ask: bool) -> bool:
-    """Before an event with a VPN file is played: say whether the VPN looks connected, and at
-    a terminal offer to connect it when it does not. False only when the player chose to stop."""
+    """Before a folder with a VPN file is played: say whether the VPN looks connected, and at
+    a terminal offer to connect it when it does not. False only when the player chose to stop.
+    Only a file the player added through flightdeck is offered (vpn.added): one that is merely
+    in the folder (a board is untrusted data), or that changed since it was added, is said to
+    be there and unverified, and nothing is run for it."""
     from . import vpn, vpn_cli
 
     found = vpn.find(folder)
     if found is None:
         return True
     try:
+        if not vpn.added(found):
+            typer.echo(f"flightdeck: {vpn.unverified(found)}", err=True)
+            typer.echo("flightdeck: it was not connected: lanes reach this event's live targets only if its VPN is up", err=True)
+            return True
         state = vpn.connected(found)
     except vpn.VPNError as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
