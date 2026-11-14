@@ -544,6 +544,11 @@ class AgentDriver:
             self._report(run, TurnReport(turn=False, action="workspace", output=str(exc), gave_up=f"could not prepare the workspace: {exc}"))
             return
         run.ready = True
+        if getattr(run.workspace, "shell_tools", ()):
+            # the brief was written when the lane started, before its container was: what the
+            # image has (a debugger, a decompiler) is known only now, and no model has read it yet
+            lane = self._lane(run)
+            run.messages[1] = self._fresh(run, lane.approach if lane is not None else "")[1]
         cid = run.challenge.id
         reach = self.urls.get(cid, ()) if self.instance != "off" else ()  # under off, no first look points the lane at one
         run.look = self.looks.start(self.lights, self.deck, run.lane_id, run.challenge, run.workspace,
@@ -1127,7 +1132,8 @@ class AgentDriver:
                                          approach, flag_format=self.deck.config.flag_format, recon=run.recon,
                                          instance=self.instance, shell_hosts=getattr(run.workspace, "shell_hosts", None),
                                          toolkit=self.l1.toolkit if self.l1 is not None else "",
-                                         view_image=self._no_images(run) is None),
+                                         view_image=self._no_images(run) is None,
+                                         tools=getattr(run.workspace, "shell_tools", ())),
             },
         ]
         if run.handover is not None:

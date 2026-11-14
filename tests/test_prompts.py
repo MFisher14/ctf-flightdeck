@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN, MAX_BRIEF_FILES, OFF_LIMITS, VIEW_IMAGE, brief, system_prompt
+from ctf_flightdeck.agent.prompts import (
+    FENCE_CLOSE, FENCE_OPEN, MAX_BRIEF_FILES, OFF_LIMITS, TOOLKIT, VIEW_IMAGE, brief, shell_tools, system_prompt,
+)
 from ctf_flightdeck.core.model import Challenge
 
 PORT = Challenge("port", "Port of Call", "pwn", 250, description="The harbour master's service.\n\nConnection info: nc 127.0.0.1 31337")
@@ -48,6 +50,35 @@ def test_the_brief_mentions_view_image_in_one_line_only_when_a_file_is_an_image_
     assert "view_image" not in brief(ch, ["notes.txt", "photo.png.txt", "png", "capture.pcap"], [], view_image=True)  # no image file
     assert "view_image" not in brief(ch, ["photo.png"], [])  # a lane without the tool (a coding-agent CLI's) is not told of it
     assert "view_image" not in brief(ch, [], [], view_image=True)
+
+
+def test_a_lane_whose_shell_has_a_debugger_and_a_decompiler_is_told_how_to_run_them_without_a_terminal():
+    line = shell_tools(("gdb", "gdb-multiarch", "r2", "pdg"))
+    assert line == (
+        "Your shell has gdb, a debugger (`gdb -q -batch -ex 'break main' -ex run -ex bt --args FILE ARGUMENTS`; gdb-multiarch "
+        "reads a binary of another architecture) and radare2 with the Ghidra decompiler (`r2 -q -e scr.color=0 -c 'aaa; afl; "
+        "pdg @ main' FILE`: afl lists the functions, pdg prints one as C). A command gets no terminal, so give each program "
+        "its commands on the command line, as shown."
+    )
+    assert len(line) < 400  # it is in every turn's context
+    ch = Challenge("c", "Lantern", "rev", 200, description="Which word lights it?")
+    text = brief(ch, ["lantern"], [], tools=("gdb", "gdb-multiarch", "r2", "pdg"), toolkit="the pack's note")
+    lines = text.splitlines()
+    at = lines.index(line)
+    assert lines.index(FENCE_CLOSE) < at < lines.index(TOOLKIT)  # flightdeck's own line: after the fence, before the pack's note
+
+
+def test_the_brief_names_only_the_programs_the_shell_has_and_nothing_when_there_is_nothing_to_look_at():
+    ch = Challenge("c", "Lantern", "rev", 200, description="Which word lights it?")
+    only_gdb = shell_tools(("gdb",))
+    assert only_gdb.startswith("Your shell has gdb, a debugger (`gdb -q -batch") and "radare2" not in only_gdb and "multiarch" not in only_gdb
+    bare_r2 = shell_tools(("r2",))  # radare2 without its Ghidra plugin: a disassembler, and pdg is not promised
+    assert bare_r2.startswith("Your shell has radare2, a disassembler (") and "pdg" not in bare_r2 and "gdb" not in bare_r2
+    assert shell_tools(()) == shell_tools(("pdg",)) == shell_tools(("gdb-multiarch", "strings")) == ""  # neither gdb nor r2
+    assert "Your shell has" not in brief(ch, ["lantern"], [])  # a host lane, or an image with neither
+    assert "Your shell has" not in brief(ch, ["lantern"], [], tools=("pdg",))
+    assert "Your shell has" not in brief(ch, [], ["http://127.0.0.1:8080"], tools=("gdb", "r2", "pdg"))  # no file: nothing to debug
+    assert only_gdb in brief(ch, ["lantern"], [], tools=("gdb",)).splitlines()
 
 
 def test_the_brief_names_a_tcp_service_with_the_nc_command_that_reaches_it():

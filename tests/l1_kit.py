@@ -115,6 +115,8 @@ FAKE_DOCKER = r"""#!/bin/bash
 # create` fails saying what create.fail holds. The `docker run` of an egress proxy
 # (--entrypoint python3) is written to proxies.log, not runs.log: its arguments up to the
 # script, then its configuration; `docker logs` says the proxy is ready, or what logs.txt holds.
+# A lane's question about its image's analysis programs (workspace._TOOLS) is answered with
+# what tools.txt holds: nothing without one, never this machine's own gdb or r2.
 here="$(dirname "$0")"
 case "$1" in
   version) echo 99.0.0-fake ;;
@@ -147,6 +149,7 @@ case "$1" in
     while [ "${1#-}" != "$1" ]; do case "$1" in -w|-e|-u) shift 2 ;; *) shift ;; esac; done
     shift
     if [ "$1 $2" = "bash -c" ] && [ "${3#command -v }" != "$3" ]; then echo "/usr/bin/${3#command -v }"; exit 0; fi
+    if [ "$1 $2" = "bash -c" ] && [ "$4" = flightdeck-tools ]; then cat "$here/tools.txt" 2>/dev/null; exit 0; fi
     if [ "$1" = bash ]; then shift; exec bash "$@"; fi  # the program lookup, answered from this machine
     exit 0 ;;
   *) echo "fake docker: unexpected call: $*" >&2; exit 2 ;;

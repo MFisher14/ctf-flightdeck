@@ -1156,6 +1156,7 @@ def prepare_run(options: RunOptions) -> Run:
                 later=later,
                 labels=marks,
                 mounts=lane_mounts,
+                probe_tools=True,
             )
         return HostWorkspace(root, handouts[challenge.id], record=processes)
 

@@ -793,8 +793,12 @@ case "$1" in
   rm) exit 0 ;;
   exec)
     if [ "$2" = "-i" ]; then echo $$ > "$(dirname "$0")/exec.pid"; exec sleep 300; fi
+    printf '%s\n' "$2 $3 $4 ... $last" >> "$(dirname "$0")/exec.log"  # the container, the program, and the last word
     case "$last" in
       "command -v "*) echo "/usr/bin/${last#command -v }" ;;
+      flightdeck-tools)  # the lane's question (workspace._TOOLS): tools.txt is what this image has, tools.fail a docker that fails
+        if [ -f "$(dirname "$0")/tools.fail" ]; then echo "Error response from daemon: no" >&2; exit 126; fi
+        cat "$(dirname "$0")/tools.txt" 2>/dev/null ;;
       *) exit 1 ;;
     esac ;;
   *) echo "fake docker: unexpected call: $*" >&2; exit 2 ;;
@@ -844,6 +848,43 @@ def test_an_image_with_python3_leaves_the_python_tool_on(fake_docker, tmp_path, 
     assert ws.python_missing is None
     log = (ws.root / ".flightdeck" / "prepare.log").read_text().splitlines()
     assert log[0].startswith("copied 5 files") and not any(line.startswith("python3 is not") for line in log)
+
+
+def test_a_lanes_container_is_asked_which_analysis_programs_its_image_has(fake_docker, tmp_path, handout):
+    (fake_docker / "tools.txt").write_text("pdg\nr2\nstrings\ngdb\n")  # in any order, with a word that is not one of them
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker", probe_tools=True)
+    assert ws.shell_tools == ()  # nothing is known before the container is
+    run(ws.prepare())
+    run(ws.close())
+    assert ws.shell_tools == ("gdb", "r2", "pdg")  # only the names flightdeck asks about, in its own order
+    asked = [line for line in (fake_docker / "exec.log").read_text().splitlines() if line.endswith(" flightdeck-tools")]
+    assert asked == ["flightdeck-test-fake-docker bash -c ... flightdeck-tools"]  # asked once, of this container's bash
+    script = workspace_module._TOOLS
+    assert "cd / ||" in script and "r2 -N -q -c Lc -- </dev/null" in script  # from /, no file, no settings: nothing of the challenge
+    assert workspace_module.SHELL_TOOLS == ("gdb", "gdb-multiarch", "r2", "pdg")
+
+
+def test_a_container_that_is_not_a_lanes_is_not_asked_for_its_analysis_programs(fake_docker, tmp_path, handout):
+    """An L1 engine's container (l1/container.py) is a DockerWorkspace too, one per engine run:
+    it pays for no question whose answer only a lane's brief uses."""
+    (fake_docker / "tools.txt").write_text("gdb\nr2\npdg\n")
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker")
+    run(ws.prepare())
+    run(ws.close())
+    assert ws.shell_tools == ()
+    assert "flightdeck-tools" not in (fake_docker / "exec.log").read_text()
+
+
+def test_an_image_that_does_not_say_what_it_has_gets_no_programs_named_and_a_line_in_prepare_log(fake_docker, tmp_path, handout):
+    (fake_docker / "tools.txt").write_text("gdb\n")
+    (fake_docker / "tools.fail").write_text("")
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker", probe_tools=True)
+    run(ws.prepare())  # the lane still starts
+    run(ws.close())
+    assert ws.shell_tools == ()
+    assert (ws.root / ".flightdeck" / "prepare.log").read_text().splitlines()[-1] == (
+        f"image {FAKE_IMAGE} did not say which analysis programs it has (docker exec exited 126): this lane's brief names none"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1002,6 +1043,18 @@ def test_an_image_without_python3_is_noted_for_the_python_tool_and_in_prepare_lo
         "(`flightdeck image build` builds the lane image, which has it)"
     )
     assert run(box.run("echo the shell works", timeout=30)) == RunResult(0, b"the shell works\n")
+
+
+def test_a_real_image_with_no_debugger_and_no_decompiler_says_so(docker_ready, container_name, tmp_path, handout):
+    """The question itself, in a real container: debian:bookworm-slim has none of the programs,
+    so the script must end well and name nothing (tests/test_l1_lane_image.py asks the lane image)."""
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name=container_name, probe_tools=True)
+    try:
+        run(ws.prepare())
+        assert ws.shell_tools == ()
+        assert not any("did not say" in line for line in (ws.root / ".flightdeck" / "prepare.log").read_text().splitlines())
+    finally:
+        run(ws.close())
 
 
 def test_the_docker_take_over_shell_is_docker_exec_in_work(box):
