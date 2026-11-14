@@ -69,6 +69,7 @@ CATEGORY_ORDER = ("web", "for", "rev", "pwn", "cry", "misc", "osint")
 _STATE_ROLE = {  # a lane state's colour, as a role of the palette (themes.ROLES)
     LaneState.RUNNING: "ok",
     LaneState.WAITING: "pending",
+    LaneState.QUEUED: "muted",
     LaneState.PAUSED: "warn",
     LaneState.TAKEOVER: "info",
     LaneState.SOLVED: "ok",
@@ -679,7 +680,7 @@ COMPACT_PENDING_TAG = {
 }
 COMPACT_SENDING = "send"
 COMPACT_STATE = {
-    LaneState.RUNNING: "run", LaneState.WAITING: "wait", LaneState.PAUSED: "pause", LaneState.TAKEOVER: "take",
+    LaneState.RUNNING: "run", LaneState.WAITING: "wait", LaneState.QUEUED: "que", LaneState.PAUSED: "pause", LaneState.TAKEOVER: "take",
     LaneState.SOLVED: "done", LaneState.KILLED: "kill", LaneState.STOPPED: "stop", LaneState.GAVE_UP: "gave",
 }
 FINISHED_ROW = "__finished__"
@@ -855,6 +856,7 @@ def finished_cells(lanes: list[Lane], expanded: bool) -> dict[str, Text]:
 OPEN_STATE_WORDS = {
     LaneState.RUNNING: "running",
     LaneState.WAITING: "waiting for you",
+    LaneState.QUEUED: "waiting for a slot",
     LaneState.PAUSED: "paused",
     LaneState.TAKEOVER: "taken over",
 }

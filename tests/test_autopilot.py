@@ -337,6 +337,31 @@ def test_no_rule_touches_a_lane_that_is_the_players_or_holds_a_flag():
     assert not [e for e in world.events(EventKind.INTERVENTION) if e.data.get("by") == "autopilot"]
 
 
+def test_no_rule_touches_a_lane_waiting_for_a_slot_after_its_live_box_answer():
+    world = engaged(max_lanes=1)
+    world.release(ch("box"), ch("b"))
+    box = world.lane("box")
+    world.deck.report(box.id, TurnReport(turn=False, pending=Pending(PendingKind.LIVE_BOX, "reach the instance")))
+    assert world.deck.apply(iv.Approve(box.id)).ok  # its slot went to b: it waits for one
+    world.alert(box.id, AlertKind.LOOP)
+    world.pilot.step()
+    assert box.state is LaneState.QUEUED and box.alert(AlertKind.LOOP) is not None
+    assert not [e for e in world.events(EventKind.INTERVENTION) if e.data.get("by") == "autopilot"]
+
+
+def test_the_budget_pauses_a_lane_waiting_for_a_slot_too():
+    world = engaged(budget=Budget(tokens=2000), max_lanes=1)
+    world.release(ch("box"), ch("b"))
+    box = world.lane("box")
+    world.deck.report(box.id, TurnReport(turn=False, pending=Pending(PendingKind.LIVE_BOX, "reach the instance")))
+    world.deck.apply(iv.Approve(box.id))
+    world.turn(world.lane("b").id, tokens=2000)
+    world.pilot.step()
+    assert box.state is LaneState.PAUSED  # it would spend once it took a slot
+    world.deck.report(world.lane("b").id, TurnReport(turn=False, gave_up="nothing found"))
+    assert box.state is LaneState.PAUSED
+
+
 def test_the_deck_refuses_autopilot_an_approval_and_any_answer_to_a_flag():
     world = engaged()
     world.release(ch("a"))

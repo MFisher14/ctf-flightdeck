@@ -400,7 +400,125 @@ def test_an_intervention_whose_new_lane_cannot_start_says_so(what):
     assert out.ok is (what == "kill and re-queue")  # the kill itself happened; the fork and the queue did not
 
 
-# ---------------------------------------------------------------------- reports
+# ---------------------------------------------------------------------- a live-box wait gives its slot up (P83)
+
+
+def ask_box(deck, lane):
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect to the box")))
+
+
+def test_a_lane_waiting_for_a_live_box_answer_gives_its_slot_to_the_next_queued_lane():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    assert lane.state is LaneState.WAITING and lane.benched
+    assert driver.started() == ["c0", "c1"]
+    assert queued_ids(deck) == ["c2"]  # one slot was freed, not two
+    assert [x.id for x in deck.slotted_lanes()] == ["L02"]
+    assert "gave its slot to L02" in lane.actions[-1].text
+    (given,) = events(deck, EventKind.SLOT)
+    assert (given.lane, given.data) == ("L01", {"slot": "given", "started": ["L02"]})
+
+
+def test_other_approvals_keep_their_slot():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.BUDGET, "more budget")))
+    assert lane.state is LaneState.WAITING and not lane.benched
+    assert driver.started() == ["c0"]
+
+
+def test_an_answered_lane_with_no_free_slot_waits_for_one_and_takes_it_before_the_queue():
+    deck, driver, _ = make_deck(n=4, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    other = lane_on(deck, "c1")
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok
+    assert lane.state is LaneState.QUEUED and lane.pending is None and lane.benched
+    assert driver.named("approved") == [(lane.id, PendingKind.LIVE_BOX)]  # the answer reaches the lane at once
+    assert driver.named("resume") == []
+    assert "waits for a free slot" in lane.actions[-1].text
+    assert solve(deck, other).ok  # its slot frees: the answered lane takes it, not c2
+    assert lane.state is LaneState.RUNNING and not lane.benched
+    assert driver.named("resume") == [(lane.id,)]
+    assert driver.started() == ["c0", "c1"] and queued_ids(deck) == ["c2", "c3"]
+    assert lane.actions[-1].text == "took a free slot: back at work"
+    assert [e.data["slot"] for e in events(deck, EventKind.SLOT)] == ["given", "waiting", "taken"]
+
+
+def test_an_answered_lane_takes_its_slot_back_at_once_when_one_is_free():
+    deck, driver, _ = make_deck(n=2, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    assert solve(deck, lane_on(deck, "c1")).ok  # nothing left in the queue: the slot stays free
+    assert deck.apply(iv.Decline(lane.id)).ok
+    assert lane.state is LaneState.RUNNING and not lane.benched
+    assert driver.named("declined") == [(lane.id, PendingKind.LIVE_BOX, None)]
+
+
+def test_lanes_waiting_for_a_slot_take_free_ones_in_the_order_they_were_answered():
+    deck, driver, _ = make_deck(n=6, max_lanes=2)
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+    ask_box(deck, second)
+    ask_box(deck, first)
+    assert driver.started() == ["c0", "c1", "c2", "c3"]
+    deck.apply(iv.Approve(second.id))
+    deck.apply(iv.Approve(first.id))
+    assert first.state is second.state is LaneState.QUEUED
+    assert solve(deck, lane_on(deck, "c2")).ok
+    assert second.state is LaneState.RUNNING and first.state is LaneState.QUEUED
+    assert solve(deck, lane_on(deck, "c3")).ok
+    assert first.state is LaneState.RUNNING
+    assert queued_ids(deck) == ["c4", "c5"]
+
+
+def test_a_lane_waiting_for_a_slot_takes_one_while_the_queue_is_held():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    deck.apply(iv.Approve(lane.id))
+    deck.hold_queue("the model API refuses the key")
+    assert deck.apply(iv.Kill(lane_on(deck, "c1").id)).ok
+    assert lane.state is LaneState.RUNNING  # no new lane: the one that was at work goes on
+    assert driver.started() == ["c0", "c1"]
+
+
+def test_resuming_or_handing_back_an_answered_lane_waits_for_a_slot():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    deck.apply(iv.Pause(lane.id))
+    deck.apply(iv.Approve(lane.id))
+    assert lane.state is LaneState.PAUSED
+    out = deck.apply(iv.Resume(lane.id))
+    assert out.ok and "waits for a free slot" in out.message
+    assert lane.state is LaneState.QUEUED and driver.named("resume") == []
+    assert deck.apply(iv.TakeOver(lane.id)).ok
+    out = deck.apply(iv.HandBack(lane.id))
+    assert out.ok and "waits for a free slot" in out.message
+    assert lane.state is LaneState.QUEUED and driver.named("resume") == []
+
+
+def test_a_paused_lane_waiting_for_a_slot_loses_its_place_until_resumed():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    deck.apply(iv.Approve(lane.id))
+    deck.apply(iv.Pause(lane.id))
+    assert solve(deck, lane_on(deck, "c1")).ok
+    assert lane.state is LaneState.PAUSED  # it was paused: the slot went to the queue
+    assert driver.started() == ["c0", "c1", "c2"]
+
+
+def test_lowering_max_lanes_counts_only_the_lanes_holding_a_slot():
+    deck, _, _ = make_deck(n=4, max_lanes=2)
+    ask_box(deck, lane_on(deck, "c0"))
+    assert len(deck.active_lanes()) == 3 and len(deck.slotted_lanes()) == 2
+    out = deck.set_max_lanes(2)
+    assert out.ok and "run now" not in out.message
+
 
 
 def test_the_deck_attaches_itself_to_its_driver():

@@ -2907,6 +2907,22 @@ def test_the_quit_prompt_names_each_flag_on_its_way_to_the_platform_and_says_qui
     assert "L01 Alpha  t{two}\n" in views.quit_summary(deck).plain and "t{one}" not in views.quit_summary(deck).plain
 
 
+def test_a_lane_waiting_for_a_slot_after_its_live_box_answer_says_so_in_its_row_and_the_quit_prompt():
+    deck = platform_run(("alpha", "bravo"), max_lanes=1)
+    (alpha,) = deck.lanes_on("alpha")
+    deck.report(alpha.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "reach the instance")))
+    assert deck.lanes_on("bravo")  # its slot went to bravo
+    assert deck.apply(iv.Approve(alpha.id)).ok
+    assert alpha.state is LaneState.QUEUED
+    assert "2 lanes still open: 1 waiting for a slot, 1 running" in views.quit_summary(deck).plain
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        assert cell(app, "lanes", alpha.id, "state") == "queued"
+
+    drive(app, script)
+
+
 def test_the_quit_prompt_names_five_flags_on_their_way_and_counts_the_rest():
     names = tuple(f"chal{letter}" for letter in "abcdefg")  # letters only: the flag format is t\{[a-z]+\}
     deck = platform_run(names, max_lanes=len(names))

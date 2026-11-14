@@ -70,6 +70,7 @@ class Challenge:
 class LaneState(StrEnum):
     RUNNING = "run"
     WAITING = "wait"  # waiting for the player to approve something
+    QUEUED = "queued"  # answered after it gave up its slot (Lane.benched): waits for a free one, ahead of the queue
     PAUSED = "paused"
     TAKEOVER = "takeover"  # the player has the lane's shell
     SOLVED = "solved"
@@ -291,6 +292,9 @@ class Lane:
     waiting: list[Pending] = field(default_factory=list)  # further approvals, oldest first
     hints: list[str] = field(default_factory=list)  # sent, not yet taken in by a turn
     paused_before_takeover: bool = False  # hand back leaves it paused
+    # it gave its slot up to the queue while it waited for a live-box answer (P83): it takes a
+    # free one again before it runs, ahead of any queued challenge (LaneState.QUEUED until then)
+    benched: bool = False
     gave_up_later: str = ""  # its driver gave up while a flag waited: the lane ends once no flag waits
     declined: bool = False  # its model declined (a refusal): autopilot never sends its challenge on to another model
 
@@ -357,6 +361,7 @@ class EventKind(StrEnum):
     WARNING = "warning"  # something did not happen as asked, with the reason
     L1 = "l1"  # a no-model solver ran on a challenge: engine, status, flags, seconds, notes
     SPEND = "spend"  # tokens or dollars spent outside a turn (a reply dropped at escalation, a judge): why, model
+    SLOT = "slot"  # a lane gave its slot up while it waits for a live-box answer, waits for one again, or took one (P83)
     ROUTE = "route"  # a light model routed a challenge at a lane's start: its family, a category guess, by whom
 
 
