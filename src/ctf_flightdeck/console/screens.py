@@ -206,6 +206,14 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
         """The line over the keys: a problem (in the warning colour), or with a style, what is going on."""
         self.query_one("#new-problem", Static).update(Text(text, style=style) if style else Text(text))
 
+    def _still_adding(self) -> bool:
+        """Whether the challenge is being added: the adder has the files the form had at
+        ctrl+s, so none is attached or removed now (a file attached would not be added, and
+        a dropped copy removed would be taken from under the adder). Said when so."""
+        if self.adding:
+            self._say("still adding it: the files cannot change until it is added", "bold")
+        return self.adding
+
     def problem(self, text: str) -> None:
         """Say `text` on the form's own line, as a problem (the console's status line is under the form)."""
         self._say(text)
@@ -227,6 +235,8 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
         (addchallenge.refusal). False when nothing in `files` was taken."""
         from ..addchallenge import size_text
 
+        if self._still_adding():
+            return False
         taken, known, problems = [], 0, []
         for file in files:
             if file in self.files:
@@ -258,6 +268,8 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
         from ..addchallenge import size_text
 
         app = self.app
+        if self._still_adding():
+            return True  # said: not text for the box either
         if app.stager is None:  # no run folder to keep a copy in: attached from where they are
             return self.add_files(files)
         taking, known, problems = [], 0, []
@@ -315,6 +327,8 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
 
     def action_remove_file(self) -> None:
         """ctrl+r: take the last attached file off again (and remove the copy of a dropped one)."""
+        if self._still_adding():
+            return
         if not self.files:
             self._say("no file is attached")
             return
@@ -327,6 +341,8 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
     def action_choose_files(self) -> None:
         """ctrl+o: the operating system's file window, for a terminal where a drop does not
         arrive. It is waited for in a worker, so the keys go on working while it is open."""
+        if self._still_adding():
+            return
         if self.choosing:
             self._say("the file window is already open: it may be behind this window")
             return
@@ -355,7 +371,7 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
         if self.paster is None:
             self._say("pasting an image is not available here; drag the file in")
             return
-        if self.pasting:
+        if self.pasting or self._still_adding():
             return
         self.pasting = True
         self._say("reading the clipboard...", "bold")
@@ -453,7 +469,10 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
             ok, message = False, f"could not add {new.name!r}: {type(exc).__name__}: {exc}"
         finally:
             self.adding = False
-        if self not in app.screen_stack:  # the form was closed while the files were copied
+        closed = self not in app.screen_stack  # the form was closed while the files were copied
+        if closed or ok:  # nothing attaches the other copies of dropped files now (the run removes those it added)
+            app.unstage([copy for copy in self.dropped if not ok or copy not in new.files])
+        if closed:
             app.say(message, "information" if ok else "warning")
             app.refresh_view()
         elif ok:

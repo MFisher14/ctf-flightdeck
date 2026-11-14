@@ -25,6 +25,7 @@ import asyncio
 import os
 import signal
 import time
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
 
@@ -128,6 +129,9 @@ class FlightdeckApp(App[None]):
         # goes to the fresh one (follow_restart); None: nothing to follow
         self._follow: tuple[str, str, frozenset[str]] | None = None
         self.copier = copier or clipboard.put
+        # the copier runs here, off the event loop the lanes share: a clipboard tool that hangs
+        # holds up only the copies after it, one at a time so the last copy is the one that stays
+        self._clipboard_thread: ThreadPoolExecutor | None = None
         self._copied: object = None  # the selection last copied (a screen's `selections`): a button that comes up again copies it once
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
@@ -298,6 +302,9 @@ class FlightdeckApp(App[None]):
         for sig in self._signals:
             loop.remove_signal_handler(sig)
         self._signals.clear()
+        if self._clipboard_thread is not None:
+            self._clipboard_thread.shutdown(wait=False)
+            self._clipboard_thread = None
 
     # ------------------------------------------------------------------ drawing
 
@@ -364,9 +371,22 @@ class FlightdeckApp(App[None]):
         terminal's clipboard (OSC 52, Textual's own copy), which reaches the machine the player
         sits at but never says whether the terminal took it, and to the operating system's, by
         its tool (the copier). When no tool took it, the status line warns instead, with what
-        to do if the paste is empty: a copy is never a quiet nothing."""
+        to do if the paste is empty: a copy is never a quiet nothing.
+        The tool runs in a thread of its own: it can take seconds (clipboard.TIMEOUT a tool),
+        and the event loop it would hold up runs every lane. The line comes when it is done."""
         super().copy_to_clipboard(text)
-        problem = self.copier(text)
+        if not self.is_running:
+            self._copied_by_tool(self.copier(text), said)
+            return
+        if self._clipboard_thread is None:
+            self._clipboard_thread = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clipboard")
+        self.run_worker(self._copy_by_tool(text, said), group="clipboard")
+
+    async def _copy_by_tool(self, text: str, said: str) -> None:
+        problem = await asyncio.get_running_loop().run_in_executor(self._clipboard_thread, self.copier, text)
+        self._copied_by_tool(problem, said)
+
+    def _copied_by_tool(self, problem: str, said: str) -> None:
         if problem:
             self.warn(problem)
         else:

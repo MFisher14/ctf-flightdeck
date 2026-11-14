@@ -1100,12 +1100,13 @@ on this machine, the console says so and pastes it as the text it is. The line s
   that Windows Terminal made for you translates it to `/mnt/c/...`; in one you wrote yourself,
   set `"pathTranslationStyle": "wsl"`, or `/attach` the `/mnt/c/...` path.
 - **VS Code's terminal.** It takes `` ` $ | & > ~ # ! ^ * ; < `` out of a dropped file's
-  name, so a file with one of those in its name arrives as a path that names nothing. Use
-  `ctrl+o` for that file.
+  name, so a file with one of those in its name arrives as a path that names nothing. Choose
+  that file instead: `ctrl+o` in the form, `/attach` with no file elsewhere.
 
 If you drag a file in and nothing at all happens (no text, no line), your terminal kept the
-drop to itself; flightdeck was sent nothing. Use `ctrl+o`, or `/attach <challenge>` and the
-file window. A terminal may hold drops back while a program has the mouse, as the console does
+drop to itself; flightdeck was sent nothing. Choose the file instead: `ctrl+o` in the `/new`
+form; anywhere else, `/attach <challenge>` with no file opens the file window. (`ctrl+o` is
+only the form's file window: in a lane's view it turns details on or off.) A terminal may hold drops back while a program has the mouse, as the console does
 by default. `mouse = false` under `[console]` in your config leaves the mouse to the terminal:
 you then select and copy text the terminal's own way, clicks and the wheel do nothing in the
 console, and every key works as before.
