@@ -53,3 +53,21 @@ def test_the_release_workflow_runs_scripts_that_exist():
         assert path in workflow and (REPO / path).is_file()
     assert "/src/packaging/deb/build-deb.sh" in (DEB / "build-in-docker.sh").read_text()  # the one the container runs
     assert (REPO / "packaging" / "homebrew" / "ctf-flightdeck.rb.in").is_file()
+
+
+def pytest_runs(workflow: str) -> list[str]:
+    """The pytest commands a workflow file runs, in order."""
+    text = (REPO / ".github" / "workflows" / workflow).read_text()
+    return [line.split("run:", 1)[1].strip() for line in text.splitlines() if "run:" in line and "pytest" in line]
+
+
+def test_what_is_published_passed_the_tests_one_after_the_other_and_ci_runs_them_on_every_core():
+    """CONTRIBUTING.md says both. A release is tested with nothing running beside each test;
+    every push is tested in parallel, which needs pytest-xdist where `uv sync` puts it."""
+    assert pytest_runs("release.yml") == ["uv run pytest -q"]
+    assert pytest_runs("tests.yml")[0] == "uv run pytest -q -n auto"
+    project = (REPO / "pyproject.toml").read_text()
+    dev = project.split("[dependency-groups]", 1)[1].split("]", 1)[0]
+    assert '"pytest-xdist' in dev
+    said = (REPO / "CONTRIBUTING.md").read_text()
+    assert "uv run pytest -n auto" in said and "the release workflow runs them one after the other" in said

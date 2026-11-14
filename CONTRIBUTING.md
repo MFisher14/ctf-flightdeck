@@ -67,7 +67,8 @@ Docker answers and `debian:bookworm-slim` is already on your machine
 Python L1 engine in the real lane image, and only when `flightdeck image build` has built it.
 No test pulls or builds an image.
 
-CI runs the tests and the secret scan on Linux and macOS for every push and pull request. Its
+CI runs the tests (with `-n auto`) and the secret scan on Linux and macOS for every push and
+pull request; the release workflow runs them one after the other before it publishes. CI's
 Linux job pulls `debian:bookworm-slim` first and sets `FLIGHTDECK_REQUIRE_DOCKER=1`: with that
 variable at 1, a Docker test that cannot run fails instead of being skipped, so the job never
 passes with those tests left out. A second job builds the lane image and runs its test with
