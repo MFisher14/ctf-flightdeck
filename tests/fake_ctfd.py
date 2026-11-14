@@ -30,6 +30,11 @@ redirects, bodies that are not JSON, a hang-up), and read back every request in 
 A reply can be held until the test lets it go (Reply.hold; hold_attempts for every answer to
 a flag, judged when it arrives as CTFd would): a CTFd slow to answer.
 
+It also stands for a CTFd with a container plugin: the docker_per_team routes below
+(`containers`), and ctfd-owl's and ctfd-chall-manager's (`owl`, `chall_manager`: each shaped
+from the plugin's public source in tests/fake_instance_plugins.py). It answers GET, POST,
+PUT, PATCH and DELETE.
+
 With `tls` (from make_tls(), which needs the openssl command) it answers https instead, with
 a certificate for 127.0.0.1 from a throwaway authority: a client trusts it through
 SSL_CERT_FILE. It stands for a CTFd on https, or for the object storage a CTFd sends file
@@ -56,6 +61,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlsplit
 
+from fake_instance_plugins import CHALL_MANAGER_ROUTE, OWL_ROUTE, FakeChallManager, FakeOwl
 from serving import Serving
 
 TOKEN = "fake-ctfd-api-token-for-tests-7c1e"  # synthetic; no real CTFd token has this shape
@@ -239,6 +245,8 @@ class FakeCTFd:
         self.container_host = "instances.example.test"
         self.teammate_containers = 0  # slots a teammate's containers take, which this account cannot see
         self._next_port = 31000
+        self.owl = FakeOwl(self)  # the ctfd-owl plugin's routes
+        self.chall_manager = FakeChallManager(self)  # the ctfd-chall-manager plugin's
         self.requests: list[Request] = []
         self._scripted: dict[tuple[str, str], deque[Reply]] = {}
         self._lock = threading.Lock()
@@ -317,11 +325,16 @@ class FakeCTFd:
         if route.startswith("/containers/api/") and method == "POST":
             refused = self._refused(headers)
             return refused if refused is not None else self._container(route.rsplit("/", 1)[1], body)
+        if route == OWL_ROUTE:
+            refused = self._refused(headers)
+            return refused if refused is not None else self.owl.answer(method, query)
         if not route.startswith("/api/v1/"):
             return not_found()
         refused = self._refused(headers)
         if refused is not None:
             return refused
+        if route == CHALL_MANAGER_ROUTE:
+            return self.chall_manager.answer(method, query, body)
         if method == "GET" and route == "/api/v1/challenges":
             return self._list(query)
         found = re.fullmatch(r"/api/v1/challenges/(\d+)", route)
@@ -598,6 +611,15 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         self._send(self.server.fake._answer("POST", self.path, self._headers(), self._body()))
+
+    def do_PUT(self) -> None:
+        self._send(self.server.fake._answer("PUT", self.path, self._headers(), self._body()))
+
+    def do_PATCH(self) -> None:
+        self._send(self.server.fake._answer("PATCH", self.path, self._headers(), self._body()))
+
+    def do_DELETE(self) -> None:
+        self._send(self.server.fake._answer("DELETE", self.path, self._headers(), self._body()))
 
     def _headers(self) -> dict[str, str]:
         return {name.lower(): value for name, value in self.headers.items()}
