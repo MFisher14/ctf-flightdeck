@@ -644,10 +644,13 @@ def test_in_the_mock_space_peeks_and_comma_freezes_the_clock():
         await press(pilot, "comma")
         assert app.frozen is False and "▶ live: , freezes" in region_text(app, "#header")
         await press(pilot, "question_mark")
+        assert isinstance(app.screen, HelpScreen)
+        assert app.screen.query_one("#help-body").max_scroll_y == 0  # all of the help is on screen, to be read
         said = prompt_text(app)
         assert ", Freeze or restart the mock clock" in said and "space Freeze" not in said and "space Peek" in said
 
-    drive(app, script, (160, 46))  # wide enough for the deck layout's header to keep the clock's note
+    # wide enough for the deck layout's header to keep the clock's note, and tall enough for all of the help
+    drive(app, script, (160, 140))
 
 
 def test_outside_the_mock_comma_is_no_key():

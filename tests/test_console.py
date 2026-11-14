@@ -775,7 +775,7 @@ def test_help_explains_sending_a_held_queue_and_the_marks_after_dollars_and_tell
                 "(on the board, … is a queued challenge)") in text
         assert "… queued (after dollars: a cost still to come)" in text
 
-    drive(app, script, size=(160, 130))
+    drive(app, script, size=(160, 140))
 
 
 def test_help_and_the_command_menu_list_theme_and_the_bar_runs_it():
