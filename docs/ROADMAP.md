@@ -31,6 +31,14 @@ Built since, from the list of what comes next (the
   describe the tree, so this quickstart is true of a release from the next one on: 0.4.0 has no
   setup form on its home screen, and both pages say so beside the form, with the commands that
   do the same on 0.4.0.
+- **A dropped file always attaches** (P55,
+  [#37](https://github.com/MFisher14/ctf-flightdeck/issues/37)). A dropped path is read as
+  each terminal writes it, with only an ordinary space or a tab between two paths (a macOS
+  screenshot's name on a 12-hour clock was not read from iTerm2 or Ghostty); a drop is copied
+  into the run's folder as it lands; a paste that reads as a dropped file that is not on this
+  machine says why; and an empty paste in the `/new` form pastes the clipboard's image. None
+  of it was tried in a real terminal: each format is from that terminal's own source or
+  documentation, and Terminal.app's and tmux's are not known.
 
 Known limits, each said where it applies:
 

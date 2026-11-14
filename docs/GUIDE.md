@@ -844,6 +844,33 @@ drop; what you type is never read for paths. Every drop that lands says so: the 
 that cannot be attached says why. In the form, the line under the box says what is attached
 (each file's name and size) and the target it found; `ctrl+r` takes the last file off again.
 
+Each terminal writes a dropped file's path its own way (in quotes, with a backslash before a
+space, or bare), and flightdeck reads every one of them in every terminal, whatever is in the
+name: a quote, a bracket, or the narrow space macOS puts before AM or PM in a screenshot's
+name. A dropped file is copied into the run's folder the moment it lands, and the copy is
+what gets attached: the file behind a drop can be a temporary one, so it may be gone by the
+time you press `ctrl+s` or Enter, and the challenge has it all the same. That is why the
+`/attach` on the command bar names a path under `dropped/` in the run's folder. The copy is
+removed once the challenge has the file.
+
+On macOS, drag the saved screenshot (from the Desktop or a Finder window), not the thumbnail
+that floats in the corner right after you take it: the thumbnail's file may be gone before
+the terminal has sent its path, and then there is nothing to copy (kitty from 0.49 keeps
+such a file for ten minutes). When what arrives reads as a dropped file but no such file is on this machine, the
+console says so and pastes it as the text it is. The line starts with `no such file:` or
+`not on this machine:` and says the likely reason for where you are:
+
+- **A temporary file that is gone.** Drag the saved file, or choose it: `ctrl+o` in the
+  form, `/attach` with no file elsewhere.
+- **Over SSH.** A file you drop is on the machine your terminal runs on, not the one
+  flightdeck runs on. Copy it over first (`scp`), then `/attach` its path.
+- **Windows Terminal with WSL.** A path that starts `C:\` is a Windows path. A WSL profile
+  that Windows Terminal made for you translates it to `/mnt/c/...`; in one you wrote yourself,
+  set `"pathTranslationStyle": "wsl"`, or `/attach` the `/mnt/c/...` path.
+- **VS Code's terminal.** It takes `` ` $ | & > ~ # ! ^ * ; < `` out of a dropped file's
+  name, so a file with one of those in its name arrives as a path that names nothing. Use
+  `ctrl+o` for that file.
+
 If you drag a file in and nothing at all happens (no text, no line), your terminal kept the
 drop to itself; flightdeck was sent nothing. Use `ctrl+o`, or `/attach <challenge>` and the
 file window. A terminal may hold drops back while a program has the mouse, as the console does
@@ -854,7 +881,11 @@ console, and every key works as before.
 A file or a folder can be attached. A device, your home folder itself, and anything that
 holds flightdeck's config folder or keys file are refused, with the reason. `ctrl+v` pastes a
 screenshot from the clipboard (macOS: take it with cmd+ctrl+shift+4); text pastes the
-terminal's own way (cmd+v).
+terminal's own way (cmd+v). In Windows Terminal and Alacritty the terminal's own paste key
+works for a screenshot too: with no text on the clipboard they send an empty paste, and in the
+form that does what `ctrl+v` does (in Windows Terminal `ctrl+v` is that key, so it is the only
+way the key arrives). Other terminals send nothing for an image, or have not been tried: use
+`ctrl+v` there.
 flightdeck's lanes read text, so when a challenge has images the run asks your lanes' model
 once for each image's text and puts it in the description; the image is in the handout too. A
 model that takes no images is said, and the challenge is added without that text.
