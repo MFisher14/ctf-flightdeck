@@ -28,7 +28,10 @@ from ..setup import Check
 from ..text import untrusted
 from . import theme
 
-WAIT = ("Checking your setup… Docker can take up to 20 s to answer, and the lane image a few more. "
+# The checks wait on Docker (up to a minute for the lane image) and on model servers; the cap is
+# health.CHECKS_TIMEOUT, so the wait promised here is that cap, never a shorter one.
+WAIT = ("Checking your setup… Docker or a server that does not answer can hold the checks up to "
+        f"{health.CHECKS_TIMEOUT / 60:g} minutes, then they stop and say so. "
         "You can leave at any time: esc stops the checks.")
 
 

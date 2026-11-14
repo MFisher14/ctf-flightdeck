@@ -117,10 +117,16 @@ def test_check_text_from_a_file_cannot_draw_on_the_screen():
     assert "\x1b" not in text and "bad" in line and "second line" in line  # one line, and no escape reaches the terminal
 
 
-def test_doctor_measures_the_terminal_its_caller_names():
-    (check,) = [c for c in setup.doctor(terminal=(80, 24)) if c.name == "terminal"]
+def test_doctor_measures_the_terminal_its_caller_names(machine):
+    (check,) = [c for c in setup.doctor(machine, terminal=(80, 24)) if c.name == "terminal"]
     assert check.detail.startswith("80x24:")
-    assert not [c for c in setup.doctor(terminal=(0, 0)) if c.name == "terminal"]
+    assert not [c for c in setup.doctor(machine, terminal=(0, 0)) if c.name == "terminal"]
+
+
+def test_the_wait_line_promises_the_checks_real_cap_never_a_shorter_one():
+    # doctor's lane-image check alone may wait 60 s on Docker; only the cap bounds the whole run
+    assert f"up to {health.CHECKS_TIMEOUT / 60:g} minutes" in screen.WAIT
+    assert "20 s" not in screen.WAIT
 
 
 def test_the_child_runs_doctors_checks_and_the_screen_reads_them(machine):
