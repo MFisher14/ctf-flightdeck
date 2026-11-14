@@ -18,9 +18,9 @@ from rich.cells import cell_len
 from textual.widgets import DataTable
 from typer.testing import CliRunner
 
-from ctf_flightdeck import cli, config
+from ctf_flightdeck import cli, config, themes
 from ctf_flightdeck.addchallenge import slug
-from ctf_flightdeck.console import fleet, focus, room, views
+from ctf_flightdeck.console import fleet, focus, room, theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.commands import BY_NAME, COMMANDS, complete, needs_lane, parse
 from ctf_flightdeck.console.fleet import FleetScreen
@@ -28,14 +28,18 @@ from ctf_flightdeck.console.focus import FocusScreen
 from ctf_flightdeck.console.screens import HelpScreen
 from ctf_flightdeck.core.attention import SortMode
 from ctf_flightdeck.core.deck import Deck, QueueEntry
+from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Alert, AlertKind, Challenge, DeckConfig, FileChange, LaneState, Suggestion
 from ctf_flightdeck.mock import scenarios
 from ctf_flightdeck.mock.world import FakeWorld
 from test_console import (
     WIDE,
+    _runs,
     assert_warning,
     bar,
+    cell,
+    color_of,
     columns,
     cursor_key,
     drive,
@@ -46,6 +50,7 @@ from test_console import (
     prompt_text,
     quiet_deck,
     region_text,
+    screen_lines,
     screen_text,
     status_line,
     step_until,
@@ -146,7 +151,7 @@ def test_the_lane_list_takes_the_empty_pages_place_once_a_challenge_is_released(
         shown = screen_text(app)
         assert fleet.EMPTY_BY_HAND not in shown and fleet.EMPTY_PLATFORM not in shown
         assert lane_rows(app) == ["L01", "L02"] and "Alpha" in region_text(app, "#lanes")
-        assert bar(app).field.placeholder == fleet.BAR
+        assert bar(app).field.placeholder == fleet.BAR == "a message, or / for commands"
         assert isinstance(app.focused, DataTable) and app.focused.id == "lanes"  # the keys act on the lane under the cursor
         await press(pilot, "p")
         assert deck.lanes["L01"].state is LaneState.PAUSED
@@ -541,6 +546,76 @@ def test_the_console_draws_the_simple_header_in_both_views_and_deck_keeps_its_ow
     drive(app, script, SIZE)
 
 
+# Every piece the simple header can have; what each is drawn on is the point of P66.
+EVERY = replace(CALM, team=True, containerized=False, queue=12, mock="MOCK", need=2, held="no key for the model", autopilot=True)
+LOOK_HERE = ("flightdeck", "host", "autopilot", "need", "held")  # the simple header's pieces that keep a background
+QUIET = {"event": "TEXT", "mock": "MUTED", "team": "CYAN", "queue": "TEXT", "dollars": "TEXT"}  # text on the page, in this colour
+
+
+def test_in_the_simple_header_only_look_here_has_a_background():
+    pieces = {name: part for name, _, part in views.header_pieces(EVERY, simple=True)}
+    assert set(pieces) == set(LOOK_HERE) | set(QUIET)  # every piece there is, so none is left unchecked
+    for name, colour in QUIET.items():
+        assert pieces[name][1:] == (getattr(theme, colour), theme.PAGE, False), name  # text on the page, not bold
+    for name in LOOK_HERE:
+        assert pieces[name][2] != theme.PAGE, name
+    assert pieces["need"][1:3] == (theme.WHITE, theme.RED) and pieces["held"][1:3] == (theme.INK, theme.YELLOW)
+    # As fit_header draws it, a held queue's why included: a span with no background but the page's is text.
+    text, left = views.fit_header(EVERY, 200, simple=True)
+    assert left == [] and text.plain.strip() == ("flightdeck ╱ Example CTF ╱ MOCK ╱ team ╱ host ╱ queue 12 ╱ AUTOPILOT ╱ "
+                                                 "▲ 2 need you ╱ queue held: no key for the model ╱ $1.50")
+    blocks = [text.plain[span.start:span.end].strip() for span in text.spans if span.style.bgcolor and span.style.bgcolor.name != theme.PAGE]
+    assert blocks == ["flightdeck", "host", "AUTOPILOT", "▲ 2 need you", "queue held: no key for the model"]
+
+
+@pytest.mark.parametrize("layout", [{}, {"compact": True}, {"compact": True, "simple": True}], ids=["deck", "compact", "compact-over-simple"])
+def test_the_deck_and_compact_headers_keep_every_piece_a_block(layout):
+    pieces = views.header_pieces(EVERY, **layout)
+    assert pieces and all(bg != theme.PAGE for _, _, (_, _, bg, _) in pieces), layout  # D23 holds for deck; P66 is the simple layout's
+
+
+def backgrounds(app: FlightdeckApp, row: int) -> list[tuple[int, int, str]]:
+    """The backgrounds of screen row `row` as (first column, column past the last, colour)."""
+    svg = app.export_screenshot()
+    rects = [(float(x), float(y), float(w), fill.lower()) for fill, x, y, w in re.findall(
+        r'<rect fill="(#[0-9a-fA-F]{6})" x="([\d.]+)" y="([\d.]+)" width="([\d.]+)"', svg)]
+    tops = sorted({y for _, y, _, _ in rects})
+    runs, _ = _runs(app)
+    char = next(width / len(text) for _, _, _, width, text in runs if text)
+    return [(round(x / char), round((x + w) / char), fill) for x, y, w, fill in rects if y == tops[row]]
+
+
+def background_of(app: FlightdeckApp, needle: str, row: int = 0) -> str:
+    """The background behind every cell of `needle` on screen row `row` (one colour, or it fails)."""
+    start = screen_lines(app)[row].index(needle)
+    found = {fill for first, past, fill in backgrounds(app, row) for col in range(start, start + len(needle)) if first <= col < past}
+    assert len(found) == 1, (needle, found)
+    return found.pop()
+
+
+def test_the_console_draws_the_simple_headers_quiet_pieces_on_the_page_and_the_deck_keeps_its_blocks():
+    deck, app = three_lanes("simple", mock="MOCK")
+    deck.config = replace(deck.config, team=True)
+
+    async def script(pilot):
+        app.refresh_view()
+        await pilot.pause()
+        assert region_text(app, "#header").strip() == "flightdeck ╱ ev ╱ MOCK ╱ team ╱ ▲ 2 need you ╱ $0.00"
+        page = theme.PAGE.lower()
+        for quiet in ("ev", "MOCK", "team", "$0.00"):
+            assert background_of(app, quiet) == page, quiet
+        assert color_of(app, "MOCK", 0) == theme.MUTED.lower() and color_of(app, "team", 0) == theme.CYAN.lower()
+        assert background_of(app, "flightdeck") == theme.BLUE.lower() and background_of(app, "▲ 2 need you") == theme.RED.lower()
+        await open_focus(pilot, app, "L01")  # the lane's view has the same header
+        assert background_of(app, "ev") == page and background_of(app, "▲ 2 need you") == theme.RED.lower()
+        app.run_command("/layout deck", "L01")
+        await pilot.pause()
+        for block in ("ev", "MOCK", "team", "$0.00"):  # the deck layout's header is as it was: each piece a block
+            assert background_of(app, block) == (theme.ACCENT if block == "MOCK" else theme.SEGMENT).lower(), block
+
+    drive(app, script, SIZE)
+
+
 # ---------------------------------------------------------------------- the simple layout: the lane list
 
 
@@ -569,6 +644,59 @@ def test_the_simple_layout_is_one_list_of_lanes_with_what_the_board_would_say_in
         assert title_of(app, "#lanes-pane") == "lanes 4/4 · 2 waiting · ✓ 1 solved · filter alpha · 1 needing you hidden"
 
     drive(app, script, SIZE)
+
+
+def test_a_lane_that_has_done_nothing_yet_says_starting_and_no_cost_in_the_simple_list():
+    deck, app = console(by_hand=True, layout="simple")
+    release(deck, "alpha", "beta")
+
+    async def script(pilot):
+        assert lane_rows(app) == ["L01", "L02"]
+        for lane_id in ("L01", "L02"):
+            assert (cell(app, "lanes", lane_id, "state"), cell(app, "lanes", lane_id, "cost")) == ("starting", ""), lane_id
+        row = next(i for i, line in enumerate(screen_lines(app)) if " L02 " in line)  # not the selected row, whose cursor has its own colours
+        assert color_of(app, "starting", row) == theme.MUTED.lower()
+        deck.report("L01", TurnReport(action="file alpha.bin", tokens=120))  # its first turn, at no cost
+        app.refresh_view()
+        await pilot.pause()
+        assert (cell(app, "lanes", "L01", "state"), cell(app, "lanes", "L01", "cost")) == ("run", "$.00")  # it has begun: $.00 is news now
+        assert (cell(app, "lanes", "L02", "state"), cell(app, "lanes", "L02", "cost")) == ("starting", "")
+        app.run_command("/layout deck", "")
+        await pilot.pause()
+        assert (cell(app, "lanes", "L02", "state"), cell(app, "lanes", "L02", "cost")) == ("run", "$.00")  # the deck layout is as it was
+        app.run_command("/layout simple", "")
+        await pilot.pause()
+        assert cell(app, "lanes", "L02", "state") == "starting"
+
+    drive(app, script, SIZE)
+
+
+def test_only_a_running_lane_that_has_done_and_spent_nothing_is_starting():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=8))
+    release(deck, *(f"c{n}" for n in range(1, 8)))
+
+    def row(lane_id: str, **layout) -> tuple[str, str]:
+        cells = views.lane_cells(deck, deck.lanes[lane_id], **layout)
+        return cells["state"].plain, cells["cost"].plain
+
+    assert all(views.starting(lane) for lane in deck.lanes.values())
+    assert deck.apply(iv.Hint("L01", "try xor")).ok  # the player's message is not the lane doing something
+    assert deck.apply(iv.Pause("L02")).ok
+    deck.report("L03", TurnReport(tokens=40, dollars=0.003, turn=False, light=True))  # a first look's spend, before any step
+    deck.report("L04", TurnReport(action="claude -p", dollars_later=True, turn=False))  # a coding-agent CLI's turn under way
+    deck.report("L05", TurnReport(action="ls", turn=False))  # a step that is not a turn
+    assert deck.apply(iv.Kill("L06", requeue=False)).ok
+    assert row("L01", simple=True) == ("starting", "")
+    assert row("L02", simple=True) == ("paused", "$.00")  # paused is the player's doing: it says so
+    assert row("L03", simple=True) == ("run", "$<.01")  # it has spent: the cost is there
+    assert row("L04", simple=True) == ("run", "$.00…")  # its cost is on its way
+    assert row("L05", simple=True) == ("run", "$.00")
+    assert row("L06", simple=True)[0] == "killed"
+    assert row("L07", simple=True) == ("starting", "")
+    assert row("L07") == ("run", "$.00") and row("L07", compact=True) == ("run", "$.00")
+    assert row("L07", compact=True, simple=True) == ("run", "$.00")  # the compact layout wins: its state column has five cells
+    found = [lane.id for lane in deck.lanes.values() if views.lane_matches(deck, lane, "starting")]
+    assert found == ["L01", "L07"]  # the filter finds what the list says
 
 
 def simple_fit(available: int) -> dict[str, int]:
@@ -919,7 +1047,7 @@ def test_the_simple_focus_view_shows_a_part_only_when_it_has_something_in_it():
             assert filler not in text, filler
         title = title_of(app, "#talk-pane")
         assert "glm" in title and "turn 1" in title and "1k tok" in title and "idle" in title  # as in the dashboard
-        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys  ctrl+o details"
+        assert footer_line(app).strip() == "esc lanes  / commands  ? help  ctrl+o details"
         app.run_command("/diff", "L01")
         await pilot.pause()
         assert "L01 has not changed any files yet" in status_line(app) and not shown("#files-pane")
@@ -938,11 +1066,11 @@ def test_the_simple_focus_view_shows_a_part_only_when_it_has_something_in_it():
         app.refresh_view()
         await pilot.pause()
         assert shown("#now") and "needs you now" in region_text(app, "#now")
-        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  /help all keys  ctrl+o details"
+        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  ? help  ctrl+o details"
         bar(app).field.focus()
         await press(pilot, "1")  # the answer the line promises, from the empty chat box
         assert deck.lanes["L01"].plan == "decode it as SSTV"
-        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys  ctrl+o details"
+        assert footer_line(app).strip() == "esc lanes  / commands  ? help  ctrl+o details"
 
     drive(app, script, SIZE)
 
@@ -980,7 +1108,7 @@ def test_the_deck_focus_view_keeps_every_part_and_layout_switches_an_open_lane()
         app.run_command("/layout simple", "L01")
         await pilot.pause()
         assert isinstance(app.screen, FocusScreen) and not view.query_one("#files-pane").display and not view.query_one("#others").display
-        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys  ctrl+o details"
+        assert footer_line(app).strip() == "esc lanes  / commands  ? help  ctrl+o details"
         app.run_command("/layout deck", "L01")
         await pilot.pause()
         assert view.query_one("#files-pane").display and footer_line(app).strip().startswith("esc fleet  enter send")
@@ -1175,7 +1303,7 @@ def test_what_doctor_says_the_simple_layout_leaves_out_is_what_the_console_leave
                 await open_focus(pilot, app, "L02")
             elif fit.compact:
                 assert keys == [f"{key} {label}" for key, label in focus.COMPACT_KEY_LABELS]  # whole at this width
-                assert list(fit.focus_keys) == ["/help all keys", "ctrl+o details"]  # the keys of the simple line it has not got
+                assert list(fit.focus_keys) == ["? help", "ctrl+o details"]  # the keys of the simple line it has not got
             else:
                 whole = [f"{key} {label}" for key, label in (focus.SIMPLE_ANSWER_LABEL, *focus.SIMPLE_KEY_LABELS)]
                 assert [key for key in whole if key not in keys] == list(fit.focus_keys), keys
@@ -1217,7 +1345,7 @@ def test_doctor_measures_the_terminal_in_the_layout_the_config_opens(tmp_path, m
         "each lane's state and cost); on a busy run the console leaves out the event's name and the flightdeck name in the "
         "header; each lane's last action in the lane list (the lane's own view has it) and the files pane of that view (the "
         "simple layout starts at 65 columns); x dismiss and enter open on the fleet view's key line (? lists every key); "
-        "/help all keys and ctrl+o details on the focus view's key line"
+        "? help and ctrl+o details on the focus view's key line"
     )
 
 

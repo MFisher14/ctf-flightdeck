@@ -62,7 +62,7 @@ from ..runrecord import L1 as BY_L1
 from ..runrecord import Credit, EventLine, Solve, accepted
 from ..text import NEWLINE, untrusted
 from . import theme
-from .commands import KEY_COMMAND, lane_id
+from .commands import KEY_COMMAND, Ask, goes_to, lane_id
 
 CATEGORY_ORDER = ("web", "for", "rev", "pwn", "cry", "misc", "osint")
 
@@ -370,6 +370,13 @@ HEADER_WORDS = {  # the pieces that can drop, as doctor names them (console/room
 COMPACT_HEADER_OMITS = ("tokens", "clock", "event", "mock", "runtime")  # never in the compact header, in their usual drop order
 
 
+def plain(text: str, colour: str = "") -> tuple[str, str, str, bool]:
+    """A header piece drawn as text on the page, not as a block: the simple layout's for what
+    is not "look here" (P66). `colour` is the text's (the palette's text by default); each pair
+    it makes with the page is one a theme is checked for (themes.CONTRAST)."""
+    return (text, colour or theme.TEXT, theme.PAGE, False)
+
+
 def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = False) -> list[tuple[str, int, tuple[str, str, str, bool]]]:
     """(name, drop rank, segment) for each piece, in order. Rank 0 never drops; on a narrow
     terminal the highest rank drops first, the later piece first on a tie (D16). The compact
@@ -379,7 +386,9 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = F
     The simple layout's header (`simple`; the compact one wins over it) says only what is not
     the usual: team mode, lanes on the host, a queue that is not empty, autopilot, who needs
     the player, a held queue. Those last three and the dollars never drop. It has no solo,
-    docker, lane count, "all clear", tokens or clock."""
+    docker, lane count, "all clear", tokens or clock. Only "look here" has a background in it
+    (P66): flightdeck, host, AUTOPILOT, the need-you count and a held queue. The event's name,
+    team, the queue and the dollars are text on the page (plain()), and the mock tag muted."""
     if compact:
         out = [
             ("flightdeck", 2, ("flightdeck", theme.WHITE, theme.BLUE, True)),
@@ -389,16 +398,16 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = F
     elif simple:
         out = [
             ("flightdeck", 0, ("flightdeck", theme.WHITE, theme.BLUE, True)),
-            ("event", 3, (untrusted(facts.event, one_line=True), theme.TEXT, theme.SEGMENT, True)),
+            ("event", 3, plain(untrusted(facts.event, one_line=True))),
         ]
         if facts.mock:
-            out.append(("mock", 2, (facts.mock, theme.INK, theme.ACCENT, True)))
+            out.append(("mock", 2, plain(facts.mock, theme.MUTED)))
         if facts.team:
-            out.append(("team", 1, ("team", theme.CYAN, theme.SEGMENT, True)))
+            out.append(("team", 1, plain("team", theme.CYAN)))
         if not facts.containerized:
             out.append(("host", 1, ("host", theme.INK, theme.YELLOW, True)))
         if facts.queue:
-            out.append(("queue", 1, (f"queue {facts.queue}", theme.TEXT, theme.SEGMENT, False)))
+            out.append(("queue", 1, plain(f"queue {facts.queue}")))
     else:
         out = [
             ("flightdeck", 0, ("flightdeck", theme.WHITE, theme.BLUE, True)),
@@ -421,7 +430,7 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = F
         out.append(("held", 0, (HELD, theme.INK, theme.YELLOW, True)))
     dollars = f"${fmt.dollars(facts.dollars)}" + ("+" if facts.unpriced else "") + (LATER if facts.later else "")  # as lane_dollars
     if compact or simple:
-        out.append(("dollars", 0, (dollars, theme.TEXT, theme.SEGMENT, False)))
+        out.append(("dollars", 0, plain(dollars) if simple and not compact else (dollars, theme.TEXT, theme.SEGMENT, False)))
         return out
     out += [
         ("tokens", 4, (f"tok {fmt.tokens(facts.tokens)}", theme.TEXT, theme.SEGMENT, False)),
@@ -784,20 +793,45 @@ def lane_dollars(lane: Lane, *, short: bool = False) -> str:
     return cost + LATER if lane.dollars_later else cost
 
 
-def lane_cells(deck: Deck, lane: Lane, selected: bool = False, *, compact: bool = False) -> dict[str, Text]:
+STARTING = "starting"  # the simple layout's state for a lane that has done nothing yet (starting())
+
+
+def starting(lane: Lane) -> bool:
+    """`lane` has started and done nothing yet: running, no turn and no step of its own, and
+    nothing spent, nor a turn under way whose cost is still to come. The simple layout's row
+    says `starting` for it, in muted text, with a blank cost (P66): `run` and `$.00` would
+    say it works and has spent nothing, before it has begun."""
+    return (
+        lane.state is LaneState.RUNNING
+        and lane.turns == 0
+        and not any(action.kind is ActionKind.STEP for action in lane.actions)
+        and lane.tokens == 0
+        and lane.dollars == 0
+        and not lane.known_dollars
+        and not lane.unpriced
+        and not lane.dollars_later
+    )
+
+
+def lane_cells(deck: Deck, lane: Lane, selected: bool = False, *, compact: bool = False, simple: bool = False) -> dict[str, Text]:
     """A lane's row, by column. `compact`: the attention chip and the state in short
-    (COMPACT_LANE_COLUMNS has no room for more)."""
+    (COMPACT_LANE_COLUMNS has no room for more). `simple`: a lane that has done nothing yet
+    (starting()) says `starting`, muted, and has a blank cost (the compact layout wins)."""
     ch = deck.challenges[lane.challenge_id]
     dim = theme.MUTED if lane.finished else ""
     idle = lane.idle(deck.now)
     cost = lane_dollars(lane, short=True)
+    if simple and not compact and starting(lane):
+        state, cost = Text(STARTING, style=theme.MUTED), ""
+    else:
+        state = Text(COMPACT_STATE[lane.state] if compact else lane.state.value, style=state_color(lane.state))
     return {
         "bar": Text("▌", style=theme.ACCENT) if selected else Text(" "),
         "!": attention_cell(lane, bool(deck.sending(lane.id)), compact=compact),
         "lane": Text(lane.id, style=theme.MUTED if lane.finished else "bold"),
         "chall": safe(ch.name, dim),
         "model": safe(lane.model, dim or theme.CYAN),
-        "state": Text(COMPACT_STATE[lane.state] if compact else lane.state.value, style=state_color(lane.state)),
+        "state": state,
         "turns": Text(str(lane.turns), style=dim, justify="right"),
         "cost": Text(cost, style=dim or theme.MUTED, justify="right"),
         "idle": Text("-" if lane.finished else fmt.duration(idle), style=dim or (theme.ACCENT if idle >= 600 else ""), justify="right"),
@@ -894,6 +928,7 @@ def lane_matches(deck: Deck, lane: Lane, query: str) -> bool:
     ch = deck.challenges[lane.challenge_id]
     hay = " ".join(
         [lane.id, ch.name, ch.category, ch.category_guess, ch.family, lane.model, lane.state.value, lane.last_action, lane.plan]
+        + ([STARTING] if starting(lane) else [])  # what the simple list says of it (lane_cells)
         + [a.kind.tag for a in lane.alerts]
         + ([PENDING_TAG[lane.pending.kind]] if lane.pending else [])
     ).lower()
@@ -1117,6 +1152,53 @@ def focus_title(deck: Deck, lane: Lane, *, compact: bool = False) -> Text:
     out.append(f" · turn {lane.turns} · {fmt.tokens(lane.tokens)} tok · {spent}", theme.MUTED)
     if not lane.finished:
         out.append(f" · idle {fmt.duration(lane.idle(deck.now))}", theme.MUTED)
+    return out
+
+
+BAR_RUN = "the run"  # the bar's title while a command that takes no lane is typed
+BAR_NO_LANE = "no lane"  # and while what is typed has no lane to go to
+
+
+def lane_refuses(lane: Lane, ask: Ask) -> str:
+    """Why `lane` would refuse what is typed (commands.Ask), in the bar's words; "" when it
+    takes it. The deck's own rules (Deck._apply), and the console's for a bare /fork: a lane
+    that has ended takes only what reads it, and a fork with its approach unless it solved
+    its challenge; a lane that gave up and is open only for its flag's answer
+    (gave_up_later) takes anything but what it would read on a next turn."""
+    if lane.finished:
+        if ask is Ask.READ or (ask is Ask.FORK and lane.state is not LaneState.SOLVED):
+            return ""
+        return f"{lane.id} has finished"
+    if lane.gave_up_later and ask is Ask.TURN:
+        return f"{lane.id} takes no more turns"
+    return ""
+
+
+def bar_title(deck: Deck, typed: str, lane: Lane | None) -> Text:
+    """The title on the command bar's border: who what is typed in it goes to (P64).
+    `to L04 · Ticket Desk` for `lane`, the lane the bar acts on (the selected one in the lane
+    list, the open one in a lane's view), or for the lane a command names (`/kill L07`);
+    `no lane` when there is none (`no lane L07` when the one named is not there); `L04 has
+    finished` or `L04 takes no more turns` when the lane would refuse what is typed
+    (lane_refuses); `the run` while a command that takes no lane is typed. commands.goes_to
+    reads what is typed as enter would. The challenge's name is challenge text: made safe,
+    and never markup."""
+    aim = goes_to(typed)
+    if aim.run:
+        return Text(BAR_RUN, theme.MUTED)
+    if aim.lane is not None:
+        lane = deck.lanes.get(aim.lane)
+        if lane is None:
+            return Text(f"{BAR_NO_LANE} {aim.lane}", theme.MUTED)
+    if lane is None:
+        return Text(BAR_NO_LANE, theme.MUTED)
+    refused = lane_refuses(lane, aim.ask)
+    if refused:
+        return Text(refused, theme.MUTED)
+    out = Text("to ", theme.MUTED)
+    out.append(lane.id, f"bold {theme.TEXT}")
+    out.append(" · ", theme.MUTED)
+    out.append(untrusted(deck.challenges[lane.challenge_id].name, one_line=True), theme.TEXT)
     return out
 
 

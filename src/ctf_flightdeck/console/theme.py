@@ -93,7 +93,9 @@ def key_chip(key: str) -> Text:
 def segments(parts: list[tuple[str, str, str, bool]]) -> Text:
     """Header pieces (text, fg, bg, bold) as solid segments with a ╱ between them.
 
-    The ╱ sits on the page, not on either segment, so each segment is a clean block."""
+    The ╱ sits on the page, not on either segment, so each segment is a clean block. A piece
+    whose background is the page's is text, not a block: the simple header's quiet pieces
+    (views.plain)."""
     out = Text(no_wrap=True, overflow="ellipsis")
     for i, (text, fg, bg, bold) in enumerate(parts):
         if i:

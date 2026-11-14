@@ -20,7 +20,7 @@ from typer.testing import CliRunner
 
 from ctf_flightdeck import cli, themes
 from ctf_flightdeck.console import home as homes
-from ctf_flightdeck.console import theme
+from ctf_flightdeck.console import theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
 from ctf_flightdeck.console.focus import FocusScreen
@@ -181,6 +181,24 @@ def test_alert_and_approval_chips_take_their_colours_from_the_palette_in_use():
     assert theme.pending_colors() == (STRANGE.ink_light, STRANGE.pending)
     theme.use(NORD)
     assert theme.alert_colors(AlertKind.FLAG) == (NORD.ink, NORD.ok) and theme.pending_colors() == (NORD.ink_light, NORD.pending)
+
+
+@pytest.mark.parametrize("palette", [STRANGE, *themes.BUILTIN.values()], ids=lambda palette: palette.name)
+def test_the_simple_headers_quiet_pieces_are_pairs_every_theme_is_checked_for(palette):
+    """The simple header draws its quiet pieces as text on the page (P66): each colour it uses
+    there is one whose pair with the page a theme must pass, so a theme that loads never makes
+    them unreadable. STRANGE has 17 colours, none repeated, so each colour names its role."""
+    every = views.HeaderFacts(event="ev", team=True, containerized=False, lanes=1, max_lanes=4, queue=3, need=1, held="why",
+                              tokens=0, dollars=0.5, unpriced=False, clock=0.0, mock="MOCK", autopilot=True)
+    checked = {(fg, bg) for fg, bg, _ in themes.CONTRAST}
+    theme.use(palette)
+    quiet = [part for _, _, part in views.header_pieces(every, simple=True) if part[2] == palette.page]
+    assert [text for text, *_ in quiet] == ["ev", "MOCK", "team", "queue 3", "$0.50"]
+    for text, fg, bg, _ in quiet:
+        assert themes.contrast(fg, bg) >= themes.MIN_CONTRAST, (palette.name, text)
+        if palette is STRANGE:
+            role = next(role for role in themes.ROLES if getattr(palette, role) == fg)
+            assert (role, "page") in checked, text
 
 
 def test_the_palette_in_use_is_what_textual_is_given_as_its_theme_and_as_the_styles_variables():

@@ -16,7 +16,8 @@ In the simple layout (FlightdeckApp.layout; `deck` is the view as described abov
 board: one list of lanes with fewer columns (views.SIMPLE_LANE_COLUMNS: under 74 columns the
 last action is left out, never the cost), a why line only for a
 lane that needs something, and a key line of the keys that apply to the selected lane now
-(context_keys). Every key still acts, and `?` lists them all. The compact layout wins over both.
+(context_keys). Every key still acts, and `?` lists them all, starting with the ones of that
+key line, each with its sentence (help_now, P65). The compact layout wins over both.
 
 `space` peeks at the selected lane: a panel between the lane list and the why line with the
 last rows of the lane's log (views.peek), so a hint or a redirect can be chosen without
@@ -49,7 +50,7 @@ from ..core.attention import SortMode, sort_lanes
 from ..core.model import COURSE_ALERTS, Lane
 from . import theme, views
 from .commands import CommandError, needs_lane, parse
-from .widgets import CommandBar
+from .widgets import BAR, CommandBar
 
 if TYPE_CHECKING:
     from .app import FlightdeckApp
@@ -95,9 +96,9 @@ HELP_KEY, QUIT_KEY = ("question_mark", "?", "help"), ("q", "q", "quit")
 # there), and on one that comes from a platform or a script.
 EMPTY_BY_HAND = "No challenges yet. Type /new to hand one over (its text, files, a screenshot)."
 EMPTY_PLATFORM = "Waiting for the board: challenges appear here when the event releases them."
-# The command bar's placeholder: with lanes to act on, on an empty board the player fills, and
-# on an empty board that fills by itself.
-BAR = "/ for commands · enter opens the selected lane · or type a message to it"
+# The command bar's placeholder: widgets.BAR with challenges on the board (the bar's title names
+# the lane a message goes to), and these on an empty board the player fills and on one that
+# fills by itself.
 BAR_EMPTY_BY_HAND = "/new to add a challenge · / for commands"
 BAR_EMPTY_PLATFORM = "/ for commands"
 # The peek (space): the lane rows the list keeps while it is open, and what the lanes panel's
@@ -247,11 +248,12 @@ class FleetScreen(Screen, inherit_bindings=False):
                 yield Static(id="peek")
                 yield Static(id="why")
         yield Static(id="status")
-        yield CommandBar(BAR, id="bar")
+        yield CommandBar(BAR, id="bar", title=self._bar_title)
         yield Static(id="keys")
 
     def on_mount(self) -> None:
         self._ready = True
+        self.query_one("#bar", CommandBar).field.help = self.fd.action_help  # `?` in the empty bar, as with no focus on it
         self._fit_layout(self.size.width)
         self._show_keys(self.size.width)
         self._fit_board(self.size.width)
@@ -427,11 +429,11 @@ class FleetScreen(Screen, inherit_bindings=False):
         ]
         active = [lane for lane in lanes if not lane.finished]
         done = [lane for lane in lanes if lane.finished]
-        rows = [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact)) for lane in active]
+        rows = [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact, simple=self.simple)) for lane in active]
         if done:
             rows.append((views.FINISHED_ROW, views.finished_cells(done, self.show_finished)))
             if self.show_finished:
-                rows += [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact)) for lane in done]
+                rows += [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact, simple=self.simple)) for lane in done]
         return rows
 
     def _render_lanes(self, rebuild: bool = False) -> None:
@@ -501,9 +503,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         deck = self.fd.deck
         why = self.query_one("#why", Static)
         lane = self.bar_lane()
-        self.query_one("#bar", CommandBar).set_suggestions(
-            self.fd.command_suggestions(lane.id if lane else None, with_lane=True), lane=lane is not None
-        )
+        bar = self.query_one("#bar", CommandBar)
+        bar.set_suggestions(self.fd.command_suggestions(lane.id if lane else None, with_lane=True), lane=lane is not None)
+        bar.show_title()  # the lane the bar acts on follows the selection
         if self.board_focused and self.selected_challenge in deck.challenges:
             why.update(views.challenge_why(deck, deck.challenges[self.selected_challenge]))
             return
@@ -603,6 +605,10 @@ class FleetScreen(Screen, inherit_bindings=False):
         self.board_focused = True
         self._render_why()
 
+    def _bar_title(self, typed: str) -> Text:
+        """The command bar's title for what is typed: the lane the keys point at, by name."""
+        return views.bar_title(self.fd.deck, typed, self.bar_lane())
+
     def bar_lane(self) -> Lane | None:
         """The lane keys and the command bar act on, if there is one (no warnings)."""
         deck = self.fd.deck
@@ -613,6 +619,15 @@ class FleetScreen(Screen, inherit_bindings=False):
         if lane is None or not views.lane_matches(deck, lane, self.filter_text):
             return None
         return lane
+
+    def help_now(self) -> tuple[Lane | None, tuple[str, ...]]:
+        """What help opens on from this view (P65): the lane the keys act on, and the keys the
+        simple layout's key line has for it now (context_keys), as that line shows them. In
+        every layout: the deck's line has every key and the compact one's is fixed, and help's
+        first rows are the ones that apply to this lane. The lane is the key line's: the
+        selected one, or on the board (the deck layout) its challenge's only lane."""
+        lane = self.bar_lane() if self.board_focused else self.fd.deck.lanes.get(self.selected_lane or "")
+        return lane, tuple(shown for _, shown, _ in context_keys(lane, by_hand=self.fd.adder is not None))
 
     def target_lane(self) -> Lane | None:
         """The lane a key acts on: the selected lane, or the board challenge's only lane.
@@ -708,7 +723,7 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     @on(CommandBar.Submitted, "#bar")
     def _command(self, event: CommandBar.Submitted) -> None:
-        """Run what was typed on the lane the keys point at (the bar's placeholder says so)."""
+        """Run what was typed on the lane the keys point at (the bar's title names it)."""
         self._leave_bar()
         if not event.value:
             self.action_open_lane()  # enter on an empty bar opens the selected lane

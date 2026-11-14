@@ -1,6 +1,6 @@
 """A lane that is ended to start afresh takes the focus view with it (FlightdeckApp.follow,
 follow_restart): /attach and a kill that re-queues, typed in that lane's view. Also what the
-view says about the lane it is on: the simple layout's chat box and its finished line.
+view says about the lane it is on: the chat box's title and the finished line.
 
 The decks are quiet ones (the test reports the lanes' turns), with no timers. /attach's copy
 is a stand-in for Run.attach_files that waits to be let go and then restarts the challenge's
@@ -16,9 +16,9 @@ import pytest
 from ctf_flightdeck.console import views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
-from ctf_flightdeck.console.focus import CHAT_PLACEHOLDER, FocusScreen
+from ctf_flightdeck.console.focus import FocusScreen
 from ctf_flightdeck.console.screens import HelpScreen, KillPrompt
-from ctf_flightdeck.console.widgets import CommandBar
+from ctf_flightdeck.console.widgets import BAR, CommandBar
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
@@ -56,6 +56,11 @@ def console(*ids: str, layout: str = "deck", max_lanes: int = 4, attach: bool = 
 
 def chat(app: FlightdeckApp):
     return app.screen.query_one("#chat", CommandBar).field
+
+
+def chat_title(app: FlightdeckApp) -> str:
+    """The title on the chat box's border, as drawn: the row's frame left out."""
+    return region_text(app, "#bar-input").splitlines()[0].strip(" ╭╮─")
 
 
 def shown(app: FlightdeckApp) -> str:
@@ -242,8 +247,7 @@ def test_a_lane_that_started_during_the_copy_and_was_ended_with_the_files_is_not
         assert (ended.state, ended.result) == (LaneState.KILLED, "to restart with extra.txt; re-queued fresh")
         assert (runs.challenge_id, runs.parent, runs.finished) == ("c", None, False)
         assert shown(app) == "L03" and app._follow is None
-        if layout == "simple":
-            assert chat(app).placeholder == "message L03 · / commands"
+        assert chat_title(app) == "to L03 · C"  # the chat box names the lane the view went to
 
     drive(app, script)
 
@@ -443,33 +447,34 @@ def test_the_simple_layouts_chat_box_names_the_lane_and_its_finished_line_says_l
 
     async def script(pilot):
         await open_focus(pilot, app, "L01")
-        assert chat(app).placeholder == "message L01 · / commands"
-        assert "message L01 · / commands" in region_text(app, "#chat")
+        assert chat_title(app) == "to L01 · C" and chat(app).placeholder == BAR
+        assert BAR in region_text(app, "#chat")
         await type_line(pilot, "/open L02")
-        assert chat(app).placeholder == "message L02 · / commands"
+        assert chat_title(app) == "to L02 · D"
         await type_line(pilot, "/kill")  # the view goes to the fresh lane, and the chat box names it
-        assert shown(app) == "L03" and chat(app).placeholder == "message L03 · / commands"
+        assert shown(app) == "L03" and chat_title(app) == "to L03 · D"
         await type_line(pilot, "/kill park")
         assert region_text(app, "#now").strip() == "killed: by the player; parked   this lane has ended; esc goes back to the lanes"
+        assert chat_title(app) == "L03 has finished"  # no message reaches it now: the box does not name it as one's reader
         await type_line(pilot, "/layout deck")
-        assert chat(app).placeholder == CHAT_PLACEHOLDER
+        assert chat_title(app) == "L03 has finished" and chat(app).placeholder == BAR  # the same box in both layouts
         assert region_text(app, "#now").strip() == "killed: by the player; parked   this lane has ended; esc goes back to the fleet"
         await type_line(pilot, "/layout simple")
-        assert chat(app).placeholder == "message L03 · / commands"
+        assert chat_title(app) == "L03 has finished" and chat(app).placeholder == BAR
 
     drive(app, script)
 
 
-def test_the_deck_and_compact_layouts_chat_box_and_finished_line_are_as_they_were():
-    assert CHAT_PLACEHOLDER == "message this lane (it reads it on its next turn) · / for commands"
+def test_the_deck_and_compact_layouts_chat_box_names_the_lane_too_and_their_finished_line_says_fleet():
+    assert BAR == "a message, or / for commands"
     for size, layout in (((160, 46), "deck"), ((60, 40), "deck"), ((60, 40), "simple")):  # 60 columns: the compact layout, whatever the config says
         deck, app, _ = console("c", "d", layout=layout)
 
         async def script(pilot, deck=deck, app=app):
             await open_focus(pilot, app, "L01")
-            assert chat(app).placeholder == CHAT_PLACEHOLDER
+            assert chat_title(app) == "to L01 · C" and chat(app).placeholder == BAR
             await type_line(pilot, "/open L02")
-            assert chat(app).placeholder == CHAT_PLACEHOLDER
+            assert chat_title(app) == "to L02 · D" and chat(app).placeholder == BAR
             assert deck.apply(iv.Kill("L02", requeue=False)).ok
             await pilot.pause()
             assert "this lane has ended; esc goes back to the fleet" in " ".join(region_text(app, "#now").split())

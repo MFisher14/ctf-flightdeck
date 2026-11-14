@@ -25,19 +25,21 @@ shell prompt and the command typed at it.
 
 ## The simple layout
 
-![The simple layout: a short header with the event, the team tag, three lanes that need you and the run's dollars; one list of six lanes with their alert chip, challenge, state, cost and last action; under the list, the found flag with 1 to submit it and 0 not to; a key line of approve, decline, open, commands, help and quit](screenshots/simple.png)
+![The simple layout: a short header with the event, the team tag, three lanes that need you and the run's dollars, where only flightdeck and the need-you count have a coloured block; one list of six lanes with their alert chip, challenge, state, cost and last action; under the list, the found flag with 1 to submit it and 0 not to; a key line of approve, decline, open, commands, help and quit](screenshots/simple.png)
 
 What the console opens in: one list of lanes, sorted by what needs you. The header says only what
-is not the usual, the line under the list says why the selected lane is flagged, and the key line
-has only the keys that apply to that lane now. Every other key still acts, and `?` lists them.
+is not the usual, and only what asks you to look has a coloured block in it; the line under the
+list says why the selected lane is flagged, and the key line has only the keys that apply to that
+lane now. Every other key still acts, and `?` lists them.
 
-![The simple layout during a wave: the header also says queue 33, the list's title says 16 of 16 lanes, 33 waiting and 1 solved, and the selected lane ignores its description's hint, with 1 to redirect it, 2 to send a hint and x to dismiss the alert](screenshots/simple-alert.png)
+![The simple layout during a wave: the header also says queue 33, the list's title says 16 of 16 lanes, 33 waiting and 1 solved, ten lanes that have not begun say starting and have no cost, and the selected lane ignores its description's hint, with 1 to redirect it, 2 to send a hint and x to dismiss the alert](screenshots/simple-alert.png)
 
 A wave has landed: the header has the queue because it is not empty, and the list's title counts
-the challenges that wait and the ones solved. The selected lane's alert has numbered answers, so
+the challenges that wait and the ones solved. The lanes the wave started say `starting`, with no
+cost, until they take their first step. The selected lane's alert has numbered answers, so
 the key line leads with `1-9 answer` and `x dismiss`.
 
-![A lane full screen in the simple layout: the strip of two other lanes that need you; the calm transcript, 6 tool calls and the last of them, the alert's name and turn, 12 tool calls and the last of them; the needs-you card in two rows, the alert with its reason and its two numbered answers; the files the lane changed with a diff; and a key line of answer, esc lanes, commands, /help and ctrl+o details](screenshots/simple-lane.png)
+![A lane full screen in the simple layout: the strip of two other lanes that need you; the calm transcript, 6 tool calls and the last of them, the alert's name and turn, 12 tool calls and the last of them; the needs-you card in two rows, the alert with its reason and its two numbered answers; the files the lane changed with a diff; and a key line of answer, esc lanes, commands, help and ctrl+o details](screenshots/simple-lane.png)
 
 `enter` opens a lane. In the simple layout the view shows a part only when it has something in
 it: the strip on top while another lane needs you, the card while this one does, the files pane

@@ -22,13 +22,15 @@ below describe. **simple**, the default, shows the same two views with less in t
 │                                  │ │    1  submit mock{…}   0  do not submit   enter open            │
 ╰──────────────────────────────────╯ ╰────────────────────────────────────────────────────────────────╯
  ● wren solved Night Shift · stopped L05                                    (status: latest outcome or event)
-╭ / for commands · enter opens the selected lane · or type a message to it ──────────────────────────╮
+╭─ to L04 · Ticket Desk ─────────────────────────────────────────────────────────────────────────────╮
+│ a message, or / for commands                                                                       │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
  o open  ? help  p pause  h hint  r redirect  f fork  k kill  e escalate  t take over  a approve  d decline  A approve all  x dismiss  ...
 ```
 
 `[flag]` stands for a chip: a solid colored label (no half-block caps, so no color shows past a
-corner in any font). The header's segments are solid blocks with a `╱` between them on the page.
+corner in any font). The header's segments are solid blocks with a `╱` between them on the page
+(in the simple layout only what says "look here" is a block: [Layouts](#layouts)).
 
 - **Header**: event, solo/team, docker/host, lanes used/limit, queue length, **how many lanes need
   you** ("all clear" when none), tokens, dollars (ending in `…` while a coding-agent CLI's turn is
@@ -92,7 +94,22 @@ corner in any font). The header's segments are solid blocks with a `╱` between
     `flightdeck doctor` measures the lane list with the peek closed.
 - **Command bar**: acts on the same lane the keys do (the board challenge's only lane when the board
   has focus; refused when the filter hides the selected lane). Its suggestions follow the selection.
-  Enter on an empty bar opens the selected lane. A command that takes no argument refuses a stray
+  The title on its border says who what is typed goes to, and follows the selection (P64):
+  `to L04 · Ticket Desk` for that lane; `no lane` when there is none (no lane yet, the board
+  on a challenge with no lane or several, a filter that hides the selected lane); the lane a
+  command names while it is typed (`/kill L07` reads `to L07 · …`, and `no lane L07` when
+  there is no such lane); `the run` while a command that takes no lane is typed (`/note`,
+  `/config`, `/queue`, `/approve all`). It is read from what is typed the way Enter reads
+  it, so a name not yet whole, or a command Enter would refuse, leaves the title on the
+  lane. A lane that would refuse what is typed is not named: `L04 has finished` for a lane
+  that has ended (solved, killed, stopped, gave up), which still takes what reads it
+  (`/open`, `/diff`, `/copy`) and, unless it solved its challenge, `/fork` with an approach;
+  `L04 takes no more turns` for a lane that gave up and is open only for its flag's answer,
+  for a message, `/hint`, `/redirect` and `/escalate`. With nothing typed the title is the
+  one a message would get. The challenge's name is challenge text: made safe, never markup,
+  cut with `…` at the bar's width. The empty bar reads `a message, or / for commands`.
+  Enter on an empty bar opens the selected lane, and `?` in it opens help (Help, below); with
+  anything in the bar, `?` is a question mark. A command that takes no argument refuses a stray
   word (`/approve 2` does not approve the selected lane; name it: `/approve L02`). `/approve all`
   names no lane: it is the fleet's `A` (Interventions, below), in either view.
 - **Status line**: the latest intervention outcome or deck event (no toasts over the lanes); it
@@ -104,7 +121,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   be, and stays until there is one (a status line would expire). On a board the player fills:
   `No challenges yet. Type /new to hand one over (its text, files, a screenshot).`, and the
   command bar reads `/new to add a challenge · / for commands`. On a board that fills by itself:
-  `Waiting for the board: challenges appear here when the event releases them.` A board with
+  `Waiting for the board: challenges appear here when the event releases them.`, and the bar
+  reads `/ for commands`. The bar's title is `no lane` on both. A board with
   challenges and no lane has `No lanes yet.` on the why line.
 - **The `/` menu**: every command that matches what is typed, eight rows at a time; the arrow
   keys scroll to the rest. A lane's suggested answers come first; with no lane to act on,
@@ -150,7 +168,9 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 │ │ ◆ waiting for you: submit mock{…}   /approve         │  │ │ ...                               │
 │ ╰──────────────────────────────────────────────────────╯  │ │                                   │
 ╰ plan  Decode the audio as slow-scan TV ──────────────────╯ ╰───────────────────────────────────╯
-╭ message this lane (it reads it on its next turn) · / for commands ─────────────────────────────────╮
+╭─ to L01 · Static Hiss ─────────────────────────────────────────────────────────────────────────────╮
+│ a message, or / for commands                                                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
  esc fleet  enter send  / commands  1-9 0 answer  ctrl+n next lane needing you  tab files  pgup pgdn scroll
 ```
 
@@ -231,6 +251,14 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 - **Files changed**: the files the lane wrote or edited, with the diff of the selected one.
 - **Chat box**: plain text is a message the lane reads on its next turn; `/` runs a command. Typing
   reaches it from any pane. An unsent message stays with its lane when you switch lanes.
+  Its border carries the same title as the fleet's command bar, in every layout: `to L01 ·
+  Static Hiss` for the open lane, the lane a command names while it is typed, `the run` while
+  a command that takes no lane is typed, and `L01 has finished` or `L01 takes no more turns`
+  when the lane would refuse what is typed. Empty, it reads `a message, or / for commands`.
+  `?` on the empty box opens help for this lane (Help, below), from any pane and in every
+  layout; with text in the box it is a question mark. A message cannot start with a lone `?`
+  typed on the empty box: type a space first (what is sent has no blanks at its ends), or paste
+  it.
 - **Selecting and copying**: text selects with the mouse. Drag over the transcript, the calm
   card, the header or the status line, and what you dragged over is copied when you let go; the
   status line says `copied 212 characters`. A double-click takes the whole entry, also what the
@@ -298,12 +326,14 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
 │   !          lane chall         state    cost  last action                                         │
 │   [flag]     L04  Ticket Desk   wait     $.16  candidate flag mock{…}                              │
 │ ▌ [offhint]  L01  Static Hiss   run      $.10  python3 diff_channels.py --window 512 left.wav …    │
+│              L09  Night Shift   starting                                                           │
 │   ...                                                                                              │
 │ ▌L01 ▲ Ignores the hint: The description hints at slow-scan TV …                                   │
 │    1  redirect with the hinted technique   2  hint   x  dismiss   enter open                       │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
  ● Wave 2: 43 challenges · 10 lanes started · 33 queued
-╭ / for commands · enter opens the selected lane · or type a message to it ──────────────────────────╮
+╭─ to L01 · Static Hiss ─────────────────────────────────────────────────────────────────────────────╮
+│ a message, or / for commands                                                                       │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
  1-9 answer  x dismiss  enter open  / commands  ? help  q quit
 ```
@@ -311,13 +341,20 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
 - **Header.** Only what is not the usual: flightdeck, the event's name, the mock tag, `team` in
   team mode, `host` when lanes run on this machine, `queue N` when the queue is not empty,
   `AUTOPILOT` while it is engaged, `▲ N need you` when any do, `queue held` and why, and the
-  run's dollars. No solo, docker, lane count, "all clear", tokens or clock. On a narrow terminal
+  run's dollars. No solo, docker, lane count, "all clear", tokens or clock. Only "look here" is
+  a block: flightdeck, `host`, `AUTOPILOT`, `▲ N need you` and `queue held`. The event's name,
+  the queue and the dollars are text on the page, `team` is in the `info` colour on the page,
+  and the mock tag is muted text; a `╱` still stands between every two pieces. Each colour a
+  quiet piece takes on the page is one of the pairs a theme is checked for. On a narrow terminal
   the event's name goes first, then the mock tag, the queue, `host` and `team`; flightdeck,
   `AUTOPILOT`, the need-you count, a held queue and the dollars never drop.
 - **Lane list.** One panel, no board. Columns: the attention cell (`!`), lane, challenge, state,
   cost, last action. Under 86 columns the challenge's name narrows (to 8 cells at least); under
   74 the last action is left out and the name is whole again; the cost is never left out, and
-  `flightdeck doctor` says when the last action is. The model, turns and idle time are in the
+  `flightdeck doctor` says when the last action is. A running lane that has done nothing yet (no
+  turn, no step of its own, nothing spent, no coding-agent CLI turn whose cost is on its way)
+  reads `starting` in muted text in the state column, and its cost is blank; the filter finds it
+  by `starting`. The model, turns and idle time are in the
   focus view's title. The panel's
   title is `lanes n/m`, then ` · N waiting` when the queue is not empty, ` · ✓ N solved` when
   any are, ` · sort X` only when the sort is not by attention, and the filter as in `deck`.
@@ -340,11 +377,11 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   needs-you card while this lane does. The title is the same as in `deck` (the lane, its
   challenge, model, state, turns, tokens, cost and idle time). The transcript and the
   needs-you card are calm: details start off (Focus view, above), and `ctrl+o` shows every line
-  and the full card. Key line: `esc lanes  / commands
-  /help all keys  ctrl+o details`, with `1-9 answer` first while the lane has numbered answers
-  (67 columns with the answers; narrower, the edge cuts `ctrl+o details` first, and `/help`
-  still lists it). The empty chat box names the lane a message goes to (`message L01 · /
-  commands`), and a lane that has ended says `esc goes back to the lanes`.
+  and the full card. Key line: `esc lanes  / commands  ? help  ctrl+o details`, with `1-9
+  answer` first while the lane has numbered answers (59 columns with the answers, so it is
+  whole at every width the layout has; `?` works on the empty chat box). The chat box names
+  the lane a message goes to on its border, as in every layout (Chat box, above), and a lane
+  that has ended says `esc goes back to the lanes`.
 
   A lane that waits for more budget with its Loop, Effort and Stall alerts open, after an L1
   intake note of 15 lines and 15 tool calls, most of several lines: 13 rows of transcript and a
@@ -373,8 +410,8 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   │ │   also: looping · past its effort budget · stalled   ctrl+o shows all                        │ │
   │ ╰──────────────────────────────────────────────────────────────────────────────────────────────╯ │
   ╰───────────────────────────────────────────────────────────────────────────────────────── plan - ─╯
-  ╭ message L01 · / commands ────────────────────────────────────────────────────────────────────────╮
-   1-9 answer  esc lanes  / commands  /help all keys  ctrl+o details
+  ╭─ to L01 · Baby RSA ──────────────────────────────────────────────────────────────────────────────╮
+   1-9 answer  esc lanes  / commands  ? help  ctrl+o details
   ```
 - **The first lane.** On a board the player fills, the first lane of the run that a `/new`
   starts opens in the focus view, once it exists: only while the player is still in the lane
@@ -396,7 +433,8 @@ run, and `/theme` alone opens the list that tries and saves one (Choosing a look
 `mock --screenshot` takes its pictures in the default theme, and saves the fleet in the light
 one as `theme-light`.
 
-A theme is colours only. The chips stay solid labels, the header's segments solid blocks, the
+A theme is colours only. The chips stay solid labels, the header's segments solid blocks (in
+the simple layout, those that say "look here"), the
 marks and glyphs the same plain Unicode, and what never drops from the header never drops in
 any theme. A palette has 17 colours by role (the page, text, a muted text, an accent, the
 states `ok`, `error`, `warn`, `info` and `pending`, the ink on their chips, and the surfaces),
@@ -505,11 +543,32 @@ more, as it does at 100%; escalate is offered at 80% only.
 |  | `/autopilot [on\|off]` | `on` engages autopilot, `off` takes the controls back, alone it says which it is. `on` is refused, with the reason, without a run budget, off the Docker runtime, while the queue is held, and once the budget is spent |
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: the challenges an API outage parked are queued again, and queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
-| `?` | `/help` | Help: every key and command, each alert chip, `sending`, `queue held`, the `+` and `…` after dollars, and the board's marks |
+| `?` | `/help` | Help for where you are: the keys for the lane now, then every key and command, each alert chip, `sending`, `queue held`, the `+` and `…` after dollars, and the board's marks (Help, below). In the command bar and in a lane's chat box, only while it is empty |
 | `q`, `ctrl+q` | `/quit` (also `/q`, `/exit`) | Quit; it asks first while lanes are open or a flag is on its way (Quitting and signals, below) |
 
 `h`, `r` and `e` are refused on a lane that gave up and stays open only for its flag's answer (it
 takes no more turns): fork it (`f`), or answer its flag or wait for the platform's answer.
+
+### Help
+
+`?` (or `/help`) opens help for where you are (P65): in the lane list, and in a lane's view
+while its chat box is empty. It is one dialog with every row from either view; only its order
+follows the view it was opened from.
+
+1. **Now.** The keys the simple layout's key line has for the lane the keys act on, each with
+   its sentence, under `This lane, now: L03 · Gamma` (in a lane) or `The selected lane, now:
+   L02 · Beta` (in the list: the selected lane, or on the board its challenge's only lane).
+   With no lane it reads `Now, with no lane selected` and has the keys that act without one
+   (`/new`, `?`, `q`). These are the same rows in every layout, since they are about the
+   lane's state and not about the key line on screen. The challenge's name is challenge text:
+   made safe, on one row, never markup.
+2. **Keys in a lane** or **Keys in the lane list**: the view it was opened from first, then the
+   other one.
+3. **Keys in both**: selecting and copying, and `ctrl+q`.
+4. The commands, the alerts, the header and cost marks, and the board's marks, as before.
+
+`?`, `esc` or `q` closes it, and the focus is back where it was, with the chat box's draft as it
+was. A `?` that opened help sends nothing to a lane.
 
 ### Approving several flags at once
 
@@ -550,7 +609,8 @@ The lane is not touched: no message, no new plan.
   the interventions judged to have helped.
 
 In the focus view the chat box has the keyboard: interventions are slash commands there, `esc` goes
-back to the fleet and `ctrl+n` goes on to the next lane that needs you.
+back to the fleet, `ctrl+n` goes on to the next lane that needs you, and `?` on the empty box opens
+help (Help, above).
 
 ## Quitting and signals
 
@@ -677,7 +737,8 @@ matters there: what needs you and why, the one-key answers, and each lane's stat
 │                                                    │
 ╰────────────────────────────────────────────────────╯
  ● wren solved Night Shift · stopped L05
-╭ / for commands · enter opens the selected lane · … ╮
+╭─ to L04 · Ticket Desk ─────────────────────────────╮
+│ a message, or / for commands                       │
 ╰────────────────────────────────────────────────────╯
  a yes  d no  1-9 answer  / cmd  ? help  q quit
 ```

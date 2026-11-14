@@ -789,48 +789,44 @@ def test_a_mouse_button_held_in_the_transcript_stops_it_following_until_it_is_up
 # ---------------------------------------------------------------------- the key line, help, doctor's room
 
 
-def test_the_simple_key_line_names_the_details_key_last_and_the_edge_cuts_it_first():
+def test_the_simple_key_line_names_the_details_key_last_and_the_narrowest_simple_terminal_shows_it_whole():
     deck, app, lane = one_lane("simple")
     shell(deck, "ls", "a\n")
 
     async def script(pilot):
         await open_focus(pilot, app, "L01")
-        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys  ctrl+o details"
+        assert footer_line(app).strip() == "esc lanes  / commands  ? help  ctrl+o details"
         deck.report("L01", TurnReport(turn=False, pending=Pending(PendingKind.LIVE_BOX, "connect to the live box")))
         app.refresh_view()
         await pilot.pause()
-        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  /help all keys  ctrl+o details"
-        await pilot.resize_terminal(66, 24)
-        await pilot.pause()
-        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  /help all keys  ctrl+o"  # its label is past the edge
+        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  ? help  ctrl+o details"  # whole at the narrowest simple terminal
 
-    drive(app, script, (67, 24))
+    drive(app, script, (65, 24))
     assert focus.SIMPLE_KEY_LABELS[-1] == ("ctrl+o", "details")
-    assert focus.key_room(67, simple=True) == ([], 67) and focus.key_room(66, simple=True) == (["ctrl+o details"], 67)
+    assert focus.key_room(65, simple=True) == ([], 59)  # 59 columns at its longest: whole from the first width that is not compact
     assert focus.key_room(120, simple=False)[1] == focus.key_room(120)[1] and "ctrl+o" not in dict(focus.KEY_LABELS)  # the deck's line is as it was
-    at_65 = room.room(65, 40, max_lanes=4, containerized=True, layout="simple")
-    assert at_65.focus_keys == ("ctrl+o details",) and "ctrl+o details on the focus view's key line" in at_65.left_out()
-    assert room.room(67, 40, max_lanes=4, containerized=True, layout="simple").focus_keys == ()
-    assert room.room(64, 40, max_lanes=4, containerized=True, layout="simple").focus_keys == ("/help all keys", "ctrl+o details")
+    assert room.room(65, 40, max_lanes=4, containerized=True, layout="simple").focus_keys == ()
+    assert room.room(64, 40, max_lanes=4, containerized=True, layout="simple").focus_keys == ("? help", "ctrl+o details")
     assert "ctrl+o details" not in room.room(65, 40, max_lanes=4, containerized=True, layout="deck").focus_keys
 
 
 def test_help_lists_the_details_key_and_command_and_the_keys_that_page_the_transcript():
     from ctf_flightdeck.console.commands import BY_NAME, complete, needs_lane, parse
-    from ctf_flightdeck.console.screens import KEY_HELP, HelpScreen
+    from ctf_flightdeck.console.screens import KEY_HELP, LANE_KEY_HELP, HelpScreen
 
-    keys = dict(KEY_HELP)
-    assert keys["ctrl+o"] == "In a lane: details on or off. Off: a row for each entry, and the needs-you card in three"
-    assert keys["pgup pgdn"] == f"In a lane: scroll its transcript; pgup at the top of a long one shows {MOUNTED} more entries"
+    keys = dict(LANE_KEY_HELP)
+    assert "ctrl+o" not in dict(KEY_HELP) and "pgup pgdn" not in dict(KEY_HELP)  # keys of a lane's view (P65)
+    assert keys["ctrl+o"] == "Details on or off. Off: a row for each entry, and the needs-you card in three"
+    assert keys["pgup pgdn"] == f"Scroll the transcript; pgup at the top of a long one shows {MOUNTED} more entries"
     _, app, _ = one_lane("simple")
 
     async def script(pilot):
         await open_focus(pilot, app, "L01")
-        await send(pilot, app, "/help")  # what the simple layout's key line names: "/help all keys"
+        await send(pilot, app, "/help")
         assert isinstance(app.screen, HelpScreen)
         said = prompt_text(app)
-        assert "ctrl+o In a lane: details on or off. Off: a row for each entry, and the needs-you card in three" in said
-        assert f"pgup pgdn In a lane: scroll its transcript; pgup at the top of a long one shows {MOUNTED} more entries" in said
+        assert "ctrl+o Details on or off. Off: a row for each entry, and the needs-you card in three" in said
+        assert f"pgup pgdn Scroll the transcript; pgup at the top of a long one shows {MOUNTED} more entries" in said
 
     drive(app, script, (160, 60))
     parsed = parse("/details")

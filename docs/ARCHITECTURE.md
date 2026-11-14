@@ -157,7 +157,7 @@ Where: `console/`, `themes.py`, `config.py` (`[console]`).
 **Layouts** (P51). `FlightdeckApp.layout` is `simple` or `deck` (`config.LAYOUTS`). There is no
 layout class: the functions of `console/views.py` that draw differently take `simple=True`
 beside the `compact=True` they already took (`header_pieces`, `fit_header`, `lanes_title`,
-`lane_why`, `now_card`, `others_strip`; `SIMPLE_LANE_COLUMNS`), and each screen draws `simple`
+`lane_why`, `now_card`, `others_strip`, `lane_cells`; `SIMPLE_LANE_COLUMNS`), and each screen draws `simple`
 when the app's layout is `simple` and the terminal is not narrow enough for the compact layout,
 which wins over both. `fleet.context_keys()` gives the simple key line for the selected lane;
 `FocusScreen` hides a part that has nothing in it. `FlightdeckApp.set_layout()` (`/layout`)
@@ -167,7 +167,10 @@ again whenever their own width changes (`fleet.FittedTable`). A console built wi
 otherwise. `FlightdeckApp.open_first_lane()` opens the first lane a `/new` starts, looked at on
 each redraw and when the lane list comes back from under the form. While the board has no
 challenge the fleet shows a page of its own in place of the tables (`fleet.EMPTY_BY_HAND`,
-`EMPTY_PLATFORM`). The peek (P68, `space`) is one widget between the lane list and the why
+`EMPTY_PLATFORM`). In the simple header a piece that is not "look here" is `views.plain()`: text
+on the page, which `theme.segments` draws as text because its background is the page's (P66);
+`views.starting()` is the lane the simple list says `starting` of, with a blank cost.
+The peek (P68, `space`) is one widget between the lane list and the why
 line, the same in every layout: `views.peek()` draws the lane `FleetScreen.bar_lane()` gives,
 in the rows the lanes panel has for it as laid out (`fleet.LanesPane`, `FleetScreen.peek_room()`, `fleet.peek_rows_in()`: the `/` menu and a status line of several rows take theirs first; `fleet.peek_rows()` is the count for a terminal's height without them). `console/room.py` measures a terminal in the layout it is given
 (`room(..., layout=)`).
@@ -281,6 +284,32 @@ hand it the lane's suggestions each time they draw (`set_suggestions`), which is
 open menu is compared with the deck and drawn again if it differs. `no_match()` is the one
 row for a name that is no command. The bar's Enter takes a row while the name is incomplete
 or once the arrow keys chose one (`_chosen`), and otherwise posts what is typed.
+
+**The bar's title** (P64). The title on the bar's border says who what is typed goes to.
+`commands.goes_to(typed)` reads the text with `parse()`, so it is what Enter would do: the
+run's for a command that takes no lane, a lane's when the command names one, otherwise the
+lane the bar acts on (also for text `parse()` refuses). `views.bar_title(deck, typed, lane)`
+draws it: `to L04 · Ticket Desk`, `no lane`, `no lane L07`, `the run`, the challenge's name
+through `text.untrusted()` in a `Text`, never markup. A lane that would refuse what is typed
+is not named: `goes_to` also says what the text asks of its lane (`commands.Ask`: a turn, an
+action, a fork with its approach, a read), and `views.lane_refuses(lane, ask)` holds that to
+the lane's state as `Deck._apply` does: `L04 has finished`, `L04 takes no more turns`. `widgets.CommandBar` takes a `title`
+callable from the screen that hosts it and calls it in `show_title()`: at every change of
+its text, and when the screen says its lane may have changed (`FleetScreen._render_why`,
+with `bar_lane()`; `FocusScreen.refresh_view`, with the open lane). A title is set again
+only when its words or its colours differ, so a redraw that changes nothing costs nothing.
+`widgets.BAR` is the one placeholder of both views.
+
+**Help for where you are** (P65). `widgets.BarInput` takes `?` on an empty field as it takes a
+digit: the screen that hosts it sets `help` (and `quick` for the digit), and with anything in the
+field both are text. `FocusScreen.on_key` does the same for a `?` typed in another pane, since
+typing there goes to the chat box. `FlightdeckApp.action_help` asks the view it was opened from
+for `help_now()`: the lane the keys act on and the keys the simple key line has for it
+(`fleet.context_keys` in the list, `focus.SIMPLE_KEY_LABELS` with the answers in a lane), and
+passes `screens.HelpScreen` the view, the lane's id and challenge name (through
+`text.untrusted()`) and those keys. The dialog draws "now" from `screens.NOW_HELP` (a key with
+no sentence there is a `KeyError`), then `KEY_HELP` and `LANE_KEY_HELP` in the order of the
+view, then `BOTH_KEY_HELP` and the rest.
 
 ## 4. Lanes
 

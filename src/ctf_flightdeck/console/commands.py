@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from enum import Enum
 
 from ..config import LAYOUTS
 from ..core.attention import SortMode
@@ -179,6 +180,52 @@ def needs_lane(parsed: Parsed) -> bool:
     if parsed.command is None:
         return True
     return parsed.command.lane and not (parsed.command.name == "approve" and parsed.arg == ALL)
+
+
+class Ask(Enum):
+    """What the text typed asks of the lane it goes to: which lanes still take it (Aim.ask)."""
+
+    TURN = "turn"  # a message, /hint, /redirect, /escalate: read on the lane's next turn, so it must have one to come
+    ACT = "act"  # /kill, /approve, /pause, a bare /fork (its prompt) and the rest: the lane must still be open
+    FORK = "fork"  # /fork with its approach: also a lane that ended without the flag (a sibling takes up its challenge)
+    READ = "read"  # /open, /diff, /copy: any lane, ended or not: they ask nothing of it
+
+
+ASKS_A_TURN = frozenset({"hint", "redirect", "escalate"})
+READS = frozenset({"open", "diff", "copy"})
+
+
+def ask(parsed: Parsed) -> Ask:
+    """What `parsed`, a plain message or a lane command, asks of its lane."""
+    if parsed.command is None or parsed.command.name in ASKS_A_TURN:
+        return Ask.TURN
+    if parsed.command.name in READS:
+        return Ask.READ
+    return Ask.FORK if parsed.command.name == "fork" and parsed.arg else Ask.ACT
+
+
+@dataclass(frozen=True)
+class Aim:
+    """Where what is typed would go if it were sent now (goes_to)."""
+
+    run: bool = False  # a command that takes no lane: it is the run's
+    lane: str | None = None  # the lane the command names; None: the lane the bar acts on
+    ask: Ask = Ask.TURN  # what it asks of that lane (nothing typed is a message not written yet)
+
+
+def goes_to(typed: str) -> Aim:
+    """Where the text typed so far would go: read by `parse`, so it is what enter would do.
+    A command that takes no lane (/note, /config, /approve all) is the run's; a lane command
+    that names a lane (`/kill L07`) goes to that one; everything else goes to the lane the
+    bar acts on: a plain message, a lane command that names none, and text `parse` refuses
+    (a name not typed whole yet, a stray word), which goes nowhere until it is put right.
+    What goes to a lane also says what it asks of it (Ask): a lane that has ended, or one
+    that takes no more turns, refuses some of it."""
+    try:
+        parsed = parse(typed)
+    except CommandError:
+        return Aim()
+    return Aim(lane=parsed.lane, ask=ask(parsed)) if needs_lane(parsed) else Aim(run=True)
 
 
 def lane_id(token: str) -> str | None:

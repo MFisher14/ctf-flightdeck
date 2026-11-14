@@ -157,7 +157,8 @@ a model API charges for. A **setting** is a line of your config.
   format.
 - **Command bar**: the line at the bottom of the console. `/` opens it for a command (`/new`,
   `/theme`) and lists the commands as you type ([The command bar](#the-command-bar)); plain
-  text typed in it is a message to the selected lane, which reads it on its next turn.
+  text typed in it is a message to the selected lane, which reads it on its next turn. The
+  bar's border names that lane.
 - **Ladder**: your models, weakest first (`[models] ladder`). Lanes start on the first.
   **Escalate** (`e`) restarts a lane on the next one, with a summary of what it did.
 - **Fork** (`f`): a second lane on the same challenge. **Take over** (`t`): the lane's shell is
@@ -392,7 +393,8 @@ type the command's name or close the menu.
 
 **Enter** opens a lane full screen: its transcript, the files it changed with diffs, and a chat
 box (plain text is a message to the lane; `/redirect`, `/approve`, `/diff` and the rest are
-commands; `esc` goes back).
+commands; `esc` goes back). `?` on the empty chat box opens help for that lane; with text in
+the box it is a question mark.
 
 ![One lane full screen: the two other lanes that need you; its transcript in five rows, two runs of tool calls with the last call of each and the alert between them; a needs-you box with two numbered answers; the files it changed and the diff of one of them; and the chat box](screenshots/simple-lane.png)
 
@@ -479,12 +481,35 @@ lane starts to need you, the terminal's bell marks the tmux window
 
 The lane list's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,
 `e` escalate, `t` take over, `a` approve, `d` decline, `x` dismiss, `1`-`9`/`0` quick answers,
-`c` claim (team), `/` commands, `s` sort, `?` help (every key and command), `q` quit; `A`
+`c` claim (team), `/` commands, `s` sort, `?` help, `q` quit; `A`
 approves every waiting flag; **Space** peeks at the lane and **Enter** opens it full screen. They act in both layouts; the
 simple layout's key line shows only the ones that apply now. The whole design is in the
 [console spec](CONSOLE-SPEC.md).
 
+**Help.** `?` opens help for where you are: in the lane list, and in a lane while its chat box
+is empty (with text in the box, `?` is a question mark; `/help` works with either). Its first
+rows are about the lane in front of you now, `The selected lane, now: L02 · Beta` in the list
+and `This lane, now: L02 · Beta` in a lane: the keys the key line has for it, each with what it
+does. Then come the keys of the view you are in, the other view's, the keys both have, and every
+command, alert and mark. `?`, `esc` or `q` closes it, and what you had typed is still there.
+
 ### The command bar
+
+The bar's border says who you are talking to. In the lane list it follows the selected lane:
+`to L04 · Ticket Desk` means a message you type goes to L04, and it changes as you move through
+the list. In a lane's view it names that lane. It reads `no lane` when there is none to take a
+message (no lane has started, or the board is on a challenge that no lane or several lanes
+work), and `the run` while you type a command that is not about one lane, such as `/note` or
+`/config`. A command that names a lane shows that lane while you type it: `/kill L07` reads
+`to L07 · …`, whichever lane is selected. Check the border before you press Enter: the
+lane named there is the one that reads your message on its next turn.
+
+A lane that would refuse what you type is not named. Once a lane has ended (solved, killed,
+stopped, gave up) the border reads `L04 has finished`: a message to it would go nowhere.
+It names the lane again while you type something an ended lane still takes: `/open`,
+`/diff`, `/copy`, and `/fork` with an approach when the lane ended without the flag. A lane
+that gave up while its flag still waits reads `L04 takes no more turns`: it is open for
+that answer only, so `/approve` and `/decline` name it and a message does not.
 
 `/` opens a menu of the commands, and typing narrows it. You do not need a command's exact
 name to find it:
@@ -517,11 +542,14 @@ The console has two layouts.
 
 - a short header: the event, `team` in team mode, `host` when lanes run on this machine, the
   queue when challenges wait, `AUTOPILOT` while it is engaged, `▲ N need you`, a held queue and
-  why, and the run's dollars;
+  why, and the run's dollars. Only what asks you to look has a coloured block: flightdeck,
+  `host`, `AUTOPILOT`, `▲ N need you` and `queue held`. The event, `team`, the queue and the
+  dollars are plain text, and the mock's tag is dimmed;
 - one list of lanes: what each needs from you, the lane, its challenge, state, cost and last
   action (under 86 columns the challenge's name narrows, and under 74 the last action is left
-  out; the cost never is). Its title counts the lanes, the challenges that wait and the ones
-  solved;
+  out; the cost never is). A lane that has started and done nothing yet reads `starting`,
+  dimmed, with no cost, until its first step or its first spend. Its title counts the lanes,
+  the challenges that wait and the ones solved;
 - under the list, why the selected lane is flagged and its numbered answers; nothing for a lane
   that needs nothing;
 - a key line of the keys that apply to the selected lane now: `a approve` and `d decline` while

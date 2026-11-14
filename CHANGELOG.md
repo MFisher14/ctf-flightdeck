@@ -26,6 +26,28 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   itself: `/layout deck` and `/layout simple` still do, at once. With no config file (the mock
   before `flightdeck init`) a choice lasts for the run, and the list says so
   ([the guide](docs/GUIDE.md#layouts)).
+- A quieter simple layout. In its header only what asks you to look keeps a coloured block:
+  flightdeck, `host`, `AUTOPILOT`, `▲ N need you` and `queue held`. The event's name, `team`,
+  the queue and the dollars are plain text, and the mock's tag is dimmed. In its lane list a
+  lane that has started and done nothing yet reads `starting`, dimmed, with no cost, in place
+  of `run` and `$.00`, until its first step or its first spend. The deck and compact layouts
+  are as they were.
+- `?` opens help for where you are. In a lane, `?` on the empty chat box opens help, from any
+  pane; with text in the box it is a question mark (type a space first, or paste, to start a
+  message with one). The key line in a lane reads `esc lanes  / commands  ? help  ctrl+o
+  details`. Help starts with the lane in front of you: `This lane, now: L03 · Gamma` and the
+  keys that apply to it, each with what it does; then the keys of the view you are in, the
+  other view's, and the ones both have. In the lane list's command bar `?` opens help too while
+  the bar is empty.
+- The command bar names the lane it talks to. Its border reads `to L04 · Ticket Desk` and
+  follows the selected lane in the lane list; in a lane's view it names that lane. It reads
+  `no lane` when there is none to take a message, `the run` while you type a command that is
+  not about one lane (`/note`, `/config`), and the lane a command names while you type it
+  (`/kill L07`). A lane that would refuse what you type is not named: the border reads
+  `L04 has finished` for a lane that has ended (until you type something it still takes,
+  such as `/open` or `/copy`), and `L04 takes no more turns` for one that gave up and is
+  open only for its flag's answer. The empty bar is shorter, the same in both views:
+  `a message, or / for commands`.
 - The `/` menu forgives. It finds a command from the second word of its name (`/over` lists
   `/takeover`) and from an alias (`/q` and `/exit` for `/quit`, `/settings` for `/config`,
   `/lanes` for `/back`, each shown beside the name). After a command's name it lists what the
@@ -159,8 +181,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   dead lane). While no lane can start (the queue is held, every lane is busy) the view moves
   when one does, and it never moves you from where you went meanwhile. `/attach` names the
   fresh lane (`L01 restarted as L02`, or `L01 ended, a fresh lane starts when one is free`), and
-  the ended lane reads `killed: to restart with extra.txt`. In the simple layout the chat box
-  names its lane (`message L01 · / commands`).
+  the ended lane reads `killed: to restart with extra.txt`. The chat box's border names its
+  lane (the command bar's title, above).
 - Text in the console selects and copies: drag over a lane's transcript, its needs-you box,
   the header or the status line and it is copied when you let go (`copied 212 characters`); a
   double-click copies a whole entry, a triple-click the transcript. `ctrl+c` copies the

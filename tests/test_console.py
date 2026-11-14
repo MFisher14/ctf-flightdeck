@@ -746,7 +746,7 @@ def test_question_mark_opens_help_that_scrolls_and_escape_closes_it():
         await press(pilot, "question_mark")
         help_screen = app.screen
         assert isinstance(help_screen, HelpScreen)
-        assert "Keys (fleet)" in screen_text(app)
+        assert "Keys in the lane list" in screen_text(app)
         body = help_screen.query_one("#help-body")
         assert isinstance(body, ScrollableContainer)
         assert body.max_scroll_y > 0  # longer than the box: it must scroll
@@ -775,7 +775,7 @@ def test_help_explains_sending_a_held_queue_and_the_marks_after_dollars_and_tell
                 "(on the board, … is a queued challenge)") in text
         assert "… queued (after dollars: a cost still to come)" in text
 
-    drive(app, script, size=(160, 140))
+    drive(app, script, size=(160, 170))
 
 
 def test_help_and_the_command_menu_list_theme_and_the_bar_runs_it():
@@ -3234,7 +3234,7 @@ def test_help_and_the_command_menu_list_unhold_and_what_it_does():
         await pilot.pause()
         assert f"/unhold {said[:40]}" in " ".join(region_text(app, "#bar").split())
 
-    drive(app, script, size=(160, 100))  # tall enough for help to show every command without scrolling
+    drive(app, script, size=(160, 130))  # tall enough for help to show every command without scrolling
 
 
 def test_the_header_keeps_need_you_and_queue_held_and_gives_the_reason_only_room_tokens_and_the_clock_leave():
@@ -3292,7 +3292,7 @@ def test_the_board_credits_a_solve_as_every_report_does_the_flag_an_l1_engine_fo
         await press(pilot, "escape", "question_mark")
         assert "L1·name solved with the flag your L1 engine of that name found" in prompt_text(app)
 
-    drive(app, script, size=(160, 130))  # tall enough for the whole help: it scrolls on a shorter terminal
+    drive(app, script, size=(160, 170))  # tall enough for the whole help: it scrolls on a shorter terminal
     log = EventLog(tmp_path / "events.jsonl")  # the run log the reports read: they credit the same solvers
     log.attach(deck)
     log.close()
@@ -4004,7 +4004,7 @@ def test_help_lists_the_autopilot_command():
         await press(pilot, "question_mark")
         assert "/autopilot [on|off] engage autopilot (it needs a run budget), or take the controls back" in prompt_text(app)
 
-    drive(app, script, size=(160, 100))
+    drive(app, script, size=(160, 130))
 
 
 def test_slash_note_tells_every_lane_from_a_lanes_chat_box_and_is_not_that_lanes_message_alone():

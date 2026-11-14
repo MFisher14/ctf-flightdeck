@@ -3,7 +3,7 @@ the settings dialog, the theme and layout picker, and help."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1004,6 +1004,8 @@ class ChallengeCard(ModalScreen[str | None]):
             self.dismiss(f"open:{self.card_lanes[number - 1]}")
 
 
+# The keys, by the view they act in (P65): help opens on the view it was opened from.
+# The lane list's keys.
 KEY_HELP = (
     ("enter / o", "Open the selected lane full screen (its transcript, files and a chat box)"),
     ("space", "Peek: the selected lane's last steps under the lane list, without leaving it; it follows the selection (space or esc closes it)"),
@@ -1016,20 +1018,34 @@ KEY_HELP = (
     ("t", "Take over: a shell in the lane's workspace (its container in Docker); exit it to hand back, and the lane hears what you changed"),
     ("a", "Approve what the lane waits for: submit, more budget, live-box access"),
     ("d", "Decline it: the flag is not submitted, or the live box stays off limits, and the lane carries on; refusing more budget stops the lane"),
-    ("1-9, 0", "Quick answers, no enter: the numbers in the why line and the needs-you card (0 says no)"),
+    ("1-9, 0", "Quick answers, no enter: the numbers in the why line under the list (0 says no)"),
     ("c", "Team mode: claim or release the selected challenge"),
     ("/", "Command bar: slash commands with completion; plain text messages the lane"),
     ("s", "Change the lane sort: attention, idle, cost, turns, lane"),
     ("tab", "Move focus: board, lanes, command bar (the board hides under 100 columns)"),
     ("enter on ▸", "Expand or collapse finished lanes"),
     ("enter on board", "Open the challenge's lane; with none or several, its card: queue, claim, 1-9 open a lane"),
-    ("esc", "Leave the command bar, close the peek, clear the filter, or go back to the fleet"),
-    ("ctrl+n", "In a lane: the next lane that needs you, in attention order, round to the first"),
-    ("ctrl+o", "In a lane: details on or off. Off: a row for each entry, and the needs-you card in three"),
-    ("pgup pgdn", "In a lane: scroll its transcript; pgup at the top of a long one shows 300 more entries"),
+    ("esc", "Leave the command bar, close the peek, or clear the filter"),
+    ("?", "This help, for where you are; in the command bar, only while it is empty"),
+    ("q", "Quit. While lanes are open it asks first: y stops every lane for good (a run cannot be resumed)"),
+)
+# A lane's own view: its keys.
+LANE_KEY_HELP = (
+    ("esc", "Back to the lane list"),
+    ("typing", "Goes to the chat box from any pane: enter sends it"),
+    ("/", "Commands on this lane, with completion; plain text is a message the lane reads on its next turn"),
+    ("1-9, 0", "Quick answers, no enter, while the chat box is empty: the numbers on the needs-you card (0 says no)"),
+    ("?", "This help, while the chat box is empty; with text in the box it is a question mark"),
+    ("ctrl+n", "The next lane that needs you, in attention order, round to the first"),
+    ("ctrl+o", "Details on or off. Off: a row for each entry, and the needs-you card in three"),
+    ("tab", "Move focus: chat box, files, diff"),
+    ("pgup pgdn", "Scroll the transcript; pgup at the top of a long one shows 300 more entries"),
+)
+# Keys that act the same in the lane list and in a lane.
+BOTH_KEY_HELP = (
     ("mouse drag", "Select text: copied as you let go (double-click: a whole entry; triple-click: all)"),
     ("ctrl+c", "Copy the selected text again; esc takes the selection down. /copy copies with no mouse"),
-    ("q", "Quit. While lanes are open it asks first: y stops every lane for good (a run cannot be resumed)"),
+    ("ctrl+q", "Quit, as q does in the lane list"),
 )
 # Approving several flags and dismissing an alert (kept apart from KEY_HELP's rows).
 BATCH_KEY_HELP = (
@@ -1073,7 +1089,38 @@ BOARD_HELP = (
 )
 
 
+_LIST_KEYS, _LANE_KEYS = dict(KEY_HELP + BATCH_KEY_HELP), dict(LANE_KEY_HELP)
+# Help's first rows, "now" (P65): what each key of the simple layout's key line does, in the
+# sentence its view's list of keys has for it. By view, then by the key as the line shows it
+# (fleet.context_keys in the lane list, focus.SIMPLE_KEY_LABELS in a lane): a key either line
+# gains needs a sentence here, and help without one fails.
+NOW_HELP = {
+    "list": {
+        "/new": "Hand a challenge to a lane: a form for its name, its text, its files or a screenshot",
+        "a": _LIST_KEYS["a"], "d": _LIST_KEYS["d"],
+        "1-9": "Answer the lane's alert with one key, no enter: the numbers in the why line under the list",
+        "x": _LIST_KEYS["x"], "enter": _LIST_KEYS["enter / o"], "/": _LIST_KEYS["/"], "?": _LIST_KEYS["?"], "q": _LIST_KEYS["q"],
+    },
+    "lane": {
+        "1-9": _LANE_KEYS["1-9, 0"], "esc": _LANE_KEYS["esc"], "/": _LANE_KEYS["/"], "?": _LANE_KEYS["?"], "ctrl+o": _LANE_KEYS["ctrl+o"],
+    },
+}
+HELP_VIEWS = ("list", "lane")  # where help was opened from: the lane list, a lane's own view
+KEYS_HEADING = {"list": "Keys in the lane list", "lane": "Keys in a lane"}
+BOTH_HEADING = "Keys in both"
+NOW_HEADING = {"list": "The selected lane, now", "lane": "This lane, now"}
+NOW_NO_LANE = "Now, with no lane selected"
+HELP_KEY_WIDTH = max(len(key) for key, _ in KEY_HELP + BATCH_KEY_HELP + LANE_KEY_HELP + BOTH_KEY_HELP)  # one column of keys down the dialog
+
+
 class HelpScreen(ModalScreen[None]):
+    """Help for where the player is (P65). It opens on "now": the keys the simple layout's key
+    line has for the lane the keys act on (`now`, as that line shows them; `lane`, its id and
+    challenge, already safe to draw), each with its sentence. Then the keys of the view it was
+    opened from (`view`: HELP_VIEWS), the other view's, the keys both have, and the rest: the
+    commands, the alerts, the marks. Every row is there from either view; only the order follows
+    the view."""
+
     DEFAULT_CSS = MODAL_CSS.format(name="HelpScreen") + """
     HelpScreen > Vertical { width: 112; }
     HelpScreen #help-body { height: auto; max-height: 1fr; }
@@ -1085,16 +1132,33 @@ class HelpScreen(ModalScreen[None]):
         Binding("q", "close", "close"),
     ]
 
-    def __init__(self, mock: bool) -> None:
+    def __init__(self, mock: bool, view: str = "list", lane: str | None = None, now: tuple[str, ...] = ()) -> None:
         super().__init__()
+        if view not in HELP_VIEWS:
+            raise ValueError(f"help is opened from one of {HELP_VIEWS}, not {view!r}")
         self.show_mock_keys = mock
+        self.view, self.now_lane, self.now_keys = view, lane, now
+
+    def _key_rows(self, rows: Iterable[tuple[str, str]], *, of_list: bool = False) -> Table:
+        """Rows of a key and its sentence, the keys in one column down the dialog. `of_list`:
+        keys of the lane list, which in the mock get the mock's own sentence where it has one
+        (take over, quit)."""
+        keys = Table.grid(padding=(0, 2))
+        keys.add_column(style="bold", no_wrap=True, width=HELP_KEY_WIDTH)
+        keys.add_column()
+        for key, text in rows:
+            keys.add_row(Text(key), Text(MOCK_KEY_HELP.get(key, text) if of_list and self.show_mock_keys else text))
+        return keys
 
     def compose(self) -> ComposeResult:
-        keys = Table.grid(padding=(0, 2))
-        keys.add_column(style="bold", no_wrap=True)
-        keys.add_column()
-        for key, text in KEY_HELP + BATCH_KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()):
-            keys.add_row(Text(key), Text(MOCK_KEY_HELP.get(key, text) if self.show_mock_keys else text))
+        by_view = {
+            "list": self._key_rows(KEY_HELP + BATCH_KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()), of_list=True),
+            "lane": self._key_rows(LANE_KEY_HELP),
+        }
+        other = next(view for view in HELP_VIEWS if view != self.view)
+        sentences = NOW_HELP[self.view]  # a key with no sentence is a KeyError: help never leaves a row out
+        now = self._key_rows(((key, sentences[key]) for key in self.now_keys), of_list=self.view == "list")
+        heading = Text(f"{NOW_HEADING[self.view]}: {self.now_lane}" if self.now_lane else NOW_NO_LANE, "bold underline")
         commands = Described([(Text(f"/{command.name} {command.args}".rstrip()),
                                Text(command.help + (f" (also {also(command)})" if command.aliases else ""))) for command in COMMANDS],
                              style=f"bold {theme.ACCENT}")
@@ -1116,7 +1180,10 @@ class HelpScreen(ModalScreen[None]):
             board.append(f"{mark} ", "bold")
             board.append(f"{meaning}   ")
         body = Group(
-            Text("Keys (fleet)", "bold underline"), keys, Text(""),
+            heading, now, Text(""),
+            Text(KEYS_HEADING[self.view], "bold underline"), by_view[self.view], Text(""),
+            Text(KEYS_HEADING[other], "bold underline"), by_view[other], Text(""),
+            Text(BOTH_HEADING, "bold underline"), self._key_rows(BOTH_KEY_HELP), Text(""),
             Text("Commands (the bar at the bottom; plain text is a message to the lane)", "bold underline"), commands, Text(""),
             Text("Alerts (lanes that need you come first, most urgent first)", "bold underline"), alerts, Text(""),
             Text("Header and cost (the marks after dollars, on a lane and in the header)", "bold underline"), marks, Text(""),

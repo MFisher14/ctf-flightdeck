@@ -621,10 +621,10 @@ def test_help_lists_space_as_the_peek():
         assert isinstance(app.screen, HelpScreen)
         said = prompt_text(app)
         assert "space Peek: the selected lane's last steps under the lane list" in said and "space or esc closes it" in said
-        assert "esc Leave the command bar, close the peek, clear the filter" in said
+        assert "esc Leave the command bar, close the peek, or clear the filter" in said
         assert "mock clock" not in said  # a run has no clock to freeze
 
-    drive(app, script, SIZE)
+    drive(app, script, (120, 60))  # help opens on "now", and the lane list's keys under it reach past 40 rows
 
 
 def test_in_the_mock_space_peeks_and_comma_freezes_the_clock():
@@ -650,7 +650,7 @@ def test_in_the_mock_space_peeks_and_comma_freezes_the_clock():
         assert ", Freeze or restart the mock clock" in said and "space Freeze" not in said and "space Peek" in said
 
     # wide enough for the deck layout's header to keep the clock's note, and tall enough for all of the help
-    drive(app, script, (160, 140))
+    drive(app, script, (160, 160))
 
 
 def test_outside_the_mock_comma_is_no_key():
