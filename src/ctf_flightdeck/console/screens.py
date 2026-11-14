@@ -51,6 +51,21 @@ def _keys(*pairs: tuple[str, str]) -> Text:
     return text
 
 
+MEANING_WORD = 6  # cells: the longest word a row of _meanings() starts with ("bottom")
+
+
+def _meanings(*rows: tuple[str, str]) -> Table:
+    """Rows of a word and what it means. The meanings start in one column whatever the word's
+    length, in every block of a dialog, and one too long for the dialog wraps under itself,
+    never under the word."""
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(no_wrap=True, width=2 + MEANING_WORD)  # indented by two
+    grid.add_column()
+    for word, meaning in rows:
+        grid.add_row(Text(f"  {word}"), Text(meaning))
+    return grid
+
+
 class ForkPrompt(ModalScreen[tuple[str, str] | None]):
     """Fork: an optional approach and a model for the sibling lane."""
 
@@ -302,7 +317,7 @@ class WelcomeScreen(ModalScreen[bool]):
 
     DEFAULT_CSS = MODAL_CSS.format(name="WelcomeScreen") + """
     WelcomeScreen { background: $background 85%; }
-    WelcomeScreen > Vertical { width: 86; padding: 2 4; }
+    WelcomeScreen > Vertical { width: 90; padding: 2 4; }
     WelcomeScreen .gap { margin-top: 1; }
     """
     BINDINGS = [Binding("enter", "go", "go"), Binding("escape", "close", "close"), Binding("q", "close", "close")]
@@ -322,13 +337,15 @@ class WelcomeScreen(ModalScreen[bool]):
                 first = f"Your board is loaded. Up to {self.lanes} AI agents start on the challenges now, cheapest first."
             yield Static(Text(first), classes="gap")
             yield Static(Text("What you are about to see:", style="bold"), classes="gap")
-            yield Static(Text("  left    the board: every challenge\n"
-                              "  right   the lanes: one AI agent per challenge, the one that needs you on top\n"
-                              "  bottom  the command bar: type / to see everything you can do"))
+            yield Static(_meanings(
+                ("left", "the board: every challenge"),
+                ("right", "the lanes: one AI agent per challenge, the one that needs you on top"),
+                ("bottom", "the command bar: type / to see everything you can do"),
+            ))
             yield Static(Text("You only need three things:", style="bold"), classes="gap")
-            third = "/new     hand over a challenge: its text, files, a screenshot" if self.empty and not self.is_mock \
-                else "a       approve a flag an agent found (d declines it)"
-            yield Static(Text(f"  enter   open a lane to watch it and talk to it\n  {third}\n  ?       every key, any time"))
+            third = ("/new", "hand over a challenge: its text, files, a screenshot") if self.empty and not self.is_mock \
+                else ("a", "approve a flag an agent found (d declines it)")
+            yield Static(_meanings(("enter", "open a lane to watch it and talk to it"), third, ("?", "every key, any time")))
             go = "add your first challenge" if self.empty and not self.is_mock else "open the console"
             yield Static(_keys(("enter", go), ("esc", "just show me the console")), classes="keys")
 

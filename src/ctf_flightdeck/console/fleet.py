@@ -363,7 +363,7 @@ class FleetScreen(Screen, inherit_bindings=False):
             return
         lane = deck.lanes.get(self.selected_lane or "")
         if lane is None:
-            why.update(Text(" No lane yet: lanes start when challenges are released.", theme.MUTED))
+            why.update(Text(" No lanes yet.", theme.MUTED))
         elif self.compact:
             why.update(views.compact_why(deck, lane, why.size.width or self.size.width - 2))
         else:

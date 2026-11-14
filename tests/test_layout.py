@@ -187,3 +187,40 @@ def test_with_an_approval_waiting_the_menu_lists_approve_first():
         assert menu_rows(app)[0] == "/approve"
 
     drive(app, script, SIZE)
+
+
+# ---------------------------------------------------------------------- wording, and the welcome screen
+
+
+def test_a_board_with_challenges_and_no_lane_says_no_lanes_yet():
+    deck, app = console(by_hand=False)
+    deck.release([Challenge("alpha", "Alpha", "misc", 100)], [])  # on the board, and nothing queued
+
+    async def script(pilot):
+        assert app.fleet.query_one("#main").display and not deck.lanes
+        assert region_text(app, "#why").strip() == "No lanes yet."
+
+    drive(app, script, SIZE)
+
+
+MEANINGS = ("the board:", "the lanes:", "the command bar:", "open a lane", "hand over a challenge", "every key, any time")
+
+
+@pytest.mark.parametrize("width", [160, 70], ids=["wide", "narrow"])
+def test_the_welcome_screens_meanings_stand_in_one_column_and_wrap_under_themselves(width):
+    deck, app = console(by_hand=True, welcome=True)
+
+    async def script(pilot):
+        assert type(app.screen).__name__ == "WelcomeScreen"
+        lines = region_text(app, "Vertical").splitlines()
+        starts = {text: next(line.index(text) for line in lines if text in line) for text in MEANINGS}
+        assert len(set(starts.values())) == 1, starts  # /new is a longer word than a: its meaning starts where the others do
+        column = starts["the lanes:"]
+        at = next(i for i, line in enumerate(lines) if "the lanes:" in line)
+        if width == 160:
+            assert lines[at].rstrip("│ ").endswith("the one that needs you on top")  # the dialog has room for its longest row
+        else:  # a dialog too narrow for it: the rest goes under the meaning, not under the word
+            rest = lines[at + 1]
+            assert rest[:column].strip("│ ") == "" and rest[column] != " " and rest.rstrip("│ ").endswith("top")
+
+    drive(app, script, (width, 46))
