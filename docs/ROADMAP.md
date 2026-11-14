@@ -49,6 +49,11 @@ Built since, from the list of what comes next (the
   `expires_key`), a start that answers without an address followed by a look at the status,
   and a refusal's reason read from `msg` ([BOARDS.md](BOARDS.md#which-plugin)). The guessed
   `ctfd_docker` shape is gone.
+- **Rules that match 2026 events** (P58). An event profile can say that no challenge material
+  may go to a model (`material_to_models = false`: `play` refuses, naming the rule) and hold the
+  label the team declared to the event (`declared_label`: said before a run, on the flight
+  card). `flightdeck records` writes a record of each solve for an event's organisers: the
+  lanes' transcripts, the player's interventions, who let each flag go.
 - **A one-minute demo at the top of the README** (P60,
   [#43](https://github.com/MFisher14/ctf-flightdeck/issues/43)). `scripts/demo.py` plays the
   mock key by key with no terminal and writes `docs/screenshots/demo.gif`; the tests play it on

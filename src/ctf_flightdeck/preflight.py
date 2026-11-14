@@ -9,7 +9,9 @@ with `flightdeck preflight --example`):
   where the board comes from, the flag format and team mode;
 - [rules]: what the rules allow: AI help (ai_allowed), scripts using the platform's API
   (platform_automation), lanes touching challenge instances (live_targets: allowed, confirm or
-  off) and, optionally, how many lanes may run at once (max_lanes);
+  off) and, optionally, how many lanes may run at once (max_lanes), whether a challenge's text
+  and files may be given to a model (material_to_models) and the label the team declared to
+  the event for its AI use (declared_label);
 - [policies], optional: how far flightdeck goes on its own at each stage. A policy may be
   stricter than the rules allow, never looser.
 
@@ -27,10 +29,17 @@ Every stage has a policy. From loosest to strictest:
     instance  lanes reaching a challenge's live instance
 
 The rules set the loosest policy each stage may have (allowed()): rules.ai_allowed = false
-makes agents off; rules.platform_automation = false makes pull and submit manual;
+makes agents off, and so does rules.material_to_models = false (a lane gives its model the
+challenge's text and files, so no lane can keep that rule; its refusal names it:
+NO_MATERIAL_TO_MODELS); rules.platform_automation = false makes pull and submit manual;
 rules.live_targets makes instance auto (allowed), confirm (confirm) or off (off); everything
 else may be auto. A stage the profile leaves out gets that loosest policy, except submit, which
 gets confirm (a flag is submitted only after the player approves it) unless auto is asked for.
+
+rules.declared_label is the team's own word to the event ("Human-Led AI", "Low AI": each event
+has its words). flightdeck does not know what a label means and checks nothing by it: it shows
+it before a run (describe(), the start of `play`) and records it with the run, for the flight
+card and the solve records. What a label commits the team to goes in the other keys.
 
 A "gamemaster" profile names the Game Master's url and token_env. A run with it pulls nothing
 and starts no attempt (`flightdeck gm pull` does both, before the run: its pull line says so,
@@ -152,7 +161,9 @@ platform's own token variables do, so it is told apart by name (http_token_env).
 
 _TABLES = ("event", "rules", "policies", "instances", "http")
 _EVENT_KEYS = ("name", "platform", "url", "token_env", "board", "flag_format", "team", "start", "end")
-_RULE_KEYS = ("ai_allowed", "platform_automation", "live_targets", "max_lanes")
+_RULE_KEYS = ("ai_allowed", "platform_automation", "live_targets", "max_lanes", "material_to_models", "declared_label")
+MAX_LABEL = 40  # a declared label longer than this is not a label
+LABEL_SHAPE = f"a few words as the event writes them (letters, digits, spaces and hyphens, at most {MAX_LABEL} characters)"
 _PLATFORM_ONLY = {"url": ("ctfd", "gamemaster", "http"), "token_env": ("ctfd", "gamemaster", "http"),
                   "board": ("manual", "gamemaster", "http")}
 # token_env: an upper-case name, as config.py asks of api.key_env. A token is letters, digits and
@@ -221,6 +232,8 @@ class EventProfile:
     platform_automation: bool
     live_targets: str  # "allowed" | "confirm" | "off"
     max_lanes: int | None = None  # the rules' upper bound on lanes at once, if they set one
+    material_to_models: bool = True  # may a challenge's text and files be given to a model; False: agents off, as no AI
+    declared_label: str | None = None  # the label the team declared to the event for its AI use, in the event's words
     # [instances]: how a challenge's own container is started on the platform (platform/instances.py); None: no table
     instances: InstancesConfig | None = None
     # [http]: the routes of a platform with a JSON API (platform/http.py), for platform "http"; None: no table
@@ -234,6 +247,8 @@ class EventProfile:
             raise ValueError(f"platform must be {_or(PLATFORMS)} or the name of a plugin")
         if self.live_targets not in LIVE_TARGETS:
             raise ValueError(f"live_targets must be {_or(LIVE_TARGETS)}")
+        if self.declared_label is not None and not is_label(self.declared_label):
+            raise ValueError(f"declared_label must be {LABEL_SHAPE}")
         if self.token_env is not None and not _is_env_name(self.token_env):
             # describe() and check() show token_env, so a profile built in code gets the same
             # check as load_profile's, and the value is never shown here either.
@@ -282,7 +297,7 @@ def allowed(profile: EventProfile) -> Policies:
     return Policies(
         pull=platform,
         l1=Policy.AUTO,
-        agents=Policy.AUTO if profile.ai_allowed else Policy.OFF,
+        agents=Policy.AUTO if profile.ai_allowed and profile.material_to_models else Policy.OFF,
         submit=platform,
         instance={"allowed": Policy.AUTO, "confirm": Policy.CONFIRM, "off": Policy.OFF}[profile.live_targets],
     )
@@ -421,11 +436,22 @@ def check(
     return [Problem(True, m) for m in refuse] + [Problem(False, m) for m in warn]
 
 
+NO_MATERIAL_TO_MODELS = (
+    "the event's rules do not allow challenge material to be given to a model (rules.material_to_models = false), and "
+    "every lane gives its model the challenge's text and files, so agents are off"
+)
+"""The refusal of a profile whose rules allow AI help but no challenge material to a model."""
+
+
 def no_agents(profile: EventProfile, policies: Policies) -> str:
     """Why a profile whose agents policy is manual or off starts no run: `flightdeck play` plays
-    with agent lanes. play says the same, before it calls check()."""
+    with agent lanes. play says the same, before it calls check(). Each rule that turns agents
+    off has its own words: no AI help at all, or (AI help allowed) no challenge material to a
+    model, which a lane cannot keep."""
     if not profile.ai_allowed:
         why = "the event's rules do not allow AI help (rules.ai_allowed = false), so agents are off"
+    elif not profile.material_to_models:
+        why = NO_MATERIAL_TO_MODELS
     else:
         why = f'the event profile sets agents = "{policies.agents}"'
     return (
@@ -782,7 +808,7 @@ def _check_models(agents: Policy, env: Mapping[str, str], model_config: Config |
 def _rule(profile: EventProfile, stage: str) -> str:
     """The rule that limits a stage."""
     if stage == "agents":
-        return "rules.ai_allowed = false"
+        return "rules.ai_allowed = false" if not profile.ai_allowed else "rules.material_to_models = false"
     if stage in ("pull", "submit"):
         return "rules.platform_automation = false"
     if stage == "instance":
@@ -918,7 +944,11 @@ def describe(
     ]
     if profile.max_lanes is not None:
         rules.append(f"at most {profile.max_lanes} lanes")
+    if not profile.material_to_models:
+        rules.append("no challenge material to a model")
     lines.append("rules     " + " · ".join(rules))
+    if profile.declared_label is not None:
+        lines.append(f"label     {label_line(profile.declared_label)}")
     if profile.platform in ("ctfd", "gamemaster", "http") and profile.token_env is not None:
         state = "set" if _is_set(env, profile.token_env) else "NOT set"
         lines.append(f"token     ${profile.token_env} ({state}), sent only to {_shown_url(profile)}")
@@ -970,6 +1000,13 @@ def describe(
     return lines
 
 
+def label_line(label: str) -> str:
+    """The declared label as a run shows it before it starts: the team's word to the event,
+    which flightdeck shows and records and never checks."""
+    return (f"{untrusted(label, one_line=True)} (what your team declared to the event: rules.declared_label; "
+            "flightdeck shows it and records it with the run, and checks nothing by it)")
+
+
 def instances_off(profile: EventProfile, policies: Policies) -> str:
     """Why flightdeck starts no instance on the platform under this profile and these policies,
     or "" when it does: it needs the [instances] table, CTFd, the rules' leave to use the
@@ -1014,6 +1051,8 @@ ai_allowed = true                   # may model-driven lanes work challenges
 platform_automation = true          # may flightdeck pull and submit through the platform's API
 live_targets = "confirm"            # "allowed", "confirm" or "off": may lanes touch challenge instances
 # max_lanes = 8                     # if the rules limit how many agents run at once
+# material_to_models = false        # if the rules forbid giving a challenge's text or files to a model: no lane then starts
+# declared_label = "Human-Led AI"   # if the event has teams declare a label for their AI use: yours, in the event's words
 
 # Optional. Each stage: "auto", "confirm", "manual" or "off"; stricter than the rules allow if you
 # like, never looser. A stage left out gets the loosest the rules allow, and submit gets "confirm".
@@ -1071,6 +1110,8 @@ def load_profile(path: Path) -> tuple[EventProfile, Policies]:
             required='"allowed", "confirm" or "off": may lanes touch challenge instances, only after you say yes, or never',
         ),
         max_lanes=_max_lanes(path, rules),
+        material_to_models=_bool(path, rules, ("rules", "material_to_models"), default=True),
+        declared_label=_label(path, rules),
         instances=_instances(path, doc),
         http=_http(path, doc, event),
         explicit=frozenset(stages),
@@ -1311,6 +1352,26 @@ def _max_lanes(path: Path, table: dict) -> int | None:
     if not _is_int(value) or value < 1:
         raise _error(path, ("rules", "max_lanes"), f"must be a whole number, at least 1{_got(value)}")
     return value
+
+
+def is_label(value: object) -> bool:
+    """Whether `value` can be a declared label: one line of a few words, in letters, digits,
+    spaces and hyphens (a flight card shows it, so nothing that could be an address, a path
+    or markup), at most MAX_LABEL characters, with a letter or a digit in it."""
+    return (isinstance(value, str) and 0 < len(value) <= MAX_LABEL and value == value.strip()
+            and all(ch.isalnum() or ch in " -" for ch in value) and any(ch.isalnum() for ch in value))
+
+
+def _label(path: Path, table: dict) -> str | None:
+    """rules.declared_label, with the space around it dropped. A value that is not a label is
+    never shown: it is the profile's text, which may be a teammate's."""
+    raw = _string(path, table, ("rules", "declared_label"))
+    if raw is None:
+        return None
+    label = raw.strip(" ")
+    if not is_label(label):
+        raise _error(path, ("rules", "declared_label"), f"must be {LABEL_SHAPE}")
+    return label
 
 
 # ---------------------------------------------------------------------- small helpers

@@ -39,6 +39,7 @@ class EventAnswers:
     flag_format: str | None = None  # a regular expression, or None for flightdeck's default
     submit: str = "confirm"
     team: bool = False
+    label: str | None = None  # the label the team declared to the event for its AI use (rules.declared_label), or None
 
 
 def slug(name: str) -> str:
@@ -177,6 +178,27 @@ def submit_answer(text: str) -> str:
     return choice
 
 
+LABEL_QUESTION = ("Label your team declared to the event for its AI use, in the event's words (like Human-Led AI); "
+                  "Enter if the event asks for none")
+AI_QUESTION = ("Do this event's rules allow AI agents to work on the challenges, with each challenge's text and files given to "
+               "a model? (flightdeck's lanes do both, and it does not play an event that forbids either)")
+AI_REFUSED = ("flightdeck's lanes are AI agents that are given each challenge's text and files, and this event's rules do not "
+              "allow that")
+
+
+def label_answer(text: str) -> str | None:
+    """The label the team declared to the event, as rules.declared_label takes it; None for
+    no answer (the event asks for none)."""
+    from .preflight import LABEL_SHAPE, is_label
+
+    label = text.strip(" ")
+    if not label:
+        return None
+    if not is_label(label):
+        raise StartError(f"give the label as {LABEL_SHAPE}, or nothing")
+    return label
+
+
 def url_answer(text: str) -> str:
     """The event site's address: http(s), a host, no login in it; a bare host gets https://."""
     from urllib.parse import urlsplit
@@ -259,9 +281,13 @@ def render(answers: EventAnswers) -> str:
         f"team = {'true' if answers.team else 'false'}",
         "",
         "[rules]",
-        "ai_allowed = true            # you said the event's rules allow AI tools",
+        "ai_allowed = true            # you said the event's rules allow AI agents on the challenges...",
+        "material_to_models = true    # ...and giving a model each challenge's text and files (every lane does)",
         f"platform_automation = {'true' if answers.platform == 'ctfd' else 'false'}   # may flightdeck pull and submit through the site's API",
         'live_targets = "confirm"     # a lane asks you before it reaches a challenge\'s instance ("allowed": never asks; "off": never reaches)',
+        (f"declared_label = {q(answers.label)}   # what your team declared to the event for its AI use: shown before a run and on its flight card"
+         if answers.label else
+         '# declared_label = "Human-Led AI"   # if the event has teams declare a label for their AI use: yours, in the event\'s words'),
         "",
         "[policies]",
     ]

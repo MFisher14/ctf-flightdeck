@@ -88,7 +88,8 @@ def test_an_auto_flag_goes_to_the_submitter_and_the_lane_carries_on_until_the_an
     assert (ch.status, ch.solved_by, ch.solves) == (ChallengeStatus.SOLVED, lane.id, 11)
     assert lane.state is LaneState.SOLVED and deck.submitting("c0") == ()
     (submit,) = events(deck, EventKind.SUBMIT)
-    assert submit.lane == lane.id and submit.data == {"flag": "t{c0}", "correct": True, "by": "platform", "detail": "Correct"}
+    assert submit.lane == lane.id and submit.data == {
+        "flag": "t{c0}", "correct": True, "by": "platform", "approved": False, "detail": "Correct"}  # it went out on its own
 
 
 def test_approving_a_flag_hands_it_over_answers_the_approval_and_the_verdict_comes_later():
@@ -108,6 +109,7 @@ def test_approving_a_flag_hands_it_over_answers_the_approval_and_the_verdict_com
     assert deck.challenges["c0"].status is ChallengeStatus.RUNNING
     assert "the platform's answer to t{wrong}: Incorrect" in notes(lane)
     assert events(deck, EventKind.SUBMIT)[-1].data["correct"] is False
+    assert events(deck, EventKind.SUBMIT)[-1].data["approved"] is True  # it went out on the player's yes: a solve record says so
 
 
 def test_no_verdict_from_the_platform_asks_the_player_to_submit_by_hand_and_says_why():
@@ -271,6 +273,7 @@ def test_an_answer_after_a_teammate_solved_the_challenge_is_recorded_and_reopens
     else:
         (event,) = late
         assert event.data["correct"] is ok and event.data["solved_meanwhile"] is True
+        assert event.data["approved"] is False  # sent on its own under auto, and said so here too
 
 
 def test_a_lane_that_gave_up_while_its_flag_was_on_its_way_ends_once_the_answer_is_in():

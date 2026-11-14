@@ -61,7 +61,10 @@ def start(
     token_from: Annotated[str | None, typer.Option("--token-env", metavar="NAME", help="The environment variable that holds your CTFd access token (ctfd): start "
                                                    "keeps the token in your keys file. No option takes the token itself.")] = None,
     token_stdin: Annotated[bool, typer.Option("--token-stdin", metavar="", help="Read your CTFd access token from standard input (ctfd): one line, from a pipe.")] = False,
-    ai_allowed: Annotated[bool, typer.Option("--ai-allowed", metavar="", help="The event's rules allow AI tools (asked at a terminal).")] = False,
+    ai_allowed: Annotated[bool, typer.Option("--ai-allowed", metavar="", help="The event's rules allow AI agents on the challenges, with each challenge's "
+                                             "text and files given to a model (asked at a terminal).")] = False,
+    label: Annotated[str | None, typer.Option("--label", metavar="TEXT", help="The label your team declared to the event for its AI use, in the event's "
+                                              "words (like \"Human-Led AI\"): shown before a run and on its flight card.")] = None,
     launch: Annotated[bool | None, typer.Option("--launch/--no-launch", metavar="", show_default=False, help="Play the event once it is set up (default: asked at a terminal).")] = None,
     config: Annotated[Path | None, typer.Option("--config", dir_okay=False, help="Config file (default: your config).")] = None,
 ) -> None:
@@ -74,7 +77,7 @@ def start(
     interactive = cli._at_terminal()
     as_options = [option for option, was_given in (  # the answers that came as options, before any is asked for
         ("--name", name is not None), ("--platform", platform is not None), ("--url", url is not None), ("--flag", flag is not None),
-        ("--submit", submit is not None), ("--vpn", vpn_file is not None), ("--token-env", token_from is not None),
+        ("--submit", submit is not None), ("--vpn", vpn_file is not None), ("--label", label is not None), ("--token-env", token_from is not None),
         ("--token-stdin", token_stdin)) if was_given]
 
     def ask(question: str, check, default: str | None = None, **more):
@@ -140,7 +143,7 @@ def start(
         missing = [text for text, absent in (
             ("--name NAME", name is None), ("--platform ctfd|manual", platform is None),
             ("--url URL", platform == "ctfd" and url is None),
-            ("--ai-allowed (the event's rules allow AI tools)", not ai_allowed),
+            ("--ai-allowed (the event's rules allow AI agents that are given the challenges' text and files)", not ai_allowed),
         ) if absent]
         if missing:
             _fail("start is not at a terminal, so it cannot ask: give " + ", ".join(missing) + " (see `flightdeck start --help`)")
@@ -162,9 +165,13 @@ def start(
     if unusable is not None:
         _fail(unusable)
     if not ai_allowed:
-        ai_allowed = typer.confirm("Do this event's rules allow AI tools? (flightdeck does not play an event that forbids them)", default=None)
+        ai_allowed = typer.confirm(events.AI_QUESTION, default=None)
         if not ai_allowed:
-            _fail("not set up: flightdeck's lanes are AI agents, and this event's rules do not allow them", status=1)
+            _fail(f"not set up: {events.AI_REFUSED}", status=1)
+    if label is not None:
+        label = given(label, "--label", events.label_answer)
+    elif interactive:
+        label = ask(events.LABEL_QUESTION, events.label_answer, "", show_default=False)
     platform = given(platform, "--platform", events.platform_answer) if platform is not None else ask(PLATFORM_MENU, events.platform_answer, "1")
     chosen = None
     if platform == "ctfd":
@@ -230,7 +237,8 @@ def start(
                                   "Enter if the event has none", default="", show_default=False, value_proc=vpn_answer) or None
 
     # ---- the folder and the event file: the first thing written
-    answers = events.EventAnswers(name=name, platform=platform, url=url, token_env=token_env, flag_format=flag_format, submit=submit)
+    answers = events.EventAnswers(name=name, platform=platform, url=url, token_env=token_env, flag_format=flag_format, submit=submit,
+                                  label=label)
     try:
         written = events.write(folder, answers)
     except events.StartError as exc:
@@ -269,6 +277,8 @@ def start(
         typer.echo(f"  {board}/   the challenges: one folder each, with its files and a challenge.json")
     if token_note:
         typer.echo(token_note)
+    if label:
+        typer.echo(f"label: {_show(label)} (what your team declared to the event; shown before each run and on its flight card)")
     if vpn_source is not None:
         try:
             kept = vpn.keep(folder, vpn_source)

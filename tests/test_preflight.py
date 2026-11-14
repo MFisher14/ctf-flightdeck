@@ -27,7 +27,9 @@ from ctf_flightdeck.core.interventions import Approve
 from ctf_flightdeck.core.model import Challenge, DeckConfig, LaneState, PendingKind
 from ctf_flightdeck.platform.manual import cannot_check
 from ctf_flightdeck.preflight import (
+    MAX_LABEL,
     MAX_PROFILE_BYTES,
+    NO_MATERIAL_TO_MODELS,
     STAGES,
     EventProfile,
     Policies,
@@ -1420,3 +1422,126 @@ def test_describe_shows_the_schedule(tmp_path):
     loaded, stages = load_profile(write(tmp_path, toml(event, RULES_OPEN)))
     lines = describe(loaded, stages, environ=TOKEN_SET)
     assert "schedule  starts 2026-11-14T09:00:00+00:00 (autopilot waits for the start and stops at the end)" in lines
+
+
+# ---------------------------------------------------------------------- 2026 rules: challenge material, a declared label
+
+NO_MATERIAL = {**RULES_OPEN, "material_to_models": "false"}
+STOPS_PLAY = ": `flightdeck play` plays with agent lanes, so it does not start. Play by hand; `flightdeck l1 run` runs your no-model solvers"
+
+
+def test_a_profile_that_says_neither_new_rule_allows_what_it_allowed_before(tmp_path):
+    loaded, stages = load_profile(write(tmp_path, toml(EVENT_CTFD, RULES_OPEN)))
+    assert loaded.material_to_models is True and loaded.declared_label is None
+    assert stages.agents is AUTO
+    lines = describe(loaded, stages, environ=TOKEN_SET)
+    assert lines[1] == "rules     AI allowed · platform automation allowed · live targets allowed"
+    assert not [line for line in lines if line.startswith("label")]
+
+
+def test_no_challenge_material_to_a_model_turns_agents_off_though_ai_is_allowed(tmp_path):
+    loaded, stages = load_profile(write(tmp_path, toml(EVENT_CTFD, NO_MATERIAL)))
+    assert loaded.ai_allowed is True and loaded.material_to_models is False
+    assert as_tuple(allowed(loaded)) == ("auto", "auto", "off", "auto", "auto")
+    assert stages.agents is OFF  # a profile with no [policies] gets the loosest its rules allow
+    assert as_tuple(allowed(profile(material_to_models=True))) == ("auto", "auto", "auto", "auto", "auto")
+
+
+def test_the_challenge_material_rule_has_a_refusal_of_its_own_that_names_it(tmp_path):
+    event = profile(material_to_models=False)
+    said = refusals(check(event, defaults(event), max_lanes=4, environ=TOKEN_SET))
+    assert said == [NO_MATERIAL_TO_MODELS + STOPS_PLAY]
+    assert "rules.material_to_models = false" in said[0] and "challenge material" in said[0]
+    assert "rules.ai_allowed" not in said[0]  # AI help is allowed here: this is not the no-AI refusal
+    no_ai = profile(ai_allowed=False, material_to_models=False)  # no AI at all is the wider rule, and is the one named
+    assert refusals(check(no_ai, defaults(no_ai), max_lanes=4, environ=TOKEN_SET)) == [
+        "the event's rules do not allow AI help (rules.ai_allowed = false), so agents are off" + STOPS_PLAY]
+
+
+@pytest.mark.parametrize("policy", [AUTO, CONFIRM, MANUAL])
+def test_an_agents_policy_looser_than_the_challenge_material_rule_is_refused_naming_that_rule(policy):
+    event = profile(material_to_models=False)
+    said = refusals(check(event, policies(agents=policy), max_lanes=4, environ=TOKEN_SET))
+    assert said[0] == f'the agents policy "{policy}" is looser than the rules allow (rules.material_to_models = false): it must be "off"'
+    assert check(profile(), policies(agents=policy), max_lanes=4, environ=TOKEN_SET) == ([] if policy is not MANUAL else no_lanes(profile(), policies(agents=policy)))
+
+
+def test_describe_names_the_challenge_material_rule_among_the_rules():
+    event = profile(material_to_models=False)
+    lines = describe(event, defaults(event), environ=TOKEN_SET)
+    assert lines[1] == "rules     AI allowed · platform automation allowed · live targets allowed · no challenge material to a model"
+    assert "agents    off      no model-driven lanes: `flightdeck play` does not start" in lines
+
+
+def test_preflight_refuses_a_profile_that_forbids_challenge_material_to_a_model(tmp_path, env):
+    path = write(tmp_path, toml(EVENT_CTFD, NO_MATERIAL))
+    result = invoke(str(path), "--config", str(config_file(tmp_path)))
+    assert result.exit_code == 2
+    assert "lanes     none (agents off)" in result.stdout
+    assert f"refuse: {NO_MATERIAL_TO_MODELS}{STOPS_PLAY}" in result.stdout
+    assert result.stdout.splitlines()[-1] == "preflight: refused (1 refusal): a run with this profile must not start"
+    allowed_again = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "material_to_models": "true"}), "open.toml")
+    assert invoke(str(allowed_again), "--config", str(config_file(tmp_path))).exit_code == 0
+
+
+def test_material_to_models_must_be_true_or_false(tmp_path):
+    path = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "material_to_models": '"no"'}))
+    assert load_error(path) == f"{path}: rules.material_to_models must be true or false (got a string)"
+
+
+@pytest.mark.parametrize("written, label", [
+    ('"Human-Led AI"', "Human-Led AI"),
+    ('"No AI"', "No AI"),
+    ('"Low-LLM"', "Low-LLM"),
+    ('"  Old Fashioned "', "Old Fashioned"),  # the space around it is not part of the label
+    ('"Catégorie 2"', "Catégorie 2"),
+])
+def test_a_declared_label_loads_as_the_events_own_words(tmp_path, written, label):
+    loaded, stages = load_profile(write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "declared_label": written})))
+    assert loaded.declared_label == label
+    assert stages == load_profile(write(tmp_path, toml(EVENT_CTFD, RULES_OPEN), "plain.toml"))[1]  # a label changes no policy
+
+
+def test_describe_shows_the_declared_label_and_that_nothing_is_checked_by_it(tmp_path):
+    event = profile(declared_label="Human-Led AI")
+    lines = describe(event, policies(submit=AUTO), environ=TOKEN_SET)
+    assert lines[2] == ("label     Human-Led AI (what your team declared to the event: rules.declared_label; flightdeck shows it "
+                        "and records it with the run, and checks nothing by it)")
+    assert check(event, policies(submit=AUTO), max_lanes=4, environ=TOKEN_SET) == []  # whatever it says, it refuses nothing
+
+
+@pytest.mark.parametrize("written", [
+    '"https://example.org/label"',  # an address
+    '"Human-Led\\nAI"',  # two lines (TOML's own escape)
+    '"<b>No AI</b>"',  # markup
+    '"../../etc"',  # a path
+    '"-- --"',  # no letter or digit
+    '"' + "A" * (MAX_LABEL + 1) + '"',
+    '"\\u202eIA oN"',  # a character that reorders the line (TOML's own escape)
+])
+def test_a_declared_label_that_is_not_a_few_plain_words_is_refused_without_being_shown(tmp_path, written):
+    path = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "declared_label": written}))
+    assert load_error(path) == (f"{path}: rules.declared_label must be a few words as the event writes them (letters, digits, "
+                                f"spaces and hyphens, at most {MAX_LABEL} characters)")
+
+
+@pytest.mark.parametrize("written, problem", [("7", "must be a string (got 7)"), ('""', "must not be empty"), ("true", "must be a string (got true)")])
+def test_a_declared_label_must_be_a_string_with_something_in_it(tmp_path, written, problem):
+    path = write(tmp_path, toml(EVENT_CTFD, {**RULES_OPEN, "declared_label": written}))
+    assert load_error(path) == f"{path}: rules.declared_label {problem}"
+
+
+def test_a_profile_built_in_code_takes_no_label_a_file_would_not():
+    assert profile(declared_label="A" * MAX_LABEL).declared_label == "A" * MAX_LABEL
+    for bad in ("", " Low AI", "Low AI\n", "a/b", "A" * (MAX_LABEL + 1)):
+        with pytest.raises(ValueError, match="declared_label must be a few words"):
+            profile(declared_label=bad)
+
+
+def test_the_example_profile_names_both_rules_and_still_loads(tmp_path):
+    text = example_profile()
+    assert "# material_to_models = false" in text and '# declared_label = "Human-Led AI"' in text
+    path = write(tmp_path, text.replace("# material_to_models = false", "material_to_models = false")
+                 .replace('# declared_label = "Human-Led AI"', 'declared_label = "Human-Led AI"'))
+    loaded, stages = load_profile(path)
+    assert (loaded.material_to_models, loaded.declared_label, stages.agents) == (False, "Human-Led AI", OFF)

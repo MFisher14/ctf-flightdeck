@@ -150,11 +150,16 @@ def test_the_new_ctf_form_says_what_is_missing_and_ends_with_the_event_it_descri
         await pilot.press("ctrl+s")
         assert "rules forbid" in problem() and app.return_value is None  # the AI question is never assumed
         form.query_one("#ai").value = "yes"
+        form.query_one("#label").value = "see https://example.org"
+        await pilot.press("ctrl+s")
+        assert "give the label as a few words" in problem() and app.return_value is None  # no label: said while the form is open
+        form.query_one("#label").value = "Human-Led AI"
         assert form.query_one("#token").password is True
         await pilot.press("ctrl+s")
 
     kind, new = drive_home(homes.items(have_config=True), script)
     assert kind == "new" and new.folder == tmp_path / "home" / "ctf" / "example-ctf-2026"
+    assert new.answers.label == "Human-Led AI"
     assert (new.answers.platform, new.answers.url, new.answers.token_env) == ("ctfd", "https://ctf.example.org", "CTFD_TOKEN_EXAMPLE_CTF_2026")
     assert (new.token, new.vpn) == ("ctfd_synthetic", vpn_file)
 
