@@ -183,6 +183,41 @@ def _may_pass(status: int | None) -> bool:
     return status is not None and (status in RETRY_STATUSES or status >= 500)
 
 
+class Outage:
+    """The lanes that ended in a row on a model API failure that may pass, and when: the
+    run's count, which says when such failures are an outage (AgentDriver's lanes, and the
+    coding-agent CLIs' of agent/external.py, P78). An outage is OUTAGE_LANES lanes or more
+    ending that way in a row: no reply from the model API in between (answered() clears the
+    count), and each within OUTAGE_SECONDS of the one before.
+
+    While the hold it led to stands, each further lane ending this way is of the same
+    outage. Once the player has lifted that hold, the count starts again."""
+
+    def __init__(self) -> None:
+        self.lanes: list[tuple[str, float]] = []
+
+    def ended(self, lane_id: str, deck) -> list[str]:
+        """`lane_id` ended on a failure that may pass: the lanes of the outage it belongs to
+        once it looks like one, else []. The caller holds the deck's queue on them."""
+        now = deck.now
+        lifted = len(self.lanes) >= OUTAGE_LANES and not deck.held  # we held the queue, and the player lifted it
+        if lifted or (self.lanes and now - self.lanes[-1][1] > OUTAGE_SECONDS):
+            self.lanes.clear()
+        self.lanes.append((lane_id, now))
+        return [lane for lane, _ in self.lanes] if len(self.lanes) >= OUTAGE_LANES else []
+
+    def answered(self) -> None:
+        """The model API answered a lane: the failures before it were no outage that lasts."""
+        self.lanes.clear()
+
+
+def outage_hold(ended: Sequence[str], last: str) -> str:
+    """The reason the queue is held on an outage: the lanes it ended (Outage.ended), and
+    what the last of them failed on (`last`)."""
+    return (f"the model API keeps failing: {len(ended)} lanes in a row ended on it ({', '.join(ended)}) with no reply "
+            f"in between. Lift the hold once it answers again: the challenges they parked are queued again. {last}")
+
+
 def web_origins(urls: Sequence[str]) -> tuple[str, ...]:
     """The http(s) origins among a challenge's instances: the http tool's. A TCP service
     (tcp://host:port, what `nc host port` reaches) is the shell's."""
@@ -393,7 +428,7 @@ class AgentDriver:
         self.runs: dict[str, _Run] = {}
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
         self.answered: set[str] = set()  # the models that have answered a lane in this run
-        self.outage: list[tuple[str, float]] = []  # lanes that ended in a row on a failure that may pass, and when (_outage)
+        self.outage = Outage()  # lanes that ended in a row on a failure that may pass (_outage)
         self.deck = None
         self.lights = lights  # the run's light engines (light.Lights): route and recon at a lane's start; None: none
         self.looks = FirstLooks(self.errors)
@@ -832,12 +867,7 @@ class AgentDriver:
         else:
             ended = self._outage(run, error)
             if ended:
-                self.deck.hold_queue(
-                    f"the model API keeps failing: {len(ended)} lanes in a row ended on it ({', '.join(ended)}) with no reply "
-                    f"in between. Lift the hold once it answers again: the challenges they parked are queued again. "
-                    f"{run.lane_id}'s call to {model}: {error}",
-                    ended=ended,
-                )
+                self.deck.hold_queue(outage_hold(ended, f"{run.lane_id}'s call to {model}: {error}"), ended=ended)
         usage = error.usage
         self._apart(run, model, usage)  # before the lane ends: then nothing more is reported
         tokens = usage.total if usage else 0
@@ -874,28 +904,18 @@ class AgentDriver:
     def _outage(self, run: _Run, error: ModelError) -> list[str]:
         """Count a failure that ended this lane for good and may pass (_may_pass: a rate limit,
         a 5xx, Anthropic's 529), and return the lanes of the outage it belongs to once it
-        looks like one, else []. An outage is OUTAGE_LANES lanes or more ending that way in
-        a row: no reply from the model API in between (_answered clears the count), and each
-        within OUTAGE_SECONDS of the one before. Only failures that reach _failed count: not a
+        looks like one, else [] (Outage). Only failures that reach _failed count: not a
         superseded call's (_overtaken), nor one a [fallback] API took over. Lanes share one
-        model API (the driver's client), so the count is the run's.
-
-        While the hold it led to stands, each further lane ending this way is of the same
-        outage. Once the player has lifted that hold, the count starts again."""
+        model API (the driver's client), so the count is the run's."""
         if error.declined or not _may_pass(error.status):
             return []
-        now = self.deck.now
-        lifted = len(self.outage) >= OUTAGE_LANES and not self.deck.held  # we held the queue, and the player lifted it
-        if lifted or (self.outage and now - self.outage[-1][1] > OUTAGE_SECONDS):
-            self.outage.clear()
-        self.outage.append((run.lane_id, now))
-        return [lane_id for lane_id, _ in self.outage] if len(self.outage) >= OUTAGE_LANES else []
+        return self.outage.ended(run.lane_id, self.deck)
 
     def _answered(self, model: str) -> None:
         """The model API answered a lane's call: `model` is known to answer in this run, and
         whatever failures came before were not an outage that still lasts."""
         self.answered.add(model)
-        self.outage.clear()
+        self.outage.answered()
 
     def _overtaken(self, run: _Run, messages: list[dict], hints: list[str], notes: list[str],
                    usage: Usage | None = None, model: str = "", *, declined: bool = False) -> None:

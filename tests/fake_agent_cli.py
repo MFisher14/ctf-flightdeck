@@ -27,6 +27,12 @@ Claude Code: `claude -p --input-format stream-json --output-format stream-json -
   the message's id and usage (ASSUMED: the same usage on each); one `user` event per
   tool_result; at the end of the turn a `result` event: subtype, is_error, num_turns,
   result, session_id, total_cost_usd (ASSUMED: counted from the start of the process), usage.
+- A model call that keeps failing (the headless docs, "Handle API retries"; the Agent SDK's
+  message types): a system/api_retry event per retry (attempt, error_status, error: its
+  category such as rate_limit, overloaded, server_error), then, once the retries run out,
+  an assistant message carrying the category in `error` whose text is "API Error: ..."
+  (ASSUMED: its model is "<synthetic>", with no usage), and a result with is_error true
+  and api_error_status (the HTTP status, or null with no HTTP answer).
 - Tools: --tools lists what exists (others: "No such tool available"). With
   --permission-prompts none, what would ask for permission is refused (ASSUMED: its exact
   meaning), so a Bash command runs only when allowed (--allowedTools Bash, or
@@ -69,7 +75,10 @@ process, in order across processes. When the turns run out, the fake answers not
 (claude reads on; codex waits until it is signalled).
 - claude TURN: {"calls": [CALL, ...], "cost": dollars for the turn (null: no total_cost_usd),
   "result": text, "subtype": "success", "is_error": false, "linger": seconds it takes, once
-  SIGINT cuts the turn, before it reports it (a slow wrap-up)}. CALL: {"think": seconds,
+  SIGINT cuts the turn, before it reports it (a slow wrap-up), "api_error": {"status": HTTP
+  status or null, "error": category, "retries": n, "result_status": false (no
+  api_error_status on the result), "message_error": false (no `error` on the message)}: the
+  turn ends on a model call that kept failing, after its calls}. CALL: {"think": seconds,
   "until": path (it thinks until that file exists: the model answers when the test says),
   "raw": [lines], "stderr": line, "spawn": [{"cmd": [...], "session": bool}], "exit": status,
   "ignore": ["INT", "TERM"] (from then on those signals are ignored: a hung CLI),
@@ -350,11 +359,17 @@ def claude_turn(turn: dict, state: dict, session: str, model: str, tools: set[st
                         "parent_tool_use_id": None, "session_id": session, "uuid": str(uuid.uuid4()),
                     })
             cost = turn.get("cost", 0.0)
+            failure = turn.get("api_error")
+            if failure is not None:
+                said = api_failure(failure, session)
             event = {
-                "type": "result", "subtype": turn.get("subtype", "success"), "is_error": bool(turn.get("is_error", False)),
+                "type": "result", "subtype": turn.get("subtype", "success"),
+                "is_error": bool(turn.get("is_error", failure is not None)),
                 "duration_ms": 1000, "duration_api_ms": 800, "num_turns": calls, "result": turn.get("result", said),
                 "session_id": session, "usage": total, "permission_denials": [], "uuid": str(uuid.uuid4()),
             }
+            if failure is not None and failure.get("result_status", True):
+                event["api_error_status"] = failure.get("status")
             if cost is not None:
                 state["cost"] += cost
                 event["total_cost_usd"] = round(state["cost"], 6)
@@ -371,6 +386,27 @@ def claude_turn(turn: dict, state: dict, session: str, model: str, tools: set[st
             })
     finally:
         state["in_turn"] = False
+
+
+def api_failure(failure: dict, session: str) -> str:
+    """A model call that kept failing until claude's retries ran out: one system/api_retry
+    event per retry, then the assistant message claude makes of the failure (its error
+    category in `error`; model "<synthetic>" and no usage: ASSUMED), whose text is the
+    turn's result. Returns that text."""
+    status, category = failure.get("status"), failure.get("error", "unknown")
+    for attempt in range(1, int(failure.get("retries", 2)) + 1):
+        emit({"type": "system", "subtype": "api_retry", "attempt": attempt, "max_retries": 10, "retry_delay_ms": 1,
+              "error_status": status, "error": category, "session_id": session, "uuid": str(uuid.uuid4())})
+    text = failure.get("text", f"API Error: {status} {category}" if status is not None else "API Error: Connection error.")
+    message = {"id": "msg_" + uuid.uuid4().hex[:24], "type": "message", "role": "assistant", "model": "<synthetic>",
+               "content": [{"type": "text", "text": text}], "stop_reason": "stop_sequence", "stop_sequence": "",
+               "usage": {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}
+    event = {"type": "assistant", "message": message, "parent_tool_use_id": None, "session_id": session,
+             "uuid": str(uuid.uuid4())}
+    if failure.get("message_error", True):
+        event["error"] = category
+    emit(event)
+    return text
 
 
 def tool_use(spec: dict) -> dict:
