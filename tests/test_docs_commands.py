@@ -258,14 +258,69 @@ def test_the_quickstart_names_the_home_screens_choices_as_the_home_screen_does()
     assert '"Get started", its first choice, is a form:' in guide and "`ctrl+s` saves it" in guide
 
 
-def test_the_three_keys_the_quickstart_names_do_in_the_console_what_it_says():
+def welcome_screen(monkeypatch, tmp_path) -> str:
+    """What the welcome screen says on a board with challenges, as one line: the mock's, which
+    opens on the same rows a first practice run does."""
+    import asyncio
+
+    from ctf_flightdeck.console.app import FlightdeckApp
+    from ctf_flightdeck.mock import scenarios
+    from ctf_flightdeck.mock.world import FakeWorld
+    from test_console import prompt_text
+
+    monkeypatch.setenv("HOME", str(tmp_path))  # no config of the player's: the mock reads its look from one
+    monkeypatch.delenv("FLIGHTDECK_CONFIG", raising=False)
+
+    async def main() -> str:
+        world = FakeWorld(scenarios.get("default"))
+        app = FlightdeckApp(world.deck, ticker=world.tick, tick_seconds=None, refresh_seconds=None, mock="MOCK", welcome=True)
+        async with app.run_test(size=(160, 46)) as pilot:
+            await pilot.pause()
+            assert type(app.screen).__name__ == "WelcomeScreen"
+            return prompt_text(app)
+
+    return asyncio.run(main())
+
+
+def test_the_three_keys_the_quickstart_names_are_the_welcome_screens_in_its_words_and_do_that(monkeypatch, tmp_path):
+    """The README and the guide name the three keys the welcome screen names, each with the
+    meaning that screen gives it, so a player reads the same words twice; and each key is
+    bound in the console to what those words say."""
     from ctf_flightdeck.console import fleet
 
     bound = {binding.key: binding.action for binding in fleet.FleetScreen.BINDINGS}
     assert fleet.OPEN_KEY == ("o", "enter", "open") and bound["a"] == "lane('approve')" and bound["question_mark"] == "app.help"
-    said = "Enter opens a lane to watch it and talk to it, `a` approves a flag a lane found, and `?` lists every other key"
+    opens, approves, every = "open a lane to watch it and talk to it", "approve a flag an agent found", "every key, any time"
+    welcome = welcome_screen(monkeypatch, tmp_path)
+    assert "You only need three things:" in welcome
+    for row in (f"enter {opens}", f"a {approves} (d declines it)", f"? {every}"):
+        assert row in welcome, (row, welcome)
+    said = f"Enter to {opens}, `a` to {approves}, and `?` for {every}"
     assert said in flat(section(read(README), "## Quickstart")).replace("**", "")
     assert said in flat(section(read(GUIDE), "## Install and first run"))
+
+
+def test_the_readme_says_of_the_mock_and_of_the_solver_pack_what_the_program_says_of_them():
+    """The mock is told of once, under "Try it": what it needs is the released README's list
+    with the API key named, and its last two claims are the `mock` command's own. The
+    quickstart's first line points back at it and does not tell it again; the install line's
+    comment is the guide's. The solver pack's sentence has the home screen's count and its
+    "run first on every challenge", with "no-model" said in the words "What it is" uses."""
+    from ctf_flightdeck.console import home
+
+    readme = read(README)
+    tried, quick = flat(section(readme, "## Try it in ten seconds")), flat(section(readme, "## Quickstart"))
+    assert "on scripted data: no install, no API key, no network, nothing spent." in tried
+    assert flat(cli.mock.__doc__).endswith("no network, nothing spent.")
+    assert "uvx ctf-flightdeck mock # the demo from above: the console, before you set anything up " in quick
+    installs = "uv tool install ctf-flightdeck # installs the flightdeck command"
+    assert installs + " (uv brings the Python it needs) " in quick
+    assert installs + " " in flat(section(read(GUIDE), "## Install and first run"))
+    pack = next(item for item in home.items(have_config=True) if item.choice == ("pack",))
+    assert pack.detail == "some 800 no-model solvers that run first on every challenge"
+    assert "(the ones that need no model)" in flat(section(readme, "## What it is"))
+    assert ("`flightdeck pack install` adds flightdeck's solver pack: some 800 solvers that need no model and run first on every "
+            "challenge. Installing it takes `uv` and `git`.") in quick
 
 
 # What the README calls a key with no more said, in the order it says it: each is one the
@@ -274,8 +329,8 @@ def test_the_three_keys_the_quickstart_names_do_in_the_console_what_it_says():
 KEYBOARD = [
     "step in with one key.",
     "and one key sends a hint",
-    "You need three keys:",
-    "lists every other key.",
+    "names the three keys to begin with:",
+    "`?` for every key, any time.",
     "every key the console takes",
     "`?` for every key.",
     "and the keys that apply now.",

@@ -87,9 +87,9 @@ In a script or a pipe `flightdeck` alone asks nothing and prints these commands 
 
 **Your first console.** The first console you open, and the mock, start on a welcome screen: what
 the board, the lanes and the command bar are, and the keys you need; Enter goes on (on an empty
-board, to adding your first challenge). In the console you need three keys to begin with: Enter
-opens a lane to watch it and talk to it, `a` approves a flag a lane found, and `?` lists every other
-key ([The console](#the-console)).
+board, to adding your first challenge). With challenges on the board it names three keys to begin
+with: Enter to open a lane to watch it and talk to it, `a` to approve a flag an agent found, and `?`
+for every key, any time ([The console](#the-console)).
 
 **When something is missing.** `flightdeck doctor` checks Python, the config, the variables that
 hold your API keys, a local model server and its models, the light model, Docker, the lane image and

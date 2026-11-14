@@ -20,9 +20,9 @@ One terminal console: every challenge, every agent, every flag. You step in with
 uvx ctf-flightdeck mock
 ```
 
-That opens flightdeck's screen, the console, on scripted data: no install, no account, no API key,
-no network, nothing spent. `uvx` comes with [uv](https://docs.astral.sh/uv/getting-started/installation/),
-which brings its own Python. (No uv? `pipx run ctf-flightdeck mock` does the same.)
+That opens flightdeck's screen, the console, on scripted data: no install, no API key, no network,
+nothing spent. `uvx` comes with [uv](https://docs.astral.sh/uv/getting-started/installation/), which
+brings its own Python. (No uv? `pipx run ctf-flightdeck mock` does the same.)
 
 ## What it is
 
@@ -67,8 +67,8 @@ OpenRouter or OpenAI) with credit on it, or a model on your own machine (Ollama,
 then works in a container of its own.
 
 ```sh
-uvx ctf-flightdeck mock          # look first: the console on fake data, nothing installed, nothing spent
-uv tool install ctf-flightdeck   # install it (uv brings the Python it needs)
+uvx ctf-flightdeck mock          # the demo from above: the console, before you set anything up
+uv tool install ctf-flightdeck   # installs the flightdeck command (uv brings the Python it needs)
 flightdeck                       # open the home screen, and choose "Get started"
 ```
 
@@ -86,9 +86,9 @@ The setup form came after 0.4.0 (`flightdeck --version` says which you have). On
 started" asks the same at the prompt and goes on to set up an event: for the practice set, run
 the four commands under "The same by command" below instead.
 
-The console opens on a welcome screen that says what you are looking at. You need three keys:
-**Enter** opens a lane to watch it and talk to it, `a` approves a flag a lane found, and `?` lists
-every other key.
+The console opens on a welcome screen that says what you are looking at and names the three keys
+to begin with: **Enter** to open a lane to watch it and talk to it, `a` to approve a flag an agent
+found, and `?` for every key, any time.
 
 From then on `flightdeck` is all you type. Its home screen resumes an event you played before,
 starts a new one (a form: the event's name, its site, your access token for it, its VPN file),
@@ -127,9 +127,8 @@ give its budget in tokens (`--budget-tokens`). Autopilot loosens no rule: where 
 `confirm`, flags and live instances still wait for you
 ([Autopilot](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/GUIDE.md#autopilot)).
 
-Optional, once you have played: `flightdeck pack install` adds flightdeck's solver pack, some 800
-ready-made solver scripts that run on every challenge before any model does (it needs `uv` and
-`git`).
+Optional, once you have played: `flightdeck pack install` adds flightdeck's solver pack: some 800
+solvers that need no model and run first on every challenge. Installing it takes `uv` and `git`.
 
 **Everything else is in the
 [player's guide](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/GUIDE.md):** the
