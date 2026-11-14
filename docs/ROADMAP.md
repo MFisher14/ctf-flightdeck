@@ -5,7 +5,7 @@ What is released, what comes next, what is still open, and how the first release
 
 ## Built, not released: a calmer console, themes, plugins (2026-11-14)
 
-Three proposals, built and waiting for a release (P51 to P53 in [DECISIONS.md](DECISIONS.md);
+Proposals built and waiting for a release (P51 to P53 and P56 in [DECISIONS.md](DECISIONS.md);
 the lines for players are under Unreleased in [CHANGELOG.md](../CHANGELOG.md)).
 
 - **The simple layout** (P51). The console opens on one list of lanes, a short header and the
@@ -19,8 +19,18 @@ the lines for players are under Unreleased in [CHANGELOG.md](../CHANGELOG.md)).
   player's own that flightdeck runs out of process: `flightdeck plugin new`, `add` and `pull`,
   and `platform = "NAME"` in the event profile ([PLUGINS.md](PLUGINS.md)).
 
+- **The http platform** (P56). An event on a platform with a JSON API, played from a table of
+  routes in the event profile with no code of the player's: `platform = "http"`, an `[http]`
+  table, rCTF as its first preset, and `flightdeck http example`, `check` and `pull`
+  ([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)).
+
 Known limits, each said where it applies:
 
+- The rctf preset has met a stand-in only: it was written from rCTF's public source and tested
+  against a fake that answers in that shape on 127.0.0.1, never a real rCTF.
+- The http platform does not page a listing, download through a route per challenge, send a
+  form-encoded body or a CSRF header, or start an instance; `flightdeck start` and the home
+  screen's form do not offer it.
 - No plugin has met a real platform: the plugin path was built against synthetic plugins and a
   stand-in on 127.0.0.1.
 - A plugin is not sandboxed: it runs as the player, and `plugin add` says so before it asks.

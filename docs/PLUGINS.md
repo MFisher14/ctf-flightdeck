@@ -6,6 +6,12 @@ list, which flightdeck runs when it needs one of the three. You write it for the
 front of you, usually in an afternoon, and flightdeck does the rest as it does for CTFd: the
 queue, the lanes, your approvals, the resend of a rate-limited flag, the solved list.
 
+Before you write one: if the platform's own web page talks JSON to the site, an `[http]` table
+in the event profile may be all it takes, with no code at all
+([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)); rCTF is a preset there. A
+plugin is for what a table cannot say: HTML pages, a login with a password, encrypted
+requests, pages of a listing.
+
 A plugin is not a solver pack and not a CTFd plugin:
 
 - A **pack** ([SOLVERS.md](SOLVERS.md)) is your no-model solvers, which work a challenge. A
@@ -65,7 +71,7 @@ token = true                            # optional
 
 | Key | Required | What it is |
 |---|---|---|
-| `name` | yes | The platform's name, which an event profile's `platform` selects: lower-case letters, digits, `-` and `_`, starting with a letter, at most 32 characters. Not `ctfd`, `manual` or `gamemaster`. It must be the name of its `[plugins.NAME]` table in your config. |
+| `name` | yes | The platform's name, which an event profile's `platform` selects: lower-case letters, digits, `-` and `_`, starting with a letter, at most 32 characters. Not `ctfd`, `manual`, `gamemaster` or `http`. It must be the name of its `[plugins.NAME]` table in your config. |
 | `api` | yes | The plugin API it speaks, a whole number. This flightdeck speaks 1. |
 | `command` | yes | A list of words, at most 32: the program and its arguments. The first word is `{python}` (flightdeck's own interpreter), a file inside the plugin's folder (it must be executable, and no link may lead out of the folder), or a program on your `PATH`. |
 | `version` | no | One line of at most 32 characters, shown by `plugin add`. |
@@ -99,7 +105,7 @@ live_targets = "confirm"
 ```
 
 The profile only selects the plugin. A profile may be a teammate's, so it cannot allow one: a
-`platform` that is not `ctfd`, `manual` or `gamemaster` and not a plugin in **your** config is
+`platform` that is not `ctfd`, `manual`, `gamemaster` or `http` and not a plugin in **your** config is
 refused, by `flightdeck preflight` and by `play`. It is never played as a folder board in its
 place, and nothing shows the profile's word for it until your config has made it a name.
 
@@ -357,8 +363,8 @@ Each of these names the plugin and says what to do.
   this flightdeck (0.4.0) speaks 1: update flightdeck, or use the plugin's release for API 1`;
   `plugin myctf: command names a file outside the plugin's folder`; `plugin myctf: command's
   program is not in the plugin's folder and not on PATH`.
-- **The profile names no plugin of yours:** `event.platform is not "ctfd", "manual" or
-  "gamemaster", and names no plugin in your config (your config has: myctf). ` followed by how
+- **The profile names no plugin of yours:** `event.platform is not "ctfd", "manual",
+  "gamemaster" or "http", and names no plugin in your config (your config has: myctf). ` followed by how
   to add one.
 - **The profile is missing something:** `event.url is required for a plugin's platform: the
   address its adapter talks to`; `event.token_env is required for platform "myctf": the name of

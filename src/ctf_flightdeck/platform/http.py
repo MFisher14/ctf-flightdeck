@@ -99,7 +99,9 @@ MAX_BODY_DEPTH = 4
 MAX_TABLE_KEYS = 64  # keys of a body or a verdict table
 MAX_PROBLEMS = 20  # challenges a pull names as left out; the rest are counted
 MAX_VALUE = 200  # characters of a verdict value, a game or a pending word
-TIMEOUT = 20.0  # seconds one request may take
+TIMEOUT = 20.0  # seconds a request may wait for a connection, and for each part of its answer
+DEADLINE = 30.0  # seconds a request and its whole answer may take (a plugin's submit has as long)
+FILE_SECONDS = 600.0  # seconds one file's download may take
 RELOGIN_SECONDS = 300.0  # an exchanged session the platform refuses (401) is asked for again, this often at most
 POLL_EVERY = (0.2, 30.0)  # seconds between two looks at a submission
 POLL_AT_MOST = (1, 30)  # looks at a submission
@@ -369,6 +371,9 @@ def parse_config(table: object) -> HttpConfig:
         for name, route in config_routes(config):
             if "{game}" in route.path:
                 raise ValueError(f"http.{name}.request has {{game}} in its path, and the table has no game: set http.game")
+        for name, body in (("auth", config.auth.body), ("submit", config.submit.body if config.submit is not None else None)):
+            if body is not None and "{game}" in json.dumps(body):
+                raise ValueError(f"http.{name}.body has {{game}} in it, and the table has no game: set http.game")
     return config
 
 
@@ -693,11 +698,14 @@ class HttpCaller:
     pull_command = PULL_COMMAND
     source = NAME
 
-    def __init__(self, config: HttpConfig, url: str, token: str, *, timeout: float = TIMEOUT, max_file_bytes: int = MAX_FILE_BYTES) -> None:
+    def __init__(self, config: HttpConfig, url: str, token: str, *, timeout: float = TIMEOUT, deadline: float = DEADLINE,
+                 file_seconds: float = FILE_SECONDS, max_file_bytes: int = MAX_FILE_BYTES) -> None:
         self.config = config
         self.url = url
         self.token = token or ""
         self.timeout = timeout
+        self.deadline = deadline  # a server that answers a byte at a time never outlasts it
+        self.file_seconds = file_seconds
         self.max_file_bytes = max_file_bytes
         self.sleep: Callable[[float], Awaitable[None]] = asyncio.sleep  # between two looks at a submission
         self._base = _base_url(url)
@@ -1119,11 +1127,14 @@ class HttpCaller:
             headers["Content-Type"] = "application/json"
         failure, sent = None, False
         try:
-            async with http.stream(route.method, target, headers=headers, content=data) as response:
-                status, got = response.status_code, response.headers
-                raw = await _read_body(response, limit)
+            async with asyncio.timeout(self.deadline):
+                async with http.stream(route.method, target, headers=headers, content=data) as response:
+                    status, got = response.status_code, response.headers
+                    raw = await _read_body(response, limit)
         except httpx.HTTPError as exc:  # never chained: its request holds the token
             failure, sent = type(exc).__name__, not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+        except TimeoutError:
+            failure, sent = f"no whole answer within {self.deadline:g} s", True
         if failure is not None:
             raise _NoAnswer(f"{endpoint} got no answer ({failure})", timed_out=sends_flag and sent)
         if raw is None:
@@ -1182,15 +1193,18 @@ class HttpCaller:
             headers = await self._auth(http) if not left_origin and self.config.files_auth else {}
             failure = location = None
             try:
-                async with client.stream("GET", target, headers={**headers, "Accept": "*/*"}) as response:
-                    status = response.status_code
-                    if 300 <= status < 400:
-                        location = response.headers.get("location") or ""
-                    elif 200 <= status < 300:
-                        await self._save(response, dest, name)
-                        return
+                async with asyncio.timeout(self.file_seconds):
+                    async with client.stream("GET", target, headers={**headers, "Accept": "*/*"}) as response:
+                        status = response.status_code
+                        if 300 <= status < 400:
+                            location = response.headers.get("location") or ""
+                        elif 200 <= status < 300:
+                            await self._save(response, dest, name)
+                            return
             except httpx.HTTPError as exc:  # never chained: its request may hold the token
                 failure = type(exc).__name__
+            except TimeoutError:
+                raise _Skip(f"its file {_quote(name)} was not all here within {self.file_seconds:g} s: fetch it by hand") from None
             if failure is not None:
                 if left_origin:
                     raise _Skip(f"its file {_quote(name)} could not be fetched from {_origin_text(target)} ({failure})")

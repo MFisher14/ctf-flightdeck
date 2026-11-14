@@ -4,6 +4,15 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- A platform with a JSON API, with no code of yours: `platform = "http"` and an `[http]` table
+  in `event.toml` say how the platform's API is asked, and flightdeck pulls the board, submits
+  the flags you approve and reads the solved list itself. rCTF ships as a preset (`preset =
+  "rctf"`, with your team token in a variable named `RCTF_...`). `flightdeck http example`
+  prints a profile to edit, `flightdeck http check EVENT.toml` signs in, lists and reads the
+  solved list and shows what each path of the table matched (it submits nothing), and
+  `flightdeck http pull` writes the board outside a run. `flightdeck preflight` prints every
+  request such a profile makes and where your token goes. The preset has met a stand-in only,
+  not a real rCTF yet. A plugin can no longer be named `http`.
 - A lane can look at a picture: flightdeck's own lanes have a `view_image` tool that shows the
   model a PNG, JPEG, GIF or WebP file in the lane's workspace, as it is (at most 4.5 MB, never
   scaled down). When your model's API will not take a picture, or the `[fallback]` model a lane

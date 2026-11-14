@@ -154,6 +154,7 @@ def test_a_preset_flightdeck_does_not_have_is_refused_and_its_name_is_not_shown(
     (table(**{"list.file_names": "$.files[*].name"}), "http.list.file_names names the files of http.list.file_urls, which is missing"),
     (table(files_auth="yes"), "http.files_auth must be true or false: whether a file on the event's own address is asked for with the token"),
     (table(**{"list.request": ["GET", "/api/{game}/tasks"]}), "http.list.request has {game} in its path, and the table has no game: set http.game"),
+    (table(**{"submit.body": {"flag": "{flag}", "event": "{game}"}}), "http.submit.body has {game} in it, and the table has no game: set http.game"),
 ])
 def test_a_table_that_is_not_one_is_refused_by_the_key(config, said):
     assert refused(config) == said
@@ -749,6 +750,21 @@ def test_a_sign_in_whose_answer_holds_no_session_token_is_a_failure_by_name():
             assert str(failure(rctf(fake).solved())) == ("could not sign in: POST /api/v1/auth/login answered, but auth.token_path "
                                                          "($.data.authToken) matched no session token in its answer")
         assert fake.kinds() == ["login", "login"]
+
+
+def test_an_answer_that_comes_a_byte_at_a_time_does_not_outlast_the_deadline(tmp_path):
+    """Each byte arrives in time for the transport, so only a deadline for the whole answer ends it."""
+    slow = Reply(200, {"ids": ["x" * 400]}, drip=0.02)
+    with FakeSite(lambda request: slow) as fake:
+        error = failure(caller(fake, deadline=0.3).solved())
+        sent = failure(caller(fake, deadline=0.3).submit("7", "t{x}"))
+    assert str(error) == "GET /api/solved got no answer (no whole answer within 0.3 s)" and not error.timed_out
+    assert sent.timed_out  # the flag left: it may have arrived
+    with FakeSite(lambda request: Reply(200, {"tasks": [{"id": 1, "title": "Slow File", "f": "/f/big.bin"}]})
+                  if request.route == "/api/tasks" else Reply(200, b"x" * 400, drip=0.02)) as fake:
+        reply = run(caller(fake, table(**{"list.file_urls": "$.f"}), file_seconds=0.3).pull(tmp_path))
+    assert reply.challenges == () and reply.problems == ('Slow File: its file "big.bin" was not all here within 0.3 s: fetch it by hand',)
+    assert not (tmp_path / "0000" / "big.bin").exists()
 
 
 def test_an_answer_bigger_than_its_limit_is_refused():

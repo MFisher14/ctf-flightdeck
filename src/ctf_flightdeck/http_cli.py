@@ -76,7 +76,7 @@ def example_profile(routes: bool = False) -> str:
 
 @app.command("example")
 def example(
-    routes: Annotated[bool, typer.Option("--routes", help="Write every route out under [http] (rCTF's), to edit for another platform.")] = False,
+    routes: Annotated[bool, typer.Option("--routes", metavar="", help="Write every route out under [http] (rCTF's), to edit for another platform.")] = False,
 ) -> None:
     """Print an event profile for the http platform, to edit: `flightdeck http example > event.toml`."""
     typer.echo(example_profile(routes), nl=False)
