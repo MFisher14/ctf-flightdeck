@@ -267,7 +267,9 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
 
     def action_paste_image(self) -> None:
         """ctrl+v: the image on the clipboard becomes a file, and is attached. The clipboard
-        tool runs in a thread. (Text is pasted the terminal's own way: cmd+v, or ctrl+shift+v.)"""
+        tool runs in a thread. (Text is pasted the terminal's own way: cmd+v, or ctrl+shift+v.)
+        Also what a paste of nothing does (FlightdeckApp.empty_paste): where ctrl+v is the
+        terminal's own paste key, that is all of the key that arrives."""
         if self.paster is None:
             self._say("pasting an image is not available here; drag the file in")
             return

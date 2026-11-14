@@ -1028,6 +1028,59 @@ def test_the_clipboard_tool_runs_off_the_ui_thread_and_the_keys_go_on(tmp_path):
     in_console(tmp_path, body)
 
 
+def test_a_paste_of_nothing_in_the_form_pastes_the_clipboards_image_and_elsewhere_says_where_one_goes(tmp_path):
+    """Windows Terminal and Alacritty send an empty paste when their paste key is pressed and
+    the clipboard holds no text. ctrl+v is that key in Windows Terminal, so flightdeck never
+    sees the key itself: the empty paste is what is left of it."""
+    shot = tmp_path / "clip.png"
+    shot.write_bytes(PNG)
+    calls = []
+
+    def paster():
+        calls.append(1)
+        return shot
+
+    async def body(run, app, pilot):
+        app.paster = paster
+        bar = app.screen.query_one("#bar-input")
+        await app.on_event(events.Paste(""))  # outside the form: nothing is read, and a line says where an image goes
+        await pilot.pause()
+        assert calls == [] and bar.value == ""
+        assert app._status == ("nothing to paste: the clipboard holds no text. A screenshot on it: /new, then ctrl+v in "
+                               "the form; a file: drag it onto this window", "information", app._status[2])
+        await pilot.press(*"/new Shot", "enter")
+        await pilot.pause()
+        form = app.screen
+        await app.on_event(events.Paste(""))  # in the form: what ctrl+v does
+        await until(pilot, lambda: form.files == [shot])
+        assert calls == [1] and form.query_one("#new-text").text == ""
+        assert "pasted the clipboard's image as clip.png" in said(form)
+        await app.on_event(events.Paste(" "))  # a space is text, not nothing
+        await pilot.pause()
+        assert calls == [1] and form.query_one("#new-text").text == " "
+        await pilot.press("escape")
+
+    in_console(tmp_path, body)
+
+
+def test_a_paste_of_nothing_is_nothing_on_a_board_that_takes_no_files(tmp_path):
+    from ctf_flightdeck.console.app import FlightdeckApp
+    from ctf_flightdeck.mock import scenarios
+    from ctf_flightdeck.mock.world import FakeWorld
+
+    async def main():
+        world = FakeWorld(scenarios.get("sstv"))
+        app = FlightdeckApp(world.deck, ticker=world.tick, mock="MOCK · test", refresh_seconds=None)
+        async with app.run_test(size=(160, 46)) as pilot:
+            await pilot.pause()
+            app._status = None
+            await app.on_event(events.Paste(""))
+            await pilot.pause()
+            assert app._status is None and app.screen is app.fleet
+
+    asyncio.run(main())
+
+
 def test_new_and_attach_copy_in_a_thread_and_say_so_while_the_console_goes_on(tmp_path, monkeypatch):
     import threading
 

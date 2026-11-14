@@ -308,9 +308,10 @@ class FlightdeckApp(App[None]):
         is, they go where files belong (take_drop) instead of into whatever widget had the
         focus; any other paste, and any other key, goes on as usual. A paste that reads as
         dropped files, one of which is not on this machine, also gets a line that says why
-        (say_not_there)."""
+        (say_not_there), and a paste of nothing is the terminal's paste key pressed on a
+        clipboard that holds no text (empty_paste)."""
         if isinstance(event, events.Paste) and not event.is_forwarded:
-            if self.take_drop(event.text):
+            if self.empty_paste() if event.text == "" else self.take_drop(event.text):
                 return
             self.say_not_there(event.text)  # and the text goes on, as any paste
         if isinstance(event, events.Key) and not event.is_forwarded:  # (forwarded: one a widget passed back up)
@@ -424,6 +425,24 @@ class FlightdeckApp(App[None]):
             await super().on_event(events.Paste(text))
             return
         self._type(keys)
+
+    def empty_paste(self) -> bool:
+        """Whether a paste of nothing was taken. A terminal that sends one (Windows Terminal
+        and Alacritty do) is saying its paste key was pressed and the clipboard holds no
+        text: nearly always an image. In the /new form that is ctrl+v, so the image is read
+        from the clipboard with the system's own tool; anywhere else on a board that takes
+        files, a line says where an image goes. It is never taken for anything on a board
+        that takes none."""
+        from .screens import NewChallengePrompt
+
+        if self.adder is None:
+            return False
+        if isinstance(self.screen, NewChallengePrompt):
+            self.screen.action_paste_image()
+        else:
+            self.say("nothing to paste: the clipboard holds no text. A screenshot on it: /new, then ctrl+v in the form; "
+                     "a file: drag it onto this window")
+        return True
 
     def say_not_there(self, text: str) -> bool:
         """Whether `text` reads as dropped files of which one is not on this machine, on a
