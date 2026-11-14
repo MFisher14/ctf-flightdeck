@@ -1292,6 +1292,24 @@ def test_files_dropped_on_a_board_that_takes_none_are_refused_aloud_and_their_ke
     asyncio.run(main())
 
 
+def test_the_form_and_the_attach_command_say_what_to_do_when_a_dropped_file_does_not_land(tmp_path):
+    """A terminal may keep a drop to itself, and flightdeck is then sent nothing: the way that always works is on screen."""
+    from test_console import screen_text
+
+    async def body(run, app, pilot):
+        await pilot.press(*"/new", "enter")
+        await pilot.pause()
+        shown = " ".join(" ".join(str(part.render()).split()) for part in app.screen.query("Static"))
+        assert "Files: ctrl+o, or drag them in (if none lands, use ctrl+o)" in shown
+        assert "ctrl+o choose files" in " ".join(shown.split())
+        await pilot.press("escape")
+        await pilot.press(*"/att")  # the command menu, at /attach
+        await pilot.pause()
+        assert "add files to a challenge (drag them here, or none to choose)" in " ".join(screen_text(app).split())
+
+    in_console(tmp_path, body)
+
+
 def test_ctrl_o_and_a_bare_attach_open_the_file_window_and_take_what_was_chosen(tmp_path, monkeypatch):
     from ctf_flightdeck import filepick
 

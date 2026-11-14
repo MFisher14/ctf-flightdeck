@@ -153,8 +153,9 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
     description as the site shows it, and its files. The box is text and stays text: nothing
     in it is taken for a file (addchallenge.parse reads only the instance's address, on a line
     of its own). Files are attached by handing them over: ctrl+o (the file window), ctrl+v
-    (the clipboard's image), or a drop, which arrives as a paste that is only paths
-    (FlightdeckApp.take_drop); the line under the box shows each one.
+    (the clipboard's image), or a drop, which arrives as a paste that is only paths, or as
+    the same text typed all at once (FlightdeckApp.take_drop, take_keys); the line under the
+    box shows each one. A terminal may keep a drop to itself: the form says ctrl+o for that.
 
     ctrl+s checks the challenge and hands it to `adder`, which copies the files off the UI
     thread. The form closes once the challenge is added, with what to tell the player (None:
@@ -291,8 +292,8 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
                 yield Static(Text("Name, as the site shows it:"), classes="muted")
                 yield Input(value=self.given_name, placeholder="e.g. Crab Walk", id="new-name")
                 yield Static(Text("Its description: paste it as the site shows it (it stays as you give it; a path in it is only "
-                                  "text). Files: ctrl+o, or drag them in; the line under the box says what is attached. Put the "
-                                  "target's address (https://... or nc host port) on a line of its own:"), classes="muted")
+                                  "text). Files: ctrl+o, or drag them in (if none lands, use ctrl+o); the line under the box names "
+                                  "them. Put the target's address (https://... or nc host port) on a line of its own:"), classes="muted")
                 yield TextArea(id="new-text", soft_wrap=True, show_line_numbers=False)
                 yield Static(Text("no file attached", style="bold"), id="new-attached")
                 with Horizontal():

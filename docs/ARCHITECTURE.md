@@ -942,6 +942,7 @@ makes false for a server on this machine when unset and true for any other), and
 [Notifications](#notifications)). `[console]` has the console's `layout` and `theme`
 ([Layouts and themes](#layouts-and-themes)): the theme's palette is loaded with the config
 (`ConsoleConfig.palette`), from a built-in or from `themes/NAME.toml` beside the config file.
+Its `mouse` (default true) is whether the console's driver asks the terminal to report the mouse.
 `[plugins.NAME]` tables, each with a `path`, name the plugins the player added
 ([Plugins](#plugins)): only the names and the paths are checked here.
 
