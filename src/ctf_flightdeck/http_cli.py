@@ -36,7 +36,7 @@ EXAMPLE = """\
 name = "Example Quals"
 platform = "http"
 url = "https://ctf.example.org"     # the platform's address: every route is a path under it
-token_env = "RCTF_TOKEN"            # the NAME of the variable that holds your token: it starts with HTTP_ or RCTF_
+token_env = "RCTF_TOKEN"            # the NAME of the variable that holds your token: RCTF_..., HTTP_TOKEN or HTTP_TOKEN_...
 board = "board"                     # the folder the challenges are pulled into, beside this file
 # flag_format = "example\\\\{[^}]+\\\\}"  # a regular expression for the event's flags
 
@@ -68,8 +68,8 @@ def example_profile(routes: bool = False) -> str:
 
     table = re.sub(r"(?m)^\[([a-z.]+)\]$", r"[http.\1]", preset_text("rctf"))
     table = "\n".join(line for line in table.splitlines() if not line.startswith("#")).strip("\n")
-    own = EXAMPLE.replace('token_env = "RCTF_TOKEN"            # the NAME of the variable that holds your token: it starts with HTTP_ or RCTF_',
-                          'token_env = "HTTP_TOKEN"            # the NAME of the variable that holds your token: it starts with HTTP_')
+    own = EXAMPLE.replace('token_env = "RCTF_TOKEN"            # the NAME of the variable that holds your token: RCTF_..., HTTP_TOKEN or HTTP_TOKEN_...',
+                          'token_env = "HTTP_TOKEN"            # the NAME of the variable that holds your token: HTTP_TOKEN or HTTP_TOKEN_...')
     assert own != EXAMPLE
     return own + ROUTES_HEAD + table + "\n"
 

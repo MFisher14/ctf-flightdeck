@@ -97,24 +97,38 @@ def test_a_table_written_out_is_named_as_such_and_a_key_under_a_preset_shows_in_
     assert describe(loaded, chosen, environ={})[0] == "event     Example Quals · http (the routes of its [http] table) at https://ctf.example.org · solo"
 
 
+NOT_NAMED = ("a variable that is not named for this platform (its name is not HTTP_TOKEN and does not start with HTTP_TOKEN_ or "
+             "RCTF_), so it may hold another service's or another event's secret")
+PROXY = "a proxy setting, whose value is a proxy's address and often the password for it"
+
+
 @pytest.mark.parametrize("variable, http, why", [
     ("RCTF_TOKEN", PRESET, None),
     ("RCTF_TOKEN_QUALS_2026", PRESET, None),
     ("HTTP_TOKEN", PRESET, None),
-    ("HTTP_EXAMPLE_TOKEN", PRESET, None),
-    ("CTFD_TOKEN", PRESET, "a variable that is not named for this platform (its name does not start with HTTP_ or RCTF_), so it may "
-                           "hold another service's or another event's secret"),
-    ("MY_RCTF_TOKEN", PRESET, "a variable that is not named for this platform (its name does not start with HTTP_ or RCTF_), so it may "
-                              "hold another service's or another event's secret"),
+    ("HTTP_TOKEN_EXAMPLE", PRESET, None),
+    ("CTFD_TOKEN", PRESET, NOT_NAMED),
+    ("MY_RCTF_TOKEN", PRESET, NOT_NAMED),
+    ("HTTP_EXAMPLE_TOKEN", PRESET, NOT_NAMED),  # HTTP_ alone names no platform: other programs' settings start with it
+    ("HTTP_TOKENS", PRESET, NOT_NAMED),
+    ("HTTP_PASSWORD", PRESET, NOT_NAMED),
+    ("HTTP_AUTHORIZATION", PRESET, NOT_NAMED),  # what a CGI server calls a request's Authorization header
+    ("HTTP_COOKIE", PRESET, NOT_NAMED),
+    ("HTTP_PROXY", PRESET, PROXY),
+    ("HTTP_PROXY_PASSWORD", PRESET, PROXY),
+    ("HTTPS_PROXY", PRESET, PROXY),
+    ("ALL_PROXY", PRESET, PROXY),
     ("OPENAI_API_KEY", PRESET, "a variable for another service's key"),
     ("GITHUB_TOKEN", PRESET, "a variable for another service's key"),
-    ("STRIPE_SECRET_KEY", PRESET, "a name ending in _SECRET_KEY like other services' key variables (a name that starts with HTTP_ or "
-                                  "RCTF_ is fine)"),
+    ("STRIPE_SECRET_KEY", PRESET, "a name ending in _SECRET_KEY like other services' key variables (HTTP_TOKEN, or a name that starts "
+                                  "with HTTP_TOKEN_ or RCTF_, is fine)"),
 ])
 def test_the_token_variable_of_an_http_profile_is_one_named_for_the_platform(tmp_path, variable, http, why):
     """The profile names the variable and the address its value goes to, and it may be a
-    teammate's: it cannot name a CTFd token, another service's key or anything else."""
-    refusals, warnings = checked(tmp_path, token_env=variable, http=http, environ={variable: "set"})
+    teammate's: it cannot name a CTFd token, another service's key, a proxy's address or
+    anything else. The value of a refused variable is in no message."""
+    value = "http://someone:a-password-that-stays-home@proxy.example.test:8080"
+    refusals, warnings = checked(tmp_path, token_env=variable, http=http, environ={variable: value})
     if why is None:
         assert refusals == [] and not any("token" in warning for warning in warnings)
     else:
@@ -122,11 +136,33 @@ def test_the_token_variable_of_an_http_profile_is_one_named_for_the_platform(tmp
                             f"value to {URL}. Name the variable that holds your token for it, like RCTF_TOKEN"]
 
 
-def test_without_a_preset_only_the_http_prefix_names_the_platform(tmp_path):
+def test_without_a_preset_only_http_token_names_the_platform(tmp_path):
     routes = http_cli.example_profile(routes=True).split("[http.auth]", 1)[1]
     refusals, _ = checked(tmp_path, token_env="RCTF_TOKEN", http=None, extra="[http.auth]" + routes)
-    assert len(refusals) == 1 and "its name does not start with HTTP_)" in refusals[0] and refusals[0].endswith("like HTTP_TOKEN")
-    assert checked(tmp_path, token_env="HTTP_TOKEN", http=None, extra="[http.auth]" + routes, environ={"HTTP_TOKEN": "x"})[0] == []
+    assert len(refusals) == 1 and "(its name is not HTTP_TOKEN and does not start with HTTP_TOKEN_)" in refusals[0]
+    assert refusals[0].endswith("like HTTP_TOKEN")
+    refusals, _ = checked(tmp_path, token_env="HTTP_PROXY", http=None, extra="[http.auth]" + routes, environ={"HTTP_PROXY": "x"})
+    assert len(refusals) == 1 and PROXY in refusals[0] and refusals[0].endswith("like HTTP_TOKEN")
+    for variable in ("HTTP_TOKEN", "HTTP_TOKEN_QUALS"):
+        assert checked(tmp_path, token_env=variable, http=None, extra="[http.auth]" + routes, environ={variable: "x"})[0] == []
+
+
+def test_a_profile_that_names_the_proxy_variable_sends_its_value_nowhere(tmp_path, own_config, monkeypatch):
+    """HTTP_PROXY starts with HTTP_ and is no token: its value is a proxy's address, often
+    with the password in it, and the sign-in request's body would carry it whole."""
+    secret = "http://someone:a-password-that-stays-home@proxy.example.test:8080"
+    monkeypatch.setenv("HTTP_PROXY", secret)
+    with FakeRCTF(sample()) as fake:
+        for command in ("check", "pull"):
+            result = invoke(command, event_file(tmp_path, fake.url, token_env="HTTP_PROXY"))
+            assert result.exit_code == 2 and f"event.token_env names HTTP_PROXY, {PROXY}, not a token" in result.output
+            assert "a-password-that-stays-home" not in result.output
+        with FakeModelServer(responder=Model({})) as server, pytest.raises(RunError) as refused:
+            options = run_options(tmp_path, fake.url, server, pull="auto", submit="auto")
+            event_file(tmp_path, fake.url, token_env="HTTP_PROXY", board=str(tmp_path / "board"), pull="auto", submit="auto")
+            prepare_run(options)
+        assert PROXY in str(refused.value) and "a-password-that-stays-home" not in str(refused.value)
+        assert fake.requests == []
 
 
 def test_no_secret_the_players_config_names_is_an_http_events_token_whatever_its_name(tmp_path):
@@ -331,6 +367,7 @@ def test_http_pull_refuses_a_folder_that_holds_another_board(tmp_path, own_confi
     ({"token_env": None}, True, 'flightdeck: event.token_env is required for platform "http": the name of the environment variable that '
                                 "holds your token\n"),
     ({"token_env": "CTFD_TOKEN"}, True, "Name the variable that holds your token for it, like RCTF_TOKEN\n"),
+    ({"token_env": "HTTP_PROXY_PASSWORD"}, True, "Name the variable that holds your token for it, like RCTF_TOKEN\n"),
     ({}, False, f"flightdeck: the token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put {TOKEN_VAR}=<token> in your "
                 "keys file or export it, then try again\n"),
     ({"board": None}, True, "flightdeck: name the board folder: `flightdeck http pull EVENT.toml FOLDER`, or set event.board in the profile\n"),

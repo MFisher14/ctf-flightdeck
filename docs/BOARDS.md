@@ -390,11 +390,13 @@ request with where the token goes before anything runs:
 - **One address.** A route is a path under `event.url`: no scheme, no host, no `..`. Your token
   and the session token go to that address and nowhere else, and a redirect is never followed
   with them.
-- **A token variable named for the platform.** `token_env` must start with `HTTP_` or, with a
-  preset, with the preset's name (`RCTF_TOKEN`, `RCTF_TOKEN_QUALS`). A profile cannot name your
-  CTFd token, a model key, a variable your config names for a secret, or anything else. The
-  profile still names the address, so read `preflight`'s `token` line before you play a profile
-  you did not write.
+- **A token variable named for the platform.** `token_env` must be `HTTP_TOKEN`, a name that
+  starts with `HTTP_TOKEN_` (`HTTP_TOKEN_QUALS`) or, with a preset, a name that starts with the
+  preset's (`RCTF_TOKEN`, `RCTF_TOKEN_QUALS`). `HTTP_` alone is not enough: other programs name
+  their own settings that way, and `HTTP_PROXY` holds a proxy's address, often with its
+  password. A profile cannot name your CTFd token, a model key, a proxy setting, a variable
+  your config names for a secret, or anything else. The profile still names the address, so
+  read `preflight`'s `token` line before you play a profile you did not write.
 - **Five placeholders and no more:** `{ref}`, `{flag}`, `{game}`, `{submission}` and, in the
   sign-in body only, `{token}`. A challenge's name, text or file names can never be put into a
   request. A placeholder in a path is percent-encoded whole; in a body it is a JSON string.
@@ -468,7 +470,7 @@ to the Game Master and reads its solved list; under `manual` or `off` it contact
 not at all. Set `flag_format` in the profile only to override the board's.
 
 An event on a platform with a JSON API says `platform = "http"`, with the platform's `url`, a
-`token_env` whose name starts with `HTTP_` (or the preset's name: `RCTF_`), the `board` folder
+`token_env` named `HTTP_TOKEN` or `HTTP_TOKEN_...` (or, with a preset, `RCTF_...`), the `board` folder
 and an `[http]` table: a preset, or the platform's routes
 ([A board from a platform with a JSON API](#a-board-from-a-platform-with-a-json-api)).
 

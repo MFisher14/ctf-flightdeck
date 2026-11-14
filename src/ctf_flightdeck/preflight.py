@@ -41,9 +41,10 @@ An "http" profile carries an [http] table (platform/http.py): the routes of the 
 API, or a preset that ships with flightdeck (rctf). The table is data, not code, so the
 profile may carry it, a teammate's too: every route is a path under event.url, the token goes
 nowhere else, and describe() prints each request and where the token goes before anything
-runs. The token variable must be named for the platform (HTTP_..., or the preset's name:
-RCTF_TOKEN), so a profile cannot name another event's or another service's secret. It plays as
-a plugin's platform does: flightdeck pulls the board, submits and reads the solved list.
+runs. The token variable must be named for the platform (HTTP_TOKEN, HTTP_TOKEN_..., or the
+preset's name: RCTF_TOKEN), so a profile cannot name another event's or another service's
+secret, nor a proxy's address (HTTP_PROXY). It plays as a plugin's platform does: flightdeck
+pulls the board, submits and reads the solved list.
 
 Any other platform name selects a plugin (plugins/): a program the player added with
 `flightdeck plugin add`, which pulls, submits and reads the solved list for a platform
@@ -143,6 +144,11 @@ token_env names one would have flightdeck send that key to the platform's URL.""
 OTHER_SERVICE_SUFFIXES = ("_API_KEY", "_AUTH_TOKEN", "_OAUTH_TOKEN", "_ACCESS_KEY", "_SECRET_KEY", "_PRIVATE_KEY", "_SESSION_TOKEN")
 """How other services' key variables are usually named, so OTHER_SERVICE_KEYS need not list
 them all. A name with CTFD in it is taken for a CTFd token's variable even so (CTFD_API_KEY)."""
+
+_PROXY_VARIABLE = re.compile(r"(?:HTTPS?|ALL|FTP|NO)_PROXY(?:_[A-Z0-9_]*)?")
+"""The proxy settings many programs read (HTTP_PROXY, and names made from it): a proxy's
+address, often with its user name and password. HTTP_PROXY starts with HTTP_ as the http
+platform's own token variables do, so it is told apart by name (http_token_env)."""
 
 _TABLES = ("event", "rules", "policies", "instances", "http")
 _EVENT_KEYS = ("name", "platform", "url", "token_env", "board", "flag_format", "team", "start", "end")
@@ -571,28 +577,33 @@ def http_token_env(name: str, http: HttpConfig, config: Config | None, url: str)
     """Why event.token_env = `name` cannot be the token variable of an event on the http
     platform, or None when it can. The profile names the variable and the address its value
     is sent to, and the profile may be a teammate's, so the only variable it can name is one
-    named for this kind of platform: its name starts with HTTP_ or, with a preset, with the
-    preset's name and a _ (RCTF_TOKEN, RCTF_TOKEN_QUALS). Never a variable the player's
-    config names for a secret of its own, nor one of OTHER_SERVICE_KEYS, whatever their
-    names. So a CTFd token, another service's key and a secret no list knows stay where they
+    named for this kind of platform (HttpConfig.names_token): HTTP_TOKEN, a name that starts
+    with HTTP_TOKEN_ or, with a preset, with the preset's name and a _ (RCTF_TOKEN,
+    RCTF_TOKEN_QUALS). A name that only starts with HTTP_ is not one: HTTP_PROXY holds a
+    proxy's address and often its password. Never a variable the player's config names for a
+    secret of its own, nor one of OTHER_SERVICE_KEYS, whatever their names. So a CTFd token,
+    another service's key, a proxy's password and a secret no list knows stay where they
     are. `config`: the player's config when it could be read."""
-    prefixes = http.variable_prefixes
+    prefix = http.variable_prefix
     setting = config_secrets(config).get(name) if config is not None else None
     where = f" ({setting} in your config)" if setting else ""
-    fine = " or ".join(prefixes)
+    starts = f"{http_platform.TOKEN_VARIABLE}_" + (f" or {prefix}" if prefix else "")
     if setting == "notify.webhook_env":
         what = "the variable that holds your notification webhook's URL"
     elif setting or name in OTHER_SERVICE_KEYS:
         what = "a variable for another service's key"
-    elif name.startswith(prefixes):
+    elif http.names_token(name):
         return None
+    elif _PROXY_VARIABLE.fullmatch(name):
+        what = "a proxy setting, whose value is a proxy's address and often the password for it"
     else:
         suffix = next((suffix for suffix in OTHER_SERVICE_SUFFIXES if name.endswith(suffix)), None)
-        what = (f"a name ending in {suffix} like other services' key variables (a name that starts with {fine} is fine)" if suffix
-                else f"a variable that is not named for this platform (its name does not start with {fine}), so it may hold "
-                     "another service's or another event's secret")
+        what = (f"a name ending in {suffix} like other services' key variables ({http_platform.TOKEN_VARIABLE}, or a name that "
+                f"starts with {starts}, is fine)" if suffix
+                else f"a variable that is not named for this platform (its name is not {http_platform.TOKEN_VARIABLE} and does not "
+                     f"start with {starts}), so it may hold another service's or another event's secret")
     return (f"event.token_env names {name}{where}, {what}, not a token for this platform: flightdeck would send its value "
-            f"to {untrusted(url, one_line=True)}. Name the variable that holds your token for it, like {prefixes[-1]}TOKEN")
+            f"to {untrusted(url, one_line=True)}. Name the variable that holds your token for it, like {http.variable_example}")
 
 
 def _check_http(
@@ -618,7 +629,7 @@ def _check_http(
     variable = profile.token_env
     if variable is None:
         refuse.append('event.token_env is required for platform "http": the name of the environment variable that holds your '
-                      f"token (the token itself never goes in the profile), like {http.variable_prefixes[-1]}TOKEN")
+                      f"token (the token itself never goes in the profile), like {http.variable_example}")
     elif (wrong := http_token_env(variable, http, model_config if isinstance(model_config, Config) else None,
                                   profile.url or "(no url)")) is not None:
         refuse.append(wrong)

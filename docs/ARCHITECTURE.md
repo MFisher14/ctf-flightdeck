@@ -671,8 +671,9 @@ runs. It reuses the plugin's run side whole through one protocol.
   is a `CallFailed` with `timed_out`, which the link words as "it may have reached the
   platform".
 - **Pre-flight** (`preflight._check_http`, `http_token_env`, `describe`): no leave from the
-  config is needed; the token variable must start with `HTTP_` or the preset's name, and is
-  never one the config names for a secret; the board folder is inside the profile's own;
+  config is needed; the token variable must be `HTTP_TOKEN`, start with `HTTP_TOKEN_` or start with
+  the preset's name (never `HTTP_PROXY` or another `HTTP_...` setting), and is never one the
+  config names for a secret; the board folder is inside the profile's own;
   `describe()` prints `http.plan()`: each request and where the token goes.
 - **In a run**: `run._adapter` makes the caller for a plugin or for http, and everything after
   it (`_plugin_first`, `PluginLink`, the by-hand rules) is shared. `flightdeck http check` is

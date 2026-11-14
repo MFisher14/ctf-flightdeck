@@ -81,6 +81,7 @@ LABEL = "the http adapter"  # how messages name it, where a plugin's say "the NA
 PULL_COMMAND = "flightdeck http pull"
 PRESETS = ("rctf",)  # http_presets/NAME.toml
 PRESET_DIR = "platform/http_presets"
+TOKEN_VARIABLE = "HTTP_TOKEN"  # event.token_env of a profile with no preset: this, or this and _NAME (HttpConfig.names_token)
 
 AUTH_KINDS = ("bearer", "token", "header", "cookie", "exchange")
 SCHEMES = ("Bearer", "Token")
@@ -308,10 +309,25 @@ class HttpConfig:
     preset: str | None = None  # the preset it started from, for messages
 
     @property
-    def variable_prefixes(self) -> tuple[str, ...]:
-        """What the name of the event's token variable may start with: HTTP_, or the preset's
-        name in capitals and a _ (RCTF_TOKEN)."""
-        return ("HTTP_",) + ((self.preset.upper().replace("-", "_") + "_",) if self.preset else ())
+    def variable_prefix(self) -> str | None:
+        """With a preset, what the name of the event's token variable may start with: the
+        preset's name in capitals and a _ (RCTF_)."""
+        return self.preset.upper().replace("-", "_") + "_" if self.preset else None
+
+    def names_token(self, name: str) -> bool:
+        """Whether `name` is a variable named for an event's token on this platform:
+        TOKEN_VARIABLE, a name that starts with it and a _ (HTTP_TOKEN_QUALS) or, with a
+        preset, a name that starts with the preset's (RCTF_TOKEN). HTTP_ alone is not enough:
+        it names no platform, and other programs' settings start with it (HTTP_PROXY is a
+        proxy's address, often with its password; a CGI server's HTTP_AUTHORIZATION)."""
+        prefix = self.variable_prefix
+        return name == TOKEN_VARIABLE or name.startswith(f"{TOKEN_VARIABLE}_") or (prefix is not None and name.startswith(prefix))
+
+    @property
+    def variable_example(self) -> str:
+        """A name the event's token variable can have, for messages."""
+        prefix = self.variable_prefix
+        return f"{prefix}TOKEN" if prefix else TOKEN_VARIABLE
 
 
 _TOP = ("preset", "game", "files_auth", "auth", "list", "detail", "submit", "solved")

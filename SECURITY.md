@@ -40,8 +40,9 @@ problem: report it privately, never in a public issue.
   profile may be a teammate's, and its table of routes is taken from it without asking your
   config, so these count: your token or the session token sent anywhere but the event's own
   address (a request to another host, a redirect followed with it, a file fetched from another
-  host with it); a token variable taken that is not named for the platform (`HTTP_...`, or the
-  preset's `RCTF_...`) or that your config names for a secret of its own; anything of a
+  host with it); a token variable taken that is not named for the platform (`HTTP_TOKEN`,
+  `HTTP_TOKEN_...`, or the preset's `RCTF_...`), such as `HTTP_PROXY`, or that your config
+  names for a secret of its own; anything of a
   challenge but its id and the flag put into a request; a header of the table's choosing; a
   flag sent twice by flightdeck itself, or recorded as wrong when no rule of the table says so;
   a web page read as an answer; a file written outside the board's challenge folders.
