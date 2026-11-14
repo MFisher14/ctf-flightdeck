@@ -21,8 +21,10 @@ lane that needs something, and a key line of the keys that apply to the selected
 `space` peeks at the selected lane: a panel between the lane list and the why line with the
 last rows of the lane's log (views.peek), so a hint or a redirect can be chosen without
 leaving the list. It follows the selection, stays open until `space` or `esc` closes it, and
-takes its rows from the lane list, which keeps PEEK_LANE_ROWS and scrolls (peek_rows). In every
-layout; closed, the view is as it was.
+takes its rows from the lane list, which keeps PEEK_LANE_ROWS and scrolls (peek_rows). It is
+sized for the rows the lanes panel has as laid out (LanesPane): the command menu and a status
+line of more than one row take theirs from the panel, and the peek gives them up, oldest row
+first, before the list gives up one of its own. In every layout; closed, the view is as it was.
 
 At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: each lane's
 row has what needs you, the lane, its challenge, state and cost; the why line has six rows,
@@ -72,6 +74,11 @@ LANE_PADDING = 1  # cells each side of a cell of the lane list (DataTable.cell_p
 FLEET_ROWS = 13
 # The compact layout: no gap under the header or over the why line, and a why line of six rows.
 COMPACT_FLEET_ROWS = FLEET_ROWS - 2 - views.WHY_ROWS + views.COMPACT_WHY_ROWS
+# Of those, the rows inside the lanes panel's border: the lane list's column labels, the why
+# line and the gap over it (the compact layout has no gap). The rest of the panel's rows are
+# the lane rows and the peek's.
+PANEL_ROWS = 1 + 1 + views.WHY_ROWS
+COMPACT_PANEL_ROWS = 1 + views.COMPACT_WHY_ROWS
 # The compact layout's key line: (binding key or "" for no binding, key as shown, label).
 COMPACT_KEYS = (
     ("a", "a", "yes"), ("d", "d", "no"), ("", "1-9", "answer"), ("slash", "/", "cmd"),
@@ -107,11 +114,19 @@ def lane_rows(lines: int, *, compact: bool = False) -> int:
     return max(0, lines - (COMPACT_FLEET_ROWS if compact else FLEET_ROWS))
 
 
+def peek_rows_in(room: int) -> int:
+    """How many rows of a lane's log the peek shows where the lane list and the peek have
+    `room` rows between them: views.PEEK_ROWS where there is room, fewer where the lane list
+    would be left under PEEK_LANE_ROWS rows (it keeps them and scrolls), and 0 where not one
+    row fits under them and the peek's rule."""
+    return max(0, min(views.PEEK_ROWS, room - PEEK_LANE_ROWS - PEEK_TITLE_ROWS))
+
+
 def peek_rows(lines: int, *, compact: bool = False) -> int:
-    """How many rows of a lane's log the peek shows on a terminal `lines` tall: views.PEEK_ROWS
-    where there is room, fewer on a short terminal, where the lane list keeps PEEK_LANE_ROWS
-    rows and scrolls, and 0 where not one row fits under them and the peek's rule."""
-    return max(0, min(views.PEEK_ROWS, lane_rows(lines, compact=compact) - PEEK_LANE_ROWS - PEEK_TITLE_ROWS))
+    """How many rows of a lane's log the peek shows on a terminal `lines` tall, while the
+    status line is one row and the command menu is closed (each row of theirs is one fewer for
+    the list and the peek: FleetScreen.peek_room)."""
+    return peek_rows_in(lane_rows(lines, compact=compact))
 
 
 def peek_lines_needed(*, compact: bool = False) -> int:
@@ -135,6 +150,20 @@ class FittedTable(DataTable):
             screen._set_columns()
             if screen.peek and self.id == "lanes" and self.row_count:
                 self.move_cursor(row=self.cursor_row, animate=False, scroll=True)
+
+
+class LanesPane(Vertical):
+    """The lanes panel: the lane list, the peek and the why line. When its own height changes
+    the peek is sized again for the rows the panel has now. The terminal's height does not say
+    how many those are: the command menu, and a status line that wraps, take rows from the
+    panel, and a peek sized without them would leave the list its column labels and lose its
+    own newest rows off the panel's bottom edge. The panel's height does not depend on the
+    peek's, so sizing the peek here does not come round again."""
+
+    def on_resize(self, event: events.Resize) -> None:
+        screen = self.screen
+        if isinstance(screen, FleetScreen) and screen._ready:
+            screen._render_peek()
 
 
 class FleetScreen(Screen, inherit_bindings=False):
@@ -213,7 +242,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         with Horizontal(id="main"):
             with Vertical(id="board-pane", classes="panel"):
                 yield FittedTable(id="board", cursor_type="row")
-            with Vertical(id="lanes-pane", classes="panel"):
+            with LanesPane(id="lanes-pane", classes="panel"):
                 yield FittedTable(id="lanes", cursor_type="row")
                 yield Static(id="peek")
                 yield Static(id="why")
@@ -235,7 +264,6 @@ class FleetScreen(Screen, inherit_bindings=False):
         changed = self._fit_layout(event.size.width)
         self._show_keys(event.size.width)
         self._fit_board(event.size.width)
-        self._render_peek(event.size.height)  # a taller or shorter terminal has more or fewer rows for it
         self.call_after_refresh(self._set_columns)
         if changed:  # the header and the why line are drawn another way
             self.call_after_refresh(self.refresh_view)
@@ -446,12 +474,19 @@ class FleetScreen(Screen, inherit_bindings=False):
             self.fd.deck, self.sort, self.filter_text, board_hidden=self.board_hidden, compact=self.compact, simple=self.simple
         )
 
-    def _render_peek(self, height: int | None = None) -> None:
+    def peek_room(self) -> int:
+        """The rows the lane list and the peek have between them now: the lanes panel's, as it
+        is laid out, less its column labels and the why line. It is lane_rows() of the terminal
+        less every row the command menu and a status line of more than one row take."""
+        panel = self.query_one("#lanes-pane").size.height
+        return max(0, panel - (COMPACT_PANEL_ROWS if self.compact else PANEL_ROWS))
+
+    def _render_peek(self) -> None:
         """The peek, while it is open: the lane the keys and the command bar act on (bar_lane),
-        in the rows a terminal `height` lines tall has for it (peek_rows; None: this one). The
-        lanes panel's bottom border says how to open it or close it, or that the terminal is
-        too short to show it."""
-        rows = peek_rows(self.size.height if height is None else height, compact=self.compact) if self.peek else 0
+        in the rows the lanes panel has for it now (peek_room, peek_rows_in): the newest of the
+        lane's log, so a panel made shorter loses the oldest. The lanes panel's bottom border
+        says how to open it or close it, or that there is no room to show it."""
+        rows = peek_rows_in(self.peek_room()) if self.peek else 0
         self.query_one("#lanes-pane").border_subtitle = PEEK_HINT if not self.peek else PEEK_OPEN_HINT if rows else PEEK_NO_ROOM_HINT
         panel = self.query_one("#peek", Static)
         if panel.display != bool(rows):
@@ -644,17 +679,23 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     def action_peek(self) -> None:
         """space: open the peek at the selected lane, or close it. Where there is nothing to
-        show it for, or no room for one row of it, it stays closed and the status line says why."""
+        show it for, or the terminal is too short for one row of it, it stays closed and the
+        status line says why. On a terminal tall enough, where a status line of several rows
+        has the room for now, it opens hidden: the panel's border says so (_render_peek), what
+        the status line says stays to be read, and the peek shows once there is room."""
         if not self.peek:
             lines, needed = self.size.height, peek_lines_needed(compact=self.compact)
             if self._empty:
                 self.fd.warn("No lane to peek at yet")
                 return
-            if not peek_rows(lines, compact=self.compact):
+            if lines < needed:
                 self.fd.warn(f"No room for the peek: the terminal is {lines} lines tall and it needs {needed}; enter opens the lane")
                 return
         self.peek = not self.peek
         self._render_peek()
+        table = self.query_one("#lanes", DataTable)
+        if self.peek and table.row_count:  # the lane it is opened at is a row on the screen, also where it opens hidden
+            table.move_cursor(row=table.cursor_row, animate=False, scroll=True)
 
     def action_command(self) -> None:
         self.start_command("/")

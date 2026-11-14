@@ -329,8 +329,8 @@ def test_on_a_short_terminal_the_peek_takes_the_rows_there_are_and_the_list_keep
     drive(app, script, size)
 
 
-@pytest.mark.parametrize("size, needed", [((120, 17), 18), ((56, 19), 20)], ids=["full", "compact"])
-def test_space_on_a_terminal_with_no_room_for_the_peek_opens_nothing_and_says_how_tall_it_must_be(size, needed):
+@pytest.mark.parametrize("size, needed, wrapped", [((120, 17), 18, False), ((56, 19), 20, True)], ids=["full", "compact"])
+def test_space_on_a_terminal_with_no_room_for_the_peek_opens_nothing_and_says_how_tall_it_must_be(size, needed, wrapped):
     deck, app = many(3)
 
     async def script(pilot):
@@ -341,7 +341,14 @@ def test_space_on_a_terminal_with_no_room_for_the_peek_opens_nothing_and_says_ho
         await pilot.resize_terminal(size[0], needed)
         await pilot.pause()
         await press(pilot, "space")
+        assert app.fleet.peek is True
+        if wrapped:  # 56 columns: what the status line said is on two rows, and has the peek's one row while it is there
+            assert app.fleet.query_one("#status").region.height == 2 and not peek_open(app)
+            assert "no room for the peek" in border_hint(app) and len(lane_rows_shown(app)) == fleet.PEEK_LANE_ROWS
+            app.inform("ok")
+            await pilot.pause()
         assert peek_rows(app) == ["⏺ work on c01"]  # one row, on the first terminal tall enough
+        assert len(lane_rows_shown(app)) == fleet.PEEK_LANE_ROWS and "space closes the peek" in border_hint(app)
 
     drive(app, script, size)
 
@@ -365,6 +372,130 @@ def test_a_terminal_made_shorter_hides_an_open_peek_and_says_so_and_a_taller_one
         assert peek_rows(app) == STEPS[-6:] and "space closes the peek" in border_hint(app)
 
     drive(app, script, SIZE)
+
+
+# ---------------------------------------------------------------------- the menu and the status line take rows too
+
+
+def lane_rows_shown(app: FlightdeckApp) -> list[str]:
+    """The lane each row of the lane list on the screen is for, under its column labels."""
+    rows = [[word for word in row.split() if word in app.deck.lanes] for row in region_text(app, "#lanes").splitlines()[1:]]
+    return [words[0] for words in rows if words]
+
+
+@pytest.mark.parametrize("layout, size, left", [
+    ("simple", (80, 24), 0), ("deck", (120, 24), 0), ("simple", (80, 27), 0), ("simple", (80, 28), 1), ("simple", (80, 30), 3),
+    ("simple", (80, 33), 6), ("simple", (80, 40), 6),
+    ("simple", (60, 29), 0), ("simple", (60, 30), 1), ("simple", (60, 33), 4), ("simple", (60, 35), 6),  # the compact layout
+], ids=lambda value: f"{value[0]}x{value[1]}" if isinstance(value, tuple) else str(value))
+def test_the_command_menu_takes_its_rows_from_the_peek_and_never_from_the_lists_three_or_the_newest_step(layout, size, left):
+    """`/` with the peek open: the menu's rows come out of the lanes panel. The peek gives them
+    up, oldest row first, and hides when not one row is left; the list keeps its three lane
+    rows (all it has, where the menu leaves fewer) with the selected lane among them. `left`
+    is the rows of the peek beside the whole menu, which is ten rows: one from 28 lines (30 in
+    the compact layout), all six from 33 (35)."""
+    deck, app = many(16, layout)
+    compact = size[0] <= views.COMPACT_MAX_WIDTH
+    full = fleet.peek_rows(size[1], compact=compact)
+    for n in range(1, 9):
+        deck.report("L16", TurnReport(action=f"step-{n}"))
+
+    async def script(pilot):
+        lanes = app.fleet.query_one("#lanes", DataTable)
+        await select(pilot, app, "L16")
+        await press(pilot, "space")
+        assert full == views.PEEK_ROWS == len(peek_rows(app))
+        await press(pilot, "slash")
+        menu = bar(app).menu.region.height
+        assert bar(app).menu_open and menu == 10  # eight commands in a frame: the whole menu
+        room = fleet.lane_rows(size[1], compact=compact) - menu  # the lane rows the list and the peek have between them now
+        rows = max(0, min(views.PEEK_ROWS, room - fleet.PEEK_LANE_ROWS - 1))
+        assert rows == left
+        assert lanes.region.height - 1 == room - (rows + 1 if rows else 0) >= min(room, fleet.PEEK_LANE_ROWS)
+        assert "L16" in lane_rows_shown(app)  # the lane the command is for is a row on the screen
+        if rows:
+            assert peek_text(app)[0].startswith("L16 · C16 ─")
+            assert peek_rows(app) == [f"⏺ step-{n}" for n in range(9 - rows, 9)]  # the newest, down to the lane's last step
+            assert "space closes the peek" in border_hint(app)
+        else:
+            assert not peek_open(app) and app.fleet.peek is True and "⏺ step-" not in screen_text(app)
+            assert "no room for the peek" in border_hint(app) and "space" not in border_hint(app)
+        await press(pilot, "escape")  # the menu goes: the peek has its rows again
+        assert not bar(app).menu_open and len(peek_rows(app)) == full and peek_rows(app)[-1] == "⏺ step-8"
+        assert "L16" in lane_rows_shown(app) and "space closes the peek" in border_hint(app)
+
+    drive(app, script, size)
+
+
+def test_a_menu_of_fewer_rows_takes_fewer_from_the_peek_as_the_command_is_typed():
+    deck, app = many(16)
+    for n in range(1, 9):
+        deck.report("L16", TurnReport(action=f"step-{n}"))
+
+    async def script(pilot):
+        await select(pilot, app, "L16")
+        await press(pilot, "space", "slash")
+        assert not peek_open(app)  # 24 lines: the whole menu leaves the list two rows
+        await press(pilot, *"redi")
+        menu = bar(app).menu.region.height
+        assert bar(app).menu_open and menu == 3  # one command, in its frame
+        rows = fleet.lane_rows(24) - menu - fleet.PEEK_LANE_ROWS - 1
+        assert 0 < rows < views.PEEK_ROWS and peek_rows(app) == [f"⏺ step-{n}" for n in range(9 - rows, 9)]
+        assert app.fleet.query_one("#lanes", DataTable).region.height - 1 == fleet.PEEK_LANE_ROWS and "L16" in lane_rows_shown(app)
+
+    drive(app, script, (80, 24))
+
+
+LONG = "No room: " + "the config file names a model that this run does not have a key for, " * 3 + "so nothing was changed."
+
+
+@pytest.mark.parametrize("size, rows", [((80, 23), 4), ((80, 20), 1), ((60, 25), 4)], ids=lambda value: f"{value[0]}x{value[1]}" if isinstance(value, tuple) else None)
+def test_a_status_line_of_three_rows_takes_two_from_the_peek_and_the_list_keeps_its_three(size, rows):
+    deck, app = many(9)
+    compact = size[0] <= views.COMPACT_MAX_WIDTH
+    full = fleet.peek_rows(size[1], compact=compact)
+    for n in range(1, 9):
+        deck.report("L09", TurnReport(action=f"step-{n}"))
+
+    async def script(pilot):
+        lanes = app.fleet.query_one("#lanes", DataTable)
+        await select(pilot, app, "L09")
+        await press(pilot, "space")
+        assert len(peek_rows(app)) == full == rows + 2
+        app.warn(LONG)
+        await pilot.pause()
+        assert app.fleet.query_one("#status").region.height == 3
+        assert peek_rows(app) == [f"⏺ step-{n}" for n in range(9 - rows, 9)]
+        assert lanes.region.height - 1 == fleet.PEEK_LANE_ROWS and "L09" in lane_rows_shown(app)
+        app.warn("short")
+        await pilot.pause()
+        assert len(peek_rows(app)) == full and peek_rows(app)[-1] == "⏺ step-8"
+
+    drive(app, script, size)
+
+
+def test_space_under_a_status_line_that_leaves_no_room_opens_the_peek_hidden_and_it_shows_when_there_is_room():
+    """18 lines have room for one row of the peek, and a status line of three rows takes it:
+    `space` still opens the peek (the terminal is tall enough), the panel's border says there
+    is no room now, and the peek is on the screen once the status line is one row again."""
+    deck, app = many(9)
+
+    async def script(pilot):
+        await select(pilot, app, "L09")
+        app.warn(LONG)
+        await pilot.pause()
+        assert app.fleet.query_one("#status").region.height == 3
+        await press(pilot, "space")
+        assert app.fleet.peek is True and not peek_open(app) and "no room for the peek" in border_hint(app)
+        assert LONG[:40] in " ".join(status_line(app).split())  # what it said is still there to read
+        assert "L09" in lane_rows_shown(app)
+        app.warn("short")
+        await pilot.pause()
+        assert peek_rows(app) == ["⏺ work on c09"] and "space closes the peek" in border_hint(app)
+        await press(pilot, "space")
+        assert app.fleet.peek is False and "space peek" in border_hint(app)
+
+    drive(app, script, (80, 18))
 
 
 # ---------------------------------------------------------------------- the rows of the peek
