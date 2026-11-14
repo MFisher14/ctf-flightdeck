@@ -78,7 +78,9 @@ Escalation and take-over are turn boundaries. Each bumps the lane's generation, 
 asked for in an older generation runs no further tool call. After an escalation none of
 it goes into the new context (it belongs to the old one). After a take-over the calls it
 had not run yet are answered "not run", and the next call tells the model what the player
-did. A reply that arrives after either is dropped (its cost still counts). So is one the lane's
+did. A take-over also closes the lane's sessions (agent/sessions.py: a debugger must not go on
+beside the player's shell), and the hand-back says which; so does the lane's end, before its
+workspace closes. A reply that arrives after either is dropped (its cost still counts). So is one the lane's
 stop cuts short (a kill, a solve, quitting) while it waits for the paused lane or its tool calls
 run: what its call cost is reported as spend, which the deck counts after a lane's end too.
 """
@@ -294,6 +296,7 @@ class Takeover:
     before: Snapshot | None = None
     history: bool = False  # the history file was emptied at the start, so what it holds is this take-over's
     shell: ShellSpec | None = None  # what begin() gave; finish() removes the folder made for it (its HOME)
+    sessions: tuple[str, ...] = ()  # the lane's sessions (agent/sessions.py) begin() closed: the lane hears which
 
     @property
     def busy(self) -> bool:
@@ -305,6 +308,10 @@ class Takeover:
         await run.idle.wait()
         if run.closed or self.driver._over(run):
             raise TakeoverRefused(f"{run.lane_id} has ended")
+        # a process the lane drives (a debugger, a connection) must not go on beside the player's shell
+        toolbox = getattr(run, "toolbox", None)  # a coding-agent lane (agent/external.py) has none, and so no session
+        if toolbox is not None:
+            self.sessions = tuple(await toolbox.close_sessions("the player took over the lane, which closes every session"))
         shell = self.shell = run.workspace.interactive_shell()  # first: on the host it repairs .flightdeck
         root = run.workspace.root
         try:
@@ -329,6 +336,8 @@ class Takeover:
         else:
             note = "no files changed"
         told = f"The player took over your shell and handed it back ({note})."
+        if self.sessions:
+            told += f" Taking over closed your sessions ({', '.join(self.sessions)}): start again what you still need."
         commands = self._commands(root) if self.history else []
         if commands:
             told += " Their last commands, as the workspace recorded them:\n" + prompts.fenced("\n".join(commands)) + "\n"
@@ -1255,6 +1264,10 @@ class AgentDriver:
         await asyncio.shield(run.closing)
 
     async def _close_workspace(self, run: _Run) -> None:
+        try:
+            await run.toolbox.close_sessions("the lane ended")
+        except Exception as exc:  # a flightdeck bug: reported when the console exits; the workspace still closes
+            self.errors.append(f"{run.lane_id}: closing its sessions failed: {type(exc).__name__}: {exc}")
         try:
             await run.workspace.close()
         except Exception as exc:  # reported when the console exits; a lane's end is not held up

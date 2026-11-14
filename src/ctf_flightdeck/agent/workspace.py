@@ -39,7 +39,7 @@ import stat
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Protocol
@@ -92,6 +92,20 @@ class ShellSpec:
     cwd: Path | None
     env: dict[str, str] | None  # None: inherit the player's environment
     home: Path | None = None  # a folder made for this shell alone (the host's HOME): remove_shell_home() once it exits
+
+
+@dataclass(frozen=True)
+class SessionProcess:
+    """A long-lived process a lane talks to across turns (agent/sessions.py): `proc` has a pipe
+    for its input and one for its output, stderr merged into stdout. `marker` is the start of
+    the first line it writes when that line is the workspace's own, saying the process's pid
+    where it runs (a docker lane's container: SESSION_PID); "" when there is none. stop(pid)
+    kills the process and everything it started, given that pid (None when the line never
+    came), and waits for `proc`; it never raises."""
+
+    proc: asyncio.subprocess.Process
+    stop: Callable[[int | None], Awaitable[None]]
+    marker: str = ""
 
 
 class WorkspaceError(Exception):
@@ -550,6 +564,28 @@ class HostWorkspace:
             return RunResult(None, output)
         return RunResult(_exit_status(code), output)
 
+    async def open_session(self, command: str) -> SessionProcess:
+        """Start `command` with bash in root as a long-lived process the lane talks to (a
+        debugger, an interpreter, a connection to the challenge's instance), in a process group
+        of its own like every command here, so close() kills it too. Pipes, not a terminal.
+        OSError when it cannot be started, or when .flightdeck cannot be set up."""
+        bash = self._ready()
+        _check_call(command, 1.0)
+        restore_private(self.root)
+        self._prune()
+        proc = await asyncio.create_subprocess_exec(
+            bash, "-c", command, cwd=self.root, env=self._env(), stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True,
+        )
+        self._started(proc)
+
+        async def stop(_pid: int | None) -> None:
+            _kill_group(proc.pid)
+            await proc.wait()
+            self._prune()
+
+        return SessionProcess(proc, stop)
+
     async def close(self) -> None:
         """Kill every process group the lane left running, and remove a take-over's HOME that
         is still there (its hand-back did not run). WorkspaceError when one cannot be removed."""
@@ -785,6 +821,35 @@ exit 0
 """
 
 
+SIGNAL_TREE = r"""
+sig=$1; root=$2; tree=$3
+pids=$root
+if [ "$tree" = 1 ]; then
+  more=1
+  while [ "$more" = 1 ]; do
+    more=0
+    for f in /proc/[0-9]*/stat; do
+      s=$(cat "$f" 2>/dev/null) || continue
+      pid=${s%% *}
+      rest=${s##*) }
+      set -- $rest
+      case " $pids " in *" $pid "*) continue ;; esac
+      case " $pids " in *" $2 "*) pids="$pids $pid"; more=1 ;; esac
+    done
+  done
+fi
+kill -s "$sig" $pids 2>/dev/null
+exit 0
+"""
+"""Signals a process and (tree=1) everything under it, inside a lane's container, run as `sh -c SIGNAL_TREE sh SIG PID TREE`: `docker
+exec` does not pass a signal on to the process it started."""
+
+SESSION_PID = "flightdeck-session-pid "
+"""The start of a docker session's first line (DockerWorkspace.open_session): its pid in the container follows."""
+_SESSION_WRAPPER = f'echo "{SESSION_PID}$$"; exec bash -c "$1" 2>&1'
+DOCKER_SESSION_STOP = 15.0  # seconds a session's kill inside the container may take
+
+
 def _seconds(timeout: float) -> str:
     """A duration for GNU timeout, rounded up to the millisecond (never "0", which means no limit)."""
     ms = max(1, math.ceil(timeout * 1000))
@@ -988,6 +1053,36 @@ class DockerWorkspace:
         if code != 0 and output.startswith((b"Error response from daemon", b"OCI runtime")) and not await self._running():
             raise WorkspaceError(f"container {self.name} is not running any more (stopped or removed outside flightdeck)")
         return RunResult(_exit_status(code), output)
+
+    async def open_session(self, command: str) -> SessionProcess:
+        """Start `command` in the lane's container as a long-lived process the lane talks to,
+        through a `docker exec -i` of its own: pipes, not a terminal, stderr merged into stdout
+        inside the container so the order holds. Its first line is SESSION_PID and its pid in
+        the container, which stop() needs: `docker exec` passes no signal on, so the process
+        and everything under it are killed in the container (SIGNAL_TREE), and then the docker
+        client. close() kills the client too, and removing the container ends the rest.
+        OSError when the client cannot be started; WorkspaceError when the workspace is closed."""
+        if self._closed or not self._ready:
+            raise WorkspaceError("workspace is closed" if self._closed else "workspace not prepared: call prepare() first")
+        _check_call(command, 1.0)
+        argv = ["docker", "exec", "-i", "-w", CONTAINER_ROOT, self.name, "bash", "-c", _SESSION_WRAPPER, "flightdeck-session", command]
+        proc = await asyncio.create_subprocess_exec(
+            *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
+        self._clients.add(proc)
+
+        async def stop(pid: int | None) -> None:
+            if pid is not None and proc.returncode is None and not self._closed:
+                try:
+                    await _docker("exec", self.name, "sh", "-c", SIGNAL_TREE, "sh", "KILL", str(pid), "1", timeout=DOCKER_SESSION_STOP)
+                except WorkspaceError:
+                    pass  # the client is killed below, and the container's removal ends what is left
+            _kill_group(proc.pid)
+            await proc.wait()
+            self._clients.discard(proc)
+
+        return SessionProcess(proc, stop, SESSION_PID)
 
     async def close(self) -> None:
         self._closed = True

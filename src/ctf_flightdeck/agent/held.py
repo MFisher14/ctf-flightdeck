@@ -45,6 +45,19 @@ class Secrets:
                 text = text.replace(value, label)
         return text
 
+    def unfinished(self, data: bytes) -> int:
+        """How many bytes at the end of `data` could be the start of a secret (0 for none): output
+        that arrives in parts (a lane's session, agent/sessions.py) holds those back until the
+        rest has come, so the value is found whole."""
+        longest = 0
+        for value, _ in self.pairs:
+            form = value.encode("utf-8")
+            for size in range(min(len(form) - 1, len(data)), longest, -1):
+                if data.endswith(form[:size]):
+                    longest = size
+                    break
+        return longest
+
     def __bool__(self) -> bool:
         return bool(self.pairs)
 

@@ -19,6 +19,11 @@ GIF or WebP by its first bytes (never by its name), and is at most imageread.MAX
 one is refused, never scaled down. Whether the lane's model can be sent an image now is the
 driver's to say (Toolbox.image_problem); a toolbox nobody told is one whose images would go
 nowhere, so there the tool is off and says so.
+
+session_start, session_send and session_close drive a long-lived process across turns (a
+debugger, an interpreter, a connection to the instance: agent/sessions.py). What a session
+writes is scrubbed and cut like the shell's output, and a workspace with no open_session (a
+test's stand-in) answers that it has no sessions.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ import httpx
 
 from ..imageread import MAX_BYTES as IMAGE_BYTES  # the largest image a model API takes: view_image's limit too
 from ..text import untrusted
+from .sessions import DEFAULT_WAIT, IDLE_SECONDS, INPUT_BYTES, MAX_SESSIONS, MAX_WAIT, Read, Session, SessionMistake, Sessions
 from .workspace import OUTPUT_CAP, PRIVATE, SNIFF, RunResult, Workspace, open_inside, write_inside
 
 MIN_CHARS = 200  # the smallest max_chars that still leaves room for a cut marker or a footer
@@ -98,6 +104,7 @@ def _tool(name: str, description: str, properties: dict[str, dict], required: li
 
 
 _TIMEOUT = {"type": "integer", "description": "Seconds before it is killed (default 60, max 300)."}
+_WAIT = {"type": "number", "description": f"Most seconds to wait for output (default {DEFAULT_WAIT:g}, max {MAX_WAIT:g})."}
 
 TOOLS: list[dict] = [
     _tool(
@@ -139,6 +146,33 @@ TOOLS: list[dict] = [
             "headers": {"type": "object", "additionalProperties": {"type": "string"}},
         },
         ["method", "url"],
+    ),
+    _tool(
+        "session_start",
+        "Start a long-lived process in the workspace that you talk to across turns (gdb -q ./x, r2 -q0 ./x, "
+        "python3 -u -i, nc to the instance) and read its first output. It has pipes, not a terminal: prompts may not "
+        f"show. At most {MAX_SESSIONS} at once; one unused for {IDLE_SECONDS / 60:g} minutes is closed.",
+        {"command": {"type": "string"}, "wait_seconds": _WAIT},
+        ["command"],
+    ),
+    _tool(
+        "session_send",
+        "Send a line to a session and read what it writes: until `until` appears, it is quiet a moment, or "
+        "wait_seconds pass. No input: just read.",
+        {
+            "session": {"type": "string", "description": "Its name, like s1."},
+            "input": {"type": "string"},
+            "newline": {"type": "boolean", "description": "Add a newline after input (default true)."},
+            "until": {"type": "string", "description": "Text to wait for, such as a prompt."},
+            "wait_seconds": _WAIT,
+        },
+        ["session"],
+    ),
+    _tool(
+        "session_close",
+        "Stop a session and everything it started.",
+        {"session": {"type": "string"}},
+        ["session"],
     ),
     _tool(
         "submit_flag",
@@ -234,12 +268,16 @@ class Toolbox:
         self.http_off = http_off
         self.scrub: Callable[[str], str] = scrub or _as_is
         self.image_problem = image_problem
+        self.sessions: Sessions | None = None  # made at the first session call (its timers need the running loop)
         self._tools: dict[str, Callable[[dict[str, Any], int, int], Awaitable[ToolResult]]] = {
             "shell": self._shell,
             "read_file": self._read_file,
             "view_image": self._view_image,
             "python": self._python,
             "http": self._http,
+            "session_start": self._session_start,
+            "session_send": self._session_send,
+            "session_close": self._session_close,
             "submit_flag": self._submit_flag,
             "set_plan": self._set_plan,
         }
@@ -614,6 +652,127 @@ class Toolbox:
         summary = f"{response.status_code} {_clip(reason, 60)}".strip() + f", {len(raw)} bytes"
         return ToolResult(f"{head}\n\n{body}", self._line(action), _clip(summary, CONSOLE_CHARS))
 
+    # ------------------------------------------------------------ sessions
+
+    def _session_pool(self, action: str) -> Sessions:
+        if self.sessions is None:
+            opener = getattr(self.workspace, "open_session", None)
+            if opener is None:
+                raise _Mistake("sessions are not available in this lane's workspace; use shell", action)
+            self.sessions = Sessions(opener, unfinished=getattr(self.scrub, "unfinished", None))
+        return self.sessions
+
+    async def _session_start(self, args: dict[str, Any], turn: int, index: int) -> ToolResult:
+        command = _required(args, "command", "session_start")
+        action = f"session start: {command}"
+        if not command.strip():
+            raise _Mistake("command is empty", action)
+        if "\0" in command:
+            raise _Mistake("command contains a NUL character", action)
+        _sendable(command, "command", action)
+        size = len(command.encode("utf-8"))
+        if size > COMMAND_BYTES:
+            raise _Mistake(f"the command is {size} bytes, over the {COMMAND_BYTES}-byte limit for one command", action)
+        wait = self._wait(args, action)
+        pool = self._session_pool(action)
+        try:
+            session = await pool.start(command)
+        except SessionMistake as exc:
+            raise _Mistake(str(exc), action) from None
+        except OSError as exc:
+            raise _Mistake(f"the session could not be started: {exc.strerror or exc}", action) from None
+        session.busy = True
+        try:
+            return await self._session_read(pool, session, f"session {session.name} start: {command}", wait, None, turn, index)
+        finally:
+            session.busy = False
+
+    async def _session_send(self, args: dict[str, Any], turn: int, index: int) -> ToolResult:
+        name = _required(args, "session", "session_send").strip()
+        given = _optional(args, "input")
+        until = _optional(args, "until")
+        newline = args.get("newline", True)
+        action = f"session {name} < {given}" if given is not None else f"session {name} read"
+        if not isinstance(newline, bool):
+            raise _Mistake("newline must be true or false", action)
+        if until is not None and not until:
+            raise _Mistake("until is empty; leave it out to read until the session is quiet", action)
+        _sendable(given or "", "input", action)
+        _sendable(until or "", "until", action)
+        data = b"" if given is None else (given + ("\n" if newline else "")).encode("utf-8")
+        if len(data) > INPUT_BYTES:
+            raise _Mistake(f"the input is {len(data)} bytes; one send takes at most {INPUT_BYTES}: "
+                           "write it to a file and send a command that reads it", action)
+        wait = self._wait(args, action)
+        pool = self._session_pool(action)
+        try:
+            session = pool.get(name)
+            session.busy = True
+            try:
+                if data:
+                    await session.send(data)
+                marker = None if until is None else until.encode("utf-8")
+                return await self._session_read(pool, session, action, wait, marker, turn, index)
+            finally:
+                session.busy = False
+        except SessionMistake as exc:
+            raise _Mistake(str(exc), action) from None
+
+    async def _session_close(self, args: dict[str, Any], turn: int, index: int) -> ToolResult:
+        name = _required(args, "session", "session_close").strip()
+        action = f"session {name} close"
+        pool = self._session_pool(action)
+        try:
+            session = pool.get(name)
+        except SessionMistake as exc:
+            raise _Mistake(str(exc), action) from None
+        await pool.close(session.name, "you closed it")
+        status = f"session {session.name} closed"
+        left = bytes(session.buffer)  # what it wrote since the last read, the run's secrets out of it like any output
+        if not left:
+            return ToolResult(status, self._line(action), status)
+        text = self.scrub(left.decode("utf-8", "replace"))
+        head = f"{status}; what it wrote since the last read:"
+        body = self._fit(text, left, self.max_chars - len(head) - 1, turn, index)
+        return ToolResult(f"{head}\n{body}", self._line(action), _brief(text, status, tail=False), excerpt=_excerpt(text, status))
+
+    async def close_sessions(self, why: str) -> list[str]:
+        """Close every session the lane has open (the lane ended, the player took it over), each
+        remembered with `why`; the names of those that were open."""
+        if self.sessions is None:
+            return []
+        return await self.sessions.close_all(why)
+
+    def _wait(self, args: dict[str, Any], action: str) -> float:
+        try:
+            asked = _number(args, "wait_seconds")
+        except _Mistake as mistake:
+            raise _Mistake(str(mistake), action) from None
+        if asked is None:
+            return DEFAULT_WAIT
+        return float(min(max(asked, 0), MAX_WAIT))
+
+    async def _session_read(self, pool: Sessions, session: Session, action: str, wait: float, until: bytes | None,
+                            turn: int, index: int) -> ToolResult:
+        read = await session.read(wait, until)
+        if read.why == "ended":
+            pool.ended(session, read.exit_code)
+        else:
+            pool.touch(session)
+        status = f"session {session.name}: {_session_status(read, until)}"
+        text = self.scrub(read.output.decode("utf-8", "replace"))  # before anything cuts it
+        head = status
+        if read.dropped:
+            head += f"\n[{read.dropped} earlier bytes dropped: a session keeps at most {session.cap} bytes unread]"
+        body = self._fit(text, read.output, self.max_chars - len(head) - 1, turn, index) if text else "(no output)"
+        failed = read.why == "ended" and read.exit_code != 0
+        return ToolResult(
+            content=f"{head}\n{body}",
+            action=self._line(action),
+            output=_brief(text, status, tail=failed),
+            excerpt=_excerpt(text, status, tail=failed),
+        )
+
     # ------------------------------------------------------------ flags and plans
 
     async def _submit_flag(self, args: dict[str, Any], turn: int, index: int) -> ToolResult:
@@ -632,6 +791,22 @@ class Toolbox:
             plan = _clip(plan, PLAN_CHARS)
             noted = f"Plan noted (cut to {PLAN_CHARS} characters)."
         return ToolResult(noted, self._line(f"plan: {plan}"), "", plan=plan)
+
+
+def _session_status(read: Read, until: bytes | None) -> str:
+    """How a read of a session ended, in a few words."""
+    if read.why == "ended":
+        return "ended" + (f", exit {read.exit_code}" if read.exit_code is not None else "")
+    looked = "" if until is None else repr(_clip(until.decode("utf-8", "replace"), 60))
+    if read.why == "matched":
+        return f"running; {looked} appeared"
+    if read.why == "quiet":
+        return f"running; quiet after {read.waited:.1f} s"
+    if until is not None:
+        return f"running; {looked} not seen in {read.waited:.1f} s"
+    if not read.output:
+        return f"running; no output in {read.waited:.1f} s"
+    return f"running; still writing after {read.waited:.1f} s"
 
 
 # ---------------------------------------------------------------- arguments
