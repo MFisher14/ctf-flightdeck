@@ -4,6 +4,16 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- `space` peeks at the selected lane. A panel opens under the lane list with the lane's last
+  six steps, each on one row (a command and the first line of its output, the model's words,
+  your messages, an alert, the question it waits on), over the line that says why the lane is
+  flagged. It follows the selection as you move, and a message typed in the bar still goes to
+  that lane, so you can read what a lane did and answer it without opening it. `space` or `esc`
+  closes it; it stays as you left it for the run. On a short terminal it shows fewer rows and
+  the list keeps three; under 18 lines it says there is no room. It works in both layouts and
+  on a phone, and the lanes panel's bottom border says `space peek`.
+- In `flightdeck mock`, `,` freezes the clock, since `space` is the peek now; `.` still steps
+  it.
 - The `/` menu forgives. It finds a command from the second word of its name (`/over` lists
   `/takeover`) and from an alias (`/q` and `/exit` for `/quit`, `/settings` for `/config`,
   `/lanes` for `/back`, each shown beside the name). After a command's name it lists what the

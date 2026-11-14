@@ -167,7 +167,9 @@ again whenever their own width changes (`fleet.FittedTable`). A console built wi
 otherwise. `FlightdeckApp.open_first_lane()` opens the first lane a `/new` starts, looked at on
 each redraw and when the lane list comes back from under the form. While the board has no
 challenge the fleet shows a page of its own in place of the tables (`fleet.EMPTY_BY_HAND`,
-`EMPTY_PLATFORM`). `console/room.py` measures a terminal in the layout it is given
+`EMPTY_PLATFORM`). The peek (P68, `space`) is one widget between the lane list and the why
+line, the same in every layout: `views.peek()` draws the lane `FleetScreen.bar_lane()` gives,
+in the rows `fleet.peek_rows()` finds for the terminal's height. `console/room.py` measures a terminal in the layout it is given
 (`room(..., layout=)`).
 
 **The lane's transcript** (P63). `FocusScreen.details` is the view's one switch: as the player

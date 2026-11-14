@@ -205,7 +205,7 @@ flightdeck mock --screenshot DIR     # headless: SVGs of the key moments
 ```
 
 The mock uses no model and no network. Every challenge, teammate and flag in it is invented.
-`space` freezes its clock and `.` steps it; the other keys are the real console's
+`,` freezes its clock and `.` steps it; the other keys are the real console's
 ([The console](#the-console)).
 
 ## Docker or host
@@ -377,6 +377,16 @@ first, and the line under the list says why and numbers the answers: one key ans
 
 *An alert with its quick answers, from `flightdeck mock` (invented challenges).*
 
+**Space** peeks at the selected lane without leaving the list: a panel opens under the list
+with the lane's last six steps, each on one row cut at the edge (a command and the first line
+of its output, the model's own words, your messages, an alert, the question it waits on). The
+line that says why the lane is flagged, and its numbered answers, stay under it. Move through
+the list and the peek follows; what you type in the command bar still goes to the lane the
+peek names, so you can read what a lane did, then hint or redirect it, and never open it.
+`space` or `esc` closes the peek, and it stays open or closed for the rest of the run. Its
+rows come from the list, which keeps at least three lanes and scrolls; on a terminal too short
+for one row of it (under 18 lines, or 20 on a phone) it says so.
+
 **Enter** opens a lane full screen: its transcript, the files it changed with diffs, and a chat
 box (plain text is a message to the lane; `/redirect`, `/approve`, `/diff` and the rest are
 commands; `esc` goes back).
@@ -459,7 +469,7 @@ marks the tmux window ([The terminal's title and bell](#the-terminals-title-and-
 The lane list's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,
 `e` escalate, `t` take over, `a` approve, `d` decline, `x` dismiss, `1`-`9`/`0` quick answers,
 `c` claim (team), `/` commands, `s` sort, `?` help (every key and command), `q` quit; `A`
-approves every waiting flag; **Enter** opens the lane full screen. They act in both layouts; the
+approves every waiting flag; **Space** peeks at the lane and **Enter** opens it full screen. They act in both layouts; the
 simple layout's key line shows only the ones that apply now. The whole design is in the
 [console spec](CONSOLE-SPEC.md).
 
