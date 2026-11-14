@@ -33,6 +33,7 @@ COMMANDS = (
     Command("pause", "", "pause or resume the lane"),
     Command("takeover", "", "a shell in the lane's workspace; exit it to hand the lane back"),
     Command("diff", "[file]", "show the files the lane changed"),
+    Command("copy", "[output|command|flag|all]", "copy from the lane with no mouse: its last output, that call's command, its flag, or all"),
     Command("open", "<lane>", "open a lane in the focus view"),
     Command("note", "<text>", "a note for every lane: running ones read it on their next turn, later ones at their start", lane=False),
     Command("config", "[lanes N|unlimited | submit auto|confirm | file]", "this run's settings: lanes at once, auto approve (submit auto)", lane=False),

@@ -147,15 +147,20 @@ _FLAGS: WeakKeyDictionary[Deck, _Flags] = WeakKeyDictionary()
 LINE_CHARS = 1000  # a one-line cell (the last action, the why line) shows no more of a text than this: no terminal is that wide
 
 
-def lane_text(deck: Deck, lane: Lane, text: str) -> str:
-    """`text` from what `lane` did, as the console shows it: the value of anything shaped like
-    a credential taken out (credentials.py), but the flags the run knows for its challenge.
-    The deck keeps the text as it was, for the lane's model, which has read it already."""
+def known_flags(deck: Deck, challenge_id: str) -> tuple[str, ...]:
+    """The flags the run knows for a challenge, each once, in the order it first met them."""
     flags = _FLAGS.get(deck)
     if flags is None:
         flags = _FLAGS[deck] = _Flags()
     flags.update(deck.events)
-    return _redacted(text, flags.of.get(lane.challenge_id, ()))
+    return flags.of.get(challenge_id, ())
+
+
+def lane_text(deck: Deck, lane: Lane, text: str) -> str:
+    """`text` from what `lane` did, as the console shows it: the value of anything shaped like
+    a credential taken out (credentials.py), but the flags the run knows for its challenge.
+    The deck keeps the text as it was, for the lane's model, which has read it already."""
+    return _redacted(text, known_flags(deck, lane.challenge_id))
 
 
 @lru_cache(maxsize=256)
@@ -1262,6 +1267,63 @@ def entry_text(deck: Deck, lane: Lane, entry: Entry) -> Text:
     if more:
         out.append(_more_lines(more), theme.MUTED)
     return out
+
+
+# ---------------------------------------------------------------------- /copy: a lane's text for the clipboard
+
+COPY_WHAT = ("output", "command", "flag", "all")  # what /copy takes; alone it is `output`
+SHELL_MARK = "$ "  # how every runtime starts the line of a shell call
+
+
+class NothingToCopy(Exception):
+    """The lane has nothing of what /copy was asked for; the message says so."""
+
+
+def _lines(text: str) -> str:
+    return _count(len(text.splitlines()), "line", "lines")
+
+
+def lane_copy(deck: Deck, lane: Lane, what: str) -> tuple[str, str]:
+    """What /copy puts on the clipboard for `lane`, and what the status line calls it
+    ("L01's last output: 38 lines"). NothingToCopy when the lane has none of it.
+
+    `output`: the output of the lane's last tool call that printed something, as its
+    transcript keeps it (the longer excerpt of a call of flightdeck's own loop, else the
+    step's output), with real newlines. `command`: that call's line (when no call has printed
+    anything, the last call's), its folded newlines real again and without the mark of a shell
+    call, so it can be pasted into a shell. `flag`: the flag that waits for the player's
+    approval, else the newest flag the run knows for the lane's challenge. `all`: every line of
+    the transcript in detail (transcript_lines).
+
+    Each is as the console shows the lane's text: no value of anything shaped like a
+    credential (lane_text; the flags the run knows stay), control and invisible characters
+    made visible (text.untrusted), so nothing reaches a paste that the screen did not show."""
+    if what == "all":
+        text = "\n".join(line.plain for action in lane.actions for line in transcript_lines(deck, lane, action))
+        if not text:
+            raise NothingToCopy(f"{lane.id} has nothing in its transcript yet")
+        return text, f"{lane.id}'s transcript: {_lines(text)}"
+    if what == "flag":
+        waiting = lane.pending.flag if lane.pending is not None else None
+        flag = waiting or next(iter(reversed(known_flags(deck, lane.challenge_id))), "")
+        if not flag:
+            raise NothingToCopy(f"{lane.id} has no flag yet")
+        return untrusted(flag), f"{lane.id}'s flag"
+    # (the call, whether it is the step itself: a coding-agent CLI's lane, whose runtime folded the newlines of its output)
+    calls = [(call, not step.calls) for step in lane.actions if _is_call(step) for call in calls_of(step)]
+    printed = [(call, folded) for call, folded in calls if call.output.strip()]
+    if what == "output":
+        if not printed:
+            raise NothingToCopy(f"{lane.id} has no output yet")
+        call, folded = printed[-1]
+        text = lane_text(deck, lane, call.output)
+        text = untrusted(text.replace(NEWLINE, "\n") if folded else text)
+        return text, f"{lane.id}'s last output: {_lines(text)}"
+    if not calls:
+        raise NothingToCopy(f"{lane.id} has made no tool call yet")
+    call, _ = (printed or calls)[-1]
+    text = untrusted(lane_text(deck, lane, call.text).replace(NEWLINE, "\n").removeprefix(SHELL_MARK))
+    return text, f"{lane.id}'s last command: {_lines(text)}"
 
 
 def suggestion_command(key: str, text: str, lane: str | None = None, *, show_lane: bool = True) -> str | None:

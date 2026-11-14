@@ -29,7 +29,7 @@ from textual.driver import Driver
 from textual.drivers.linux_driver import LinuxDriver
 from textual.screen import Screen
 
-from .. import themes
+from .. import clipboard, themes
 from ..config import LAYOUTS
 from ..core import interventions as iv
 from ..core.attention import SortMode
@@ -84,6 +84,7 @@ class FlightdeckApp(App[None]):
         palette: themes.Palette | None = None,
         themes_folder: Path | None = None,
         layout: str = "deck",
+        copier: Callable[[str], str] | None = None,
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -91,7 +92,9 @@ class FlightdeckApp(App[None]):
         `run_dir` is where the run's log goes (the quit prompt says it stays there).
         `palette` is the theme the console opens in (None: the default); `themes_folder` is
         where /theme looks for the player's own themes (None: only the built-in ones).
-        `layout` is the layout it opens in (config.LAYOUTS; a run passes the config's)."""
+        `layout` is the layout it opens in (config.LAYOUTS; a run passes the config's).
+        `copier` puts a text on the operating system's clipboard and returns what the player
+        must be told when it could not, "" when it did (None: clipboard.put)."""
         if layout not in LAYOUTS:
             raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {layout!r}")
         self.layout = layout
@@ -99,6 +102,7 @@ class FlightdeckApp(App[None]):
         # (challenge, the lane that ended to start afresh, the lanes there were then): the focus view on that lane
         # goes to the fresh one (follow_restart); None: nothing to follow
         self._follow: tuple[str, str, frozenset[str]] | None = None
+        self.copier = copier or clipboard.put
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
         self._use_textual_theme()
@@ -286,6 +290,40 @@ class FlightdeckApp(App[None]):
 
     def warn(self, text: str) -> None:
         self.say(text, "warning")
+
+    # ------------------------------------------------------------------ copying
+
+    def copy(self, text: str, said: str) -> None:
+        """Put `text` on the clipboard and say `said`. It goes two ways, always both: to the
+        terminal's clipboard (OSC 52, Textual's own copy), which reaches the machine the player
+        sits at but never says whether the terminal took it, and to the operating system's, by
+        its tool (the copier). When no tool took it, the status line warns instead, with what
+        to do if the paste is empty: a copy is never a quiet nothing."""
+        super().copy_to_clipboard(text)
+        problem = self.copier(text)
+        if problem:
+            self.warn(problem)
+        else:
+            self.say(said)
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Textual's copy (ctrl+c in a text field, a prompt's own ctrl+c): both ways, as every
+        copy (copy)."""
+        self.copy(text, f"copied {len(text)} character{'' if len(text) == 1 else 's'}")
+
+    def copy_from(self, lane: Lane, what: str) -> None:
+        """/copy [output|command|flag|all]: a text of the lane's to the clipboard, with no
+        mouse (views.lane_copy has what each is). Alone it is the last output."""
+        word = what.strip().lower() or views.COPY_WHAT[0]
+        if word not in views.COPY_WHAT:  # not shown: it is not one of them
+            self.warn(f"/copy takes nothing (the last output) or one of: {', '.join(views.COPY_WHAT)}")
+            return
+        try:
+            text, name = views.lane_copy(self.deck, lane, word)
+        except views.NothingToCopy as exc:
+            self.warn(str(exc))
+            return
+        self.copy(text, f"copied {name}")
 
     async def on_event(self, event: events.Event) -> None:
         """Files dropped on the terminal arrive as pasted paths. Wherever the focus is, they
@@ -1080,6 +1118,8 @@ class FlightdeckApp(App[None]):
                 self.warn(f"No files pane under {views.COMPACT_MAX_WIDTH + 1} columns (diffs need it)")
                 return
             self.open_lane(lane.id, file=arg)
+        elif name == "copy":
+            self.copy_from(lane, arg)
         elif name == "open":
             self.open_lane(lane.id)
         else:

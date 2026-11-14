@@ -726,7 +726,7 @@ def test_help_explains_sending_a_held_queue_and_the_marks_after_dollars_and_tell
                 "(on the board, … is a queued challenge)") in text
         assert "… queued (after dollars: a cost still to come)" in text
 
-    drive(app, script, size=(160, 124))
+    drive(app, script, size=(160, 130))
 
 
 def test_help_and_the_command_menu_list_theme_and_the_bar_runs_it():
@@ -3243,7 +3243,7 @@ def test_the_board_credits_a_solve_as_every_report_does_the_flag_an_l1_engine_fo
         await press(pilot, "escape", "question_mark")
         assert "L1·name solved with the flag your L1 engine of that name found" in prompt_text(app)
 
-    drive(app, script, size=(160, 124))  # tall enough for the whole help: it scrolls on a shorter terminal
+    drive(app, script, size=(160, 130))  # tall enough for the whole help: it scrolls on a shorter terminal
     log = EventLog(tmp_path / "events.jsonl")  # the run log the reports read: they credit the same solvers
     log.attach(deck)
     log.close()

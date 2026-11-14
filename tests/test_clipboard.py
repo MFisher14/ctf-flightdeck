@@ -206,3 +206,158 @@ def test_a_tool_that_stays_behind_to_serve_the_clipboard_does_not_hold_the_copy_
     used = clipboard.copy_text("naïve\nline 2", platform="linux", which=lambda name: str(tool) if name == "xclip" else None, run=run,
                                environ=environ)
     assert used == "xclip" and taken.read_text(encoding="utf-8") == "naïve\nline 2"
+
+
+# ---------------------------------------------------------------------- /copy
+
+
+def test_copy_gives_the_last_output_with_real_newlines_and_no_credential():
+    deck, app, lane = one_lane()
+    app.copier = clip = Clip()
+    shell(deck, "cat .env && objdump -s -j .rodata work/crackme | head -30", f"OPENROUTER_API_KEY={OPENROUTER}\n{osc('out')}\n" + RODATA)
+    says(deck, "The table is in .rodata.")  # the model's words are not a tool call
+    step = lane.actions[0]
+    assert OPENROUTER in step.calls[0].output  # the deck keeps it as it was
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        written = terminal(app)
+        await send(pilot, app, "/copy")
+        (copied,) = clip.texts
+        lines = copied.split("\n")
+        assert lines[0] == "OPENROUTER_API_KEY=[redacted]" and lines[1] == shown("out") + "^[\\"  # no key, no escape sequence
+        assert lines[2:] == RODATA.rstrip("\n").split("\n") and len(lines) == 32  # the transcript's excerpt, line by line
+        assert not [value for value in VALUES if value in copied] and "\x1b" not in copied and NEWLINE not in copied
+        assert osc52(written) == [copied]
+        assert status_line(app).strip() == "● copied L01's last output: 32 lines"
+        await send(pilot, app, "/copy output")  # the same, by name
+        assert clip.texts == [copied, copied]
+
+    drive(app, script, BIG)
+
+
+def test_copy_command_gives_that_calls_command_with_its_lines_and_copy_all_every_line_in_detail():
+    deck, app, lane = one_lane()
+    app.copier = clip = Clip()
+    command, out, _ = COMMANDS[6]  # a here-document of seven lines
+    shell(deck, command, out)
+    calls = (Call("$ ls work", "crackme\nREADME.txt"), Call("plan: read the loop that fills the table", ""))
+    deck.report("L01", TurnReport(action=calls[0].text + "  (+1 more)", output=calls[0].output, calls=calls, tokens=100))
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await send(pilot, app, "/copy command")
+        assert clip.texts == ["ls work"]  # the last call that printed something, without the mark of a shell call
+        assert status_line(app).strip() == "● copied L01's last command: 1 line"
+        await send(pilot, app, "/copy")
+        assert clip.texts[-1] == "crackme\nREADME.txt"  # and /copy is that call's output
+        await send(pilot, app, "/copy all")
+        every = [line.plain for action in lane.actions for line in views.transcript_lines(deck, lane, action)]
+        assert clip.texts[-1] == "\n".join(every) and len(every) == 4
+        assert status_line(app).strip() == "● copied L01's transcript: 4 lines"
+
+    drive(app, script, BIG)
+    deck, app, lane = one_lane()
+    app.copier = clip = Clip()
+    shell(deck, command, out)
+
+    async def heredoc(pilot):
+        await open_focus(pilot, app, "L01")
+        await send(pilot, app, "/copy command")
+        assert clip.texts == [command] and command.count("\n") == 6 and NEWLINE in lane.actions[0].text  # folded in the log, lines again here
+        assert status_line(app).strip() == "● copied L01's last command: 7 lines"
+
+    drive(app, heredoc, BIG)
+
+
+def test_copy_of_a_coding_agent_clis_step_unfolds_the_newlines_its_runtime_folded():
+    deck, app, lane = one_lane()
+    app.copier = clip = Clip()
+    deck.report("L01", TurnReport(action="$ cat notes.txt", output=f"first{NEWLINE}second{NEWLINE}third"))  # one step for each call, no calls kept
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await send(pilot, app, "/copy")
+        assert clip.texts == ["first\nsecond\nthird"] and status_line(app).strip() == "● copied L01's last output: 3 lines"
+        await send(pilot, app, "/copy command")
+        assert clip.texts[-1] == "cat notes.txt"
+
+    drive(app, script, BIG)
+
+
+def test_copy_flag_gives_the_flag_that_waits_else_the_newest_the_run_knows_and_warns_when_there_is_none():
+    deck, app, lane = one_lane()
+    app.copier = clip = Clip()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await send(pilot, app, "/copy flag")
+        assert_warning(app, "L01 has no flag yet")
+        assert clip.texts == []
+        deck.record_l1("crackme", "strings_sweep", "candidate", flags=["flag{from_l1}", "flag{second_of_l1}"], lane_id="L01")
+        await send(pilot, app, "/copy flag")
+        assert clip.texts == ["flag{second_of_l1}"] and status_line(app).strip() == "● copied L01's flag"
+        deck.report("L01", TurnReport(flag="flag{the_lane_found}"))
+        assert lane.pending is not None and lane.pending.flag == "flag{the_lane_found}"
+        deck.record_l1("crackme", "xor_single", "candidate", flags=["flag{later_but_not_asked}"], lane_id="L01")
+        await send(pilot, app, "/copy flag")
+        assert clip.texts[-1] == "flag{the_lane_found}"  # the one the lane waits for an answer about
+
+    drive(app, script, BIG)
+
+
+def test_copy_warns_when_the_lane_has_nothing_of_it_or_the_word_is_not_one_of_its():
+    deck, app, lane = one_lane()
+    app.copier = clip = Clip()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        assert lane.actions == []
+        for command, warning in (("/copy", "L01 has no output yet"), ("/copy command", "L01 has made no tool call yet"),
+                                 ("/copy all", "L01 has nothing in its transcript yet"),
+                                 ("/copy everything", "/copy takes nothing (the last output) or one of: output, command, flag, all")):
+            await send(pilot, app, command)
+            assert_warning(app, warning)
+        says(deck, "nothing run yet")  # the model's words are no tool call
+        await send(pilot, app, "/copy command")
+        assert_warning(app, "L01 has made no tool call yet")
+        deck.report("L01", TurnReport(action="plan: read the header", calls=(Call("plan: read the header", ""),)))
+        await send(pilot, app, "/copy")
+        assert_warning(app, "L01 has no output yet")  # a call that printed nothing
+        assert clip.texts == []
+        await send(pilot, app, "/copy command")
+        assert clip.texts == ["plan: read the header"]  # no call has printed anything: the last call's line
+        # from the lane list it acts on the selected lane, or on the one named
+        await press(pilot, "escape")
+        assert isinstance(app.screen, FleetScreen)
+        await press(pilot, "/")
+        await send(pilot, app, "copy L01 all")
+        assert clip.texts[-1] == "⏺ says: nothing run yet\n⏺ plan: read the header"
+        assert status_line(app).strip() == "● copied L01's transcript: 2 lines"
+
+    drive(app, script, BIG)
+
+
+def test_a_tool_that_fails_is_named_in_the_warning():
+    deck, app, lane = busy_lane("simple")
+    app.copier = partial(clipboard.put, platform="linux", which=has("xclip"), run=Runner(xclip=1), environ={})
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await send(pilot, app, "/copy")
+        assert_warning(app, "xclip failed (exit 1); sent to the terminal's clipboard (OSC 52).")
+
+    drive(app, script, BIG)
+
+
+def test_the_command_menu_lists_copy_and_it_acts_on_a_lane():
+    assert BY_NAME["copy"].args == "[output|command|flag|all]" and BY_NAME["copy"].lane
+    deck, app, lane, clip = console()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await pilot.press(*"/cop")
+        await pilot.pause()
+        assert [completion.label for completion in bar(app).completions] == ["/copy [output|command|flag|all]"]
+
+    drive(app, script, BIG)
