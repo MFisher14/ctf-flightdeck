@@ -1698,6 +1698,9 @@ async def burst(pilot, text: str, enter: bool = False) -> None:
     if enter:
         pilot.app.post_message(events.Key("enter", "\r"))
     await pilot.pause(GAP * 2)
+    # a burst that is no drop is typed a key at a time, each once the last has acted: on a busy machine that outlasts any fixed wait
+    app = pilot.app
+    await until(pilot, lambda: not app._burst and not app._to_type and app._typing is None)
     await pilot.pause()
 
 
