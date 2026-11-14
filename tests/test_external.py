@@ -227,7 +227,7 @@ class Lab:
                  flag_format: str = FLAG, secrets: dict[str, str] | None = None, dollar_cap: float | None = None,
                  deck_class: type[Deck] = Deck, docker: FakeDocker | None = None,
                  urls: dict[str, tuple[str, ...]] | None = None, instance: str = "auto",
-                 lights: L.Lights | None = None, l1=None) -> None:
+                 lights: L.Lights | None = None, l1=None, max_lanes: int = 2, containerized: bool = False) -> None:
         self.tmp = tmp_path
         self.fake = Fake(tmp_path, script)
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -263,7 +263,8 @@ class Lab:
             lights=lights,
             l1=l1,
         )
-        config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=2, submit=submit)
+        config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=max_lanes, submit=submit,
+                            containerized=containerized)
         self.deck = deck_class(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"))
         self.token_cap = token_cap
         self.dollar_cap = dollar_cap
@@ -900,6 +901,144 @@ def test_a_failed_turn_ends_the_lane_with_claudes_reason(tmp_path):
             await until(lambda: lane.finished, "the lane to end")
             assert lane.state is LaneState.GAVE_UP
             assert lane.result == "claude's turn failed (success): Invalid API key · Please run /login"
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def three_handouts(tmp_path: Path) -> dict[str, Path]:
+    return {cid: handout(tmp_path, cid) for cid in ("a", "b", "c")}
+
+
+OVERLOADED = {"status": 529, "error": "overloaded"}
+
+
+def test_two_claude_lanes_ending_on_an_overloaded_api_hold_the_queue_and_autopilot_lets_go(tmp_path):
+    """An outage with coding-agent lanes (P78): one lane at a time, and each lane's claude
+    retries a 529 until it gives up. The second lane to end so holds the queue, naming both,
+    so the third challenge is not started on an API that does not answer, and autopilot
+    disengages on that hold. Lifting the hold queues the two parked challenges again."""
+    from ctf_flightdeck.autopilot import Autopilot, Budget, State
+
+    script = {"turns": [{"api_error": OVERLOADED}, {"api_error": OVERLOADED}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, handouts=three_handouts(tmp_path), max_lanes=1, containerized=True)
+        pilot = Autopilot(lab.deck, Budget(dollars=5.0))
+        pilot.attach()
+        try:
+            assert pilot.engage().ok
+            lab.release()
+            await until(lambda: lab.deck.held and len([x for x in lab.deck.lanes.values() if x.finished]) == 2, "the hold")
+            first, second = sorted(lab.deck.lanes.values(), key=lambda lane: lane.id)
+            assert first.result.startswith("claude's turn failed (success): API Error: 529")
+            assert "the model API keeps failing: 2 lanes in a row ended on it" in lab.deck.held
+            assert first.id in lab.deck.held and second.id in lab.deck.held and "claude on small: HTTP 529" in lab.deck.held
+            assert len(lab.deck.lanes) == 2  # the third challenge waits on the queue
+            await until(lambda: pilot.state is State.DISENGAGED, "autopilot to disengage")
+            assert pilot.off().ok
+            assert lab.deck.release_hold().message.startswith("Lifted the hold on the queue: 2 parked challenges queued again")
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("failure, passing", [
+    (OVERLOADED, True),
+    ({"status": 429, "error": "rate_limit"}, True),
+    ({"status": None, "error": "server_error"}, True),  # no HTTP answer: the message's category says what it was
+    ({"status": 503, "error": "unknown", "result_status": False, "message_error": False}, True),  # the last retry's
+    ({"status": 401, "error": "authentication_failed"}, False),
+    ({"status": 400, "error": "invalid_request"}, False),
+    ({"status": None, "error": "unknown"}, False),
+])
+def test_only_a_claude_failure_that_may_pass_counts_toward_an_outage(tmp_path, failure, passing):
+    script = {"turns": [{"api_error": failure}, {"api_error": failure}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, handouts=three_handouts(tmp_path), max_lanes=1)
+        try:
+            lab.release()
+            await until(lambda: len([x for x in lab.deck.lanes.values() if x.finished]) >= 2, "two lanes to end")
+            if passing:
+                await until(lambda: lab.deck.held, "the hold")
+                assert len(lab.deck.lanes) == 2
+            else:
+                await until(lambda: len(lab.deck.lanes) == 3, "the third lane")  # the queue went on
+                assert lab.deck.held == ""
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_reply_from_the_api_between_two_claude_failures_means_no_outage_yet(tmp_path):
+    """L01 fails on a 529; L02 gets an answer, then fails on one: the API answered in between,
+    so the queue goes on. L03 fails too: two in a row (L02, L03), and the queue is held."""
+    script = {"turns": [
+        {"api_error": OVERLOADED},
+        {"calls": [{"text": "Looking at the handout first."}], "api_error": OVERLOADED},
+        {"api_error": OVERLOADED},
+    ]}
+
+    async def main():
+        lab = Lab(tmp_path, script, handouts=three_handouts(tmp_path), max_lanes=1)
+        try:
+            lab.release()
+            await until(lambda: len(lab.deck.lanes) == 3, "the third lane")
+            assert all(lane.state is LaneState.GAVE_UP for lane in list(lab.deck.lanes.values())[:2])
+            await until(lambda: lab.deck.held, "the hold")
+            assert "2 lanes in a row ended on it (L02, L03)" in lab.deck.held
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("message, passing", [
+    ("exceeded retry limit, last status: 503 Service Unavailable", True),
+    ("exceeded retry limit, last status: 429 Too Many Requests, request id: req_1", True),
+    ("stream disconnected before completion: connection reset", True),
+    ("Selected model is at capacity. Please try a different model.", True),
+    ("We’re currently experiencing high demand, which may cause temporary errors.", True),
+    ("unexpected status 401 Unauthorized: invalid key", False),
+    ("stream disconnected before completion: Incomplete response returned, reason: content_filter", False),
+    ("Quota exceeded. Check your plan and billing details.", False),
+])
+def test_two_codex_lanes_failing_on_an_api_failure_that_may_pass_hold_the_queue(tmp_path, message, passing):
+    script = {"turns": [{"fail": message}, {"fail": message}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", handouts=three_handouts(tmp_path), max_lanes=1)
+        try:
+            lab.release()
+            await until(lambda: len([x for x in lab.deck.lanes.values() if x.finished]) >= 2, "two lanes to end")
+            assert all(lane.result.startswith("codex's turn failed: ") for lane in lab.deck.lanes.values() if lane.finished)
+            if passing:
+                await until(lambda: lab.deck.held, "the hold")
+                assert "codex on small: " in lab.deck.held and len(lab.deck.lanes) == 2
+            else:
+                await until(lambda: len(lab.deck.lanes) == 3, "the third lane")
+                assert lab.deck.held == ""
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_codex_item_between_two_failures_means_the_api_answered(tmp_path):
+    fail = "exceeded retry limit, last status: 503 Service Unavailable"
+    script = {"turns": [{"fail": fail}, {"items": [{"message": "Reading the note."}], "fail": fail}, {"fail": fail}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", handouts=three_handouts(tmp_path), max_lanes=1)
+        try:
+            lab.release()
+            await until(lambda: len(lab.deck.lanes) == 3, "the third lane")
+            await until(lambda: lab.deck.held, "the hold")
+            assert "2 lanes in a row ended on it (L02, L03)" in lab.deck.held
         finally:
             await lab.finish()
 

@@ -103,6 +103,13 @@ makes before every start, owner-only (a symlink or a file of that name is remove
 followed; a folder another user owns stops the CLI, saying why), and keeps for the lane's
 later starts (codex's resume finds its thread there).
 
+A model API outage (P78). A CLI retries a failed call by itself; a turn that fails once its
+retries ran out ends the lane. When it failed on something that may pass (a rate limit, a 5xx,
+an overload: claude_passing, codex_passing), it counts toward the run's outage as AgentDriver's
+lanes do (Outage in agent/driver.py): OUTAGE_LANES lanes in a row ending so, with no answer from
+the API in between, hold the deck's queue before the last of them ends, so autopilot disengages,
+and their challenges go back on the queue when the player lifts the hold.
+
 What this module assumes about the CLIs is listed in tests/fake_agent_cli.py, which plays
 them in the tests (a real run spends the player's money). Nothing here has been checked
 against a real run yet; claude_argv() and codex_argv() hold every flag in one place.
@@ -147,7 +154,7 @@ from ..light import Lights
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import owntext, prompts, sharing
-from .driver import MAX_IDLE_TURNS, Takeover, WorkspaceFactory
+from .driver import MAX_IDLE_TURNS, Outage, Takeover, WorkspaceFactory, _may_pass, outage_hold
 from .flaggate import CLAIMED_ONLY, FlagGate, Outputs
 from .held import Secrets as _Secrets
 from .facts import FirstLooks, Look
@@ -208,6 +215,24 @@ configure a coding-agent CLI from its working directory. They are moved out of t
 HELD_SUFFIX = ".held"  # added to each held name: a CLI that looks under .flightdeck/held/ takes up none of them
 STDERR_LOG = "agent-stderr.log"  # in root/.flightdeck
 PID_LINE = "flightdeck-agent-pid "
+
+# A model API's failure that may pass, as each CLI reports a turn that failed on it once its own retries ran out
+# (P78): claude in structured fields (the result's api_error_status, an assistant message's or an api_retry event's
+# error category); codex only in turn.failed's message, its own words for its errors (codex-rs: CodexErr's Display).
+CLAUDE_PASSING = frozenset({"rate_limit", "overloaded", "server_error"})
+CODEX_STATUS = re.compile(r"(?:exceeded retry limit, last status:|unexpected status) (\d{3})\b")
+CODEX_PASSING = (
+    "stream disconnected before completion",
+    "rate limit exceeded",
+    "Selected model is at capacity",
+    "Policy-restricted capacity is unavailable",
+    "Flex capacity unavailable",
+    "Connection failed",
+    "request timed out",
+    "We\u2019re currently experiencing high demand",
+    "We're currently experiencing high demand",
+)
+CODEX_NOT_PASSING = "reason: content_filter"  # a stream that ends on the content filter is about the request
 
 NUDGE = (
     "Note from flightdeck: your turn ended. Carry on with the challenge; when you have the flag, "
@@ -687,6 +712,41 @@ def _status(code: int | None) -> int | None:
     return code if code >= 0 else 128 - code
 
 
+def claude_passing(result: dict, retry: tuple[int | None, str] | None, category: str) -> str:
+    """Why a claude turn that failed did so on a model API failure that may pass (a rate
+    limit, a 5xx, an overload: P78), or "" when it did not or claude does not say. From its
+    structured fields only, never from the text of the turn: the result's api_error_status;
+    else the error category of the turn's assistant message that claude made of the failure
+    (`category`); else the last api_retry event of the turn (`retry`: its error_status and
+    error category), the failure claude was retrying when its retries ran out."""
+    status = result.get("api_error_status")
+    if isinstance(status, int) and not isinstance(status, bool):
+        return f"HTTP {status}" if _may_pass(status) else ""
+    if category:
+        return category if category in CLAUDE_PASSING else ""
+    if retry is not None:
+        code, kind = retry
+        if code is not None:
+            return f"HTTP {code}" if _may_pass(code) else ""
+        return kind if kind in CLAUDE_PASSING else ""
+    return ""
+
+
+def codex_passing(message: str) -> str:
+    """Why a codex turn that failed (turn.failed's message) did so on a model API failure
+    that may pass (P78), or "": a status codex gave up on (exceeded retry limit, unexpected
+    status) that may pass, or one of codex's own words for an overload, a rate limit, a
+    stream or a connection that broke, a request that timed out. Each is codex's own text at
+    the start of its message; the content filter is not one."""
+    found = CODEX_STATUS.match(message)
+    if found:
+        status = int(found.group(1))
+        return f"HTTP {status}" if _may_pass(status) else ""
+    if CODEX_NOT_PASSING in message:
+        return ""
+    return next((_one_line(message, 80) for words in CODEX_PASSING if message.startswith(words)), "")
+
+
 def _shell_command(command: Any) -> str:
     """The command a codex command_execution ran, without the shell wrapper codex adds
     (`bash -lc '<command>'`)."""
@@ -1049,6 +1109,8 @@ class _Run:
         self.shares = sharing.attach(driver.deck, challenge, workspace, driver.root_of)
         self.handover = ""
         self._delivering = False
+        self.retry: tuple[int | None, str] | None = None  # claude: the turn's last api_retry (status, error category)
+        self.api_error = ""  # claude: the error category of the message it made of a failed call this turn
 
     # ------------------------------------------------------------------ the deck's view
 
@@ -1091,6 +1153,26 @@ class _Run:
     def note(self, text: str) -> None:
         if not self.over():
             self.driver.deck.note(self.lane_id, self.driver.redact(text))
+
+    def api_answered(self) -> None:
+        """The model API answered this lane's CLI: whatever lanes ended on failures before
+        it, they were no outage that still lasts (Outage)."""
+        self.retry, self.api_error = None, ""
+        self.driver.outage.answered()
+
+    def failed_turn(self, gave_up: str, passing: str) -> None:
+        """The CLI's turn failed and the lane ends with `gave_up`. When it failed on a model
+        API failure that may pass (`passing` says which), it counts toward an outage as
+        AgentDriver's lanes do (Outage, P78): once OUTAGE_LANES lanes end so in a row, the
+        deck's queue is held before this lane ends, so autopilot disengages and the next
+        challenges wait, and the challenges those lanes park go back on the queue when the
+        player lifts the hold."""
+        if passing:
+            ended = self.driver.outage.ended(self.lane_id, self.driver.deck)
+            if ended:
+                self.driver.deck.hold_queue(outage_hold(ended, f"{self.lane_id}'s {self.kind} on {self.model}: {passing}"),
+                                            ended=ended)
+        self.report(TurnReport(turn=False, gave_up=gave_up))
 
     def track(self, future: asyncio.Future[Any]) -> None:
         self.tasks.add(future)
@@ -1962,6 +2044,7 @@ class _ClaudeRun(_Run):
         stdin.write(line.encode("utf-8") + b"\n")
         proc.sent = sent
         self.busy = True
+        self.retry, self.api_error = None, ""  # a new turn: what claude retried before is not this turn's
 
     def deliver(self) -> None:
         lane = self.lane()
@@ -1988,6 +2071,12 @@ class _ClaudeRun(_Run):
                 self.problem(proc, "an assistant event with no message")
                 return
             self.count(message)
+            error = event.get("error")
+            if isinstance(error, str) and error:  # the message claude made of a failed call: no answer from the API
+                if current:
+                    self.api_error = error
+            elif message.get("model") != "<synthetic>":
+                self.api_answered()
             if not current:
                 return
             for block in _blocks(message.get("content")):
@@ -2011,6 +2100,10 @@ class _ClaudeRun(_Run):
         elif kind == "system":
             if event.get("subtype") == "init" and current:
                 self.init(event)
+            elif event.get("subtype") == "api_retry" and current:
+                status = event.get("error_status")
+                code = status if isinstance(status, int) and not isinstance(status, bool) else None
+                self.retry = (code, _str(event.get("error")))
         elif kind != "stream_event":
             self.unknown_event(proc, _str(kind))
 
@@ -2100,8 +2193,10 @@ class _ClaudeRun(_Run):
                 self.report(TurnReport(turn=False, action=f"says: {_one_line(said, 200)}"))
             if failed:
                 why = _one_line(text, 300)
-                self.report(TurnReport(turn=False, gave_up=f"claude's turn failed ({_one_line(subtype or 'no subtype', 60)})"
-                                                           + (f": {why}" if why else "")))
+                passing = claude_passing(event, self.retry, self.api_error)
+                self.retry, self.api_error = None, ""
+                self.failed_turn(f"claude's turn failed ({_one_line(subtype or 'no subtype', 60)})" + (f": {why}" if why else ""),
+                                 passing)
                 return
             if interrupted:
                 self.steps = 0
@@ -2179,7 +2274,7 @@ class _CodexRun(_Run):
                     self.carry = proc.sent  # its turn was cut short: the stronger model hears them too
                 continue  # escalated: a fresh thread on the stronger model
             if proc.failed is not None:
-                self.report(TurnReport(turn=False, gave_up=f"codex's turn failed: {proc.failed}"))
+                self.failed_turn(f"codex's turn failed: {proc.failed}", codex_passing(proc.failed))
                 return
             if proc.completed:
                 if self.idle_turn():
@@ -2223,10 +2318,14 @@ class _CodexRun(_Run):
             item = event.get("item")
             if not isinstance(item, dict):
                 self.problem(proc, f"an {kind} event with no item")
-            elif current:
+                return
+            if item.get("type") != "error":
+                self.api_answered()  # the model's own item: the API answered
+            if current:
                 await self.item(proc, kind, item)
         elif kind == "turn.completed":
             proc.completed = True
+            self.api_answered()
             self.usage(proc, event.get("usage"))
         elif kind == "turn.failed":
             error = event.get("error")
@@ -2378,6 +2477,8 @@ class ExternalDriver:
         self.looks = FirstLooks(self.errors)
         self.instance = instance
         self.l1 = l1
+        # lanes that ended in a row on a model API failure that may pass: the CLIs share the player's model API (P78)
+        self.outage = Outage()
 
     # ------------------------------------------------------------------ LaneDriver
 

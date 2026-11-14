@@ -370,10 +370,24 @@ end the lane (a flag written in one waits for the player); a model API failure e
 failure that may pass (a 408 or 429, any 5xx, Anthropic's 529) ends only its own lane once the model
 has answered in the run, until `OUTAGE_LANES` (2) lanes in a row end on one, each within
 `OUTAGE_SECONDS` (300) of the one before and with no reply from the API in between
-(`AgentDriver._outage()`): then the queue is held as well, and the hold names those lanes, so their
-challenges are queued again when it is lifted. Only a failure that ends a lane counts: not a
-superseded call's, nor one a `[fallback]` API took over. A lane the same outage ends while the hold
-stands is added, and once the hold is lifted the count starts again.
+(the run's `Outage` count, `agent/driver.py`): then the queue is held as well, and the hold names
+those lanes, so their challenges are queued again when it is lifted. Only a failure that ends a
+lane counts: not a superseded call's, nor one a `[fallback]` API took over. A lane the same outage
+ends while the hold stands is added, and once the hold is lifted the count starts again.
+
+The `claude` and `codex` lanes keep the same count (P78), from what the CLI says once its own
+retries have run out. A claude turn that fails says why in fields of its own: the result's
+`api_error_status`, else the error category of the message claude makes of the failed call
+(`rate_limit`, `overloaded`, `server_error` may pass), else the last `api_retry` event of the
+turn (`claude_passing()`). The text of the turn is never read for it. Codex gives only a
+message with `turn.failed`, so its own wording at the start of that message is read: a status it
+gave up on (`exceeded retry limit, last status: 503 ...`, `unexpected status ...`) that may pass,
+or its words for an overload, a rate limit, a broken stream or connection or a timeout; a stream
+the content filter ended is not one (`codex_passing()`). Any answer from the model API (an
+assistant message from claude that is not one of those, any codex item but an error, a codex turn
+that completed) clears the count. A coding-agent lane does not hold the queue on its first such
+failure before any answer, as flightdeck's own lanes do: a CLI that never reached its API
+usually ends with its own reason first (no key, no login).
 
 A flag the model submits that the challenge's description or handout, as it came, holds is not
 claimed: it waits for the player under auto too, and the model hears why; the lane says what that
@@ -893,7 +907,8 @@ once the Watch is attached, so it sees the alerts the Watch raised. It is code, 
 subscribes to the deck's events, but an event only marks that there is something to look at:
 `step()` does the looking on the event loop's next turn (the mock, which has no loop, calls it
 after each tick), never from inside the deck's dispatch of a lane's report. A step checks the
-guardrails (the run budget), then applies the rules to each lane (P23), then starts the next
+guardrails (the run budget), then applies the rules to each lane (P23; a hint or wrong-way alert
+that comes back after its redirect escalates the lane as a stall does, P78), then starts the next
 round (P22). Every action goes through `Deck.apply(..., by=Actor.AUTOPILOT)`, which logs it as
 autopilot's and refuses what a rule may not do (an approval, an answer to a flag).
 
@@ -1365,8 +1380,6 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
   the instance until the player says yes, but the CLI lanes do not ask yet, so an event whose
   instance policy is not `auto` still refuses them.
 - **Timeline replay in `play`.** `Release` exists (Practice mode, under After a run); `play` does not use it.
-- **An API outage with coding-agent lanes holding the queue**, which is what would disengage
-  autopilot there ([Autopilot](#autopilot)).
 - **More from a plugin than a platform.** A plugin pulls, submits and reads the solved list
   ([Plugins](#plugins)); console commands, detectors, notification sinks and instances from a
   plugin are not built, and neither is a plugin's platform in `flightdeck start`.

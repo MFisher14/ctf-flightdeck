@@ -305,8 +305,41 @@ def test_a_lane_that_ignores_the_hint_is_redirected_to_the_alerts_suggestion_onc
     assert lane.actions[-1].by is Actor.AUTOPILOT and lane.actions[-1].text == f"new plan: {suggestion.text}"
     world.alert(lane.id, AlertKind.HINT, Suggestion("r", "Redirect", "Follow the description's hint: try rot13"))
     world.pilot.step()
-    assert lane.plan == suggestion.text and lane.alert(AlertKind.HINT) is not None  # once per lane: the second waits for you
+    # once per lane: the second alert means the redirect did not take, and the lane goes up a rung
+    assert lane.plan == suggestion.text and lane.alert(AlertKind.HINT) is None
+    assert lane.model == "mid" and lane.state is LaneState.RUNNING and ("escalate", lane.id, "mid") in world.driver.calls
     assert len(world.events(EventKind.INTERVENTION, intervention="redirect")) == 1
+
+
+def test_a_wrong_way_lane_that_keeps_going_wrong_after_its_redirect_climbs_and_at_the_top_is_parked():
+    world = engaged()
+    world.release(ch("a"), model="mid")
+    lane = world.lane("a")
+    turn = Suggestion("r", "Redirect: read the source", "Read the source in the handout before attacking the instance.")
+    world.alert(lane.id, AlertKind.DIRECTION, turn)
+    world.pilot.step()
+    assert lane.plan == turn.text and lane.model == "mid"
+    for model in ("big", None):  # the same alert again, then again on the top rung
+        world.alert(lane.id, AlertKind.DIRECTION, turn)
+        world.pilot.step()
+        if model:
+            assert lane.model == model and lane.state is LaneState.RUNNING
+    assert (lane.state, lane.result) == (LaneState.KILLED, "by autopilot; parked")
+    assert len(world.events(EventKind.INTERVENTION, intervention="redirect")) == 1
+
+
+def test_an_alert_with_no_redirect_leaves_the_lane_and_a_later_one_with_a_redirect_is_followed():
+    """No suggestion to redirect to is not a redirect: it does not count as the lane's one,
+    so no escalation follows, and a later alert of the kind that has one is followed."""
+    world = engaged()
+    world.release(ch("a"))
+    lane = world.lane("a")
+    world.alert(lane.id, AlertKind.HINT, Suggestion("h", "Hint", "The description points at base64."))
+    world.pilot.step()
+    assert lane.plan == "" and lane.model == "small" and lane.alert(AlertKind.HINT) is not None
+    world.alert(lane.id, AlertKind.HINT, Suggestion("r", "Redirect", "Decode the base64"))
+    world.pilot.step()
+    assert lane.plan == "Decode the base64" and lane.model == "small"
 
 
 def test_a_wrong_way_lane_is_redirected_to_its_suggestion_and_an_alert_with_none_is_left():

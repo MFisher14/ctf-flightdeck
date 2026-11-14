@@ -50,6 +50,12 @@ Proposals built and waiting for a release, in the order of their numbers in
   inside tmux, VS Code's terminal, iTerm2 and WezTerm on X11 have their own; every other
   terminal gets the general one. Each sentence is from that terminal's own source or
   documentation; none was tried in the terminal itself.
+- **Coding-agent lanes hold the queue on an outage; a redirect that did not take escalates**
+  (P78, [#33](https://github.com/MFisher14/ctf-flightdeck/issues/33)). The `claude` and `codex`
+  lanes hold the queue on a model API outage as flightdeck's own lanes do, so autopilot
+  disengages with `--agent` too; and a hint or wrong-way alert that comes back after
+  autopilot's redirect escalates the lane one rung (at the top it is killed and parked), where
+  it used to wait for you. This was the first item left of M5.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
@@ -281,9 +287,6 @@ back at any time (D20; the details are P19 to P28 in [DECISIONS.md](DECISIONS.md
 
 Left of M5:
 
-- **An outage with coding-agent lanes.** flightdeck's own lanes hold the queue when the model API
-  fails for every lane, and autopilot disengages on that hold; the `claude` and `codex` lanes do
-  not hold the queue yet.
 - **A refusal inside a coding-agent CLI.** flightdeck reroutes no refused request, and switches
   Anthropic's server-side refusal fallback off for its own lanes; what a CLI does with a refusal
   on its own API is not flightdeck's to see.
