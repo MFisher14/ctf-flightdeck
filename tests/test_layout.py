@@ -630,13 +630,6 @@ def test_layout_switches_the_view_and_back_and_keeps_the_cursor_the_filter_and_a
             assert (app.fleet.selected_lane, cursor_key(app), lane_rows(app)) == ("L03", "L03", before)
             assert (app.fleet.filter_text, app.fleet.sort) == ("a", SortMode.LANE)
             assert bar(app).field.value == "/hint keep this draft" and bar(app).field.has_focus
-        bar(app).clear()
-        await press(pilot, "escape")
-        await press(pilot, "slash")
-        await type_line(pilot, "layout")  # alone: the other one
-        await pilot.pause()
-        assert app.layout == "simple" and columns(app, "lanes") == SIMPLE_COLUMNS
-        assert "layout simple for this run" in status_line(app)
 
     drive(app, script, SIZE)
 
@@ -686,16 +679,16 @@ def test_layout_refuses_any_other_word_and_says_where_to_keep_a_layout():
         app.run_command("/layout DECK", None)
         await pilot.pause()
         assert app.layout == "deck"
-        assert 'layout deck for this run. To keep it: layout = "deck" under [console] in /somewhere/config.toml' in status_line(app)
+        assert "layout deck for this run. To keep it: /layout, then s" in status_line(app)
 
     drive(app, script, SIZE)
 
 
 PLAYERS_CONFIG = "/home/player/.config/flightdeck/config.toml"  # no such file: only its name is said
 ANSWERS = (  # (the board is a platform's, typed, the status line's whole text)
-    (False, "/theme nord", f'theme nord for this run. To keep it: theme = "nord" under [console] in {PLAYERS_CONFIG}'),
-    (False, "/layout deck", f'layout deck for this run. To keep it: layout = "deck" under [console] in {PLAYERS_CONFIG}'),
-    (False, "/layout simple", f'layout simple for this run. To keep it: layout = "simple" under [console] in {PLAYERS_CONFIG}'),
+    (False, "/theme nord", "theme nord for this run. To keep it: /theme, then s"),
+    (False, "/layout deck", "layout deck for this run. To keep it: /layout, then s"),
+    (False, "/config file", f"your config file: {PLAYERS_CONFIG}"),
     (False, "/theme nope", "/theme names no theme: built in are flightdeck, light, nord, gruvbox, dracula; your own is NAME.toml in "
                            "/home/player/.config/flightdeck/themes"),
     (True, "/new", "/new adds a challenge to a board you fill yourself; this board comes from the platform"),
@@ -706,11 +699,10 @@ ANSWERS = (  # (the board is a platform's, typed, the status line's whole text)
 @pytest.mark.parametrize("platform, typed, said", ANSWERS, ids=[typed for _, typed, _ in ANSWERS])
 def test_an_answer_too_long_for_one_row_of_the_status_line_goes_on_in_the_next(size, platform, typed, said):
     """What a command answers is read whole on an 80-column terminal: the part that matters
-    (the config file to change, where an own theme goes) is at its end."""
+    (how to keep a theme, where an own theme goes) is at its end."""
     from pathlib import Path
 
-    deck, app = console(by_hand=not platform, layout="deck" if typed == "/layout simple" else "simple", config_path=PLAYERS_CONFIG,
-                        themes_folder=Path(PLAYERS_CONFIG).parent / "themes")
+    deck, app = console(by_hand=not platform, layout="simple", config_path=PLAYERS_CONFIG, themes_folder=Path(PLAYERS_CONFIG).parent / "themes")
     release(deck, "alpha", "beta")
 
     async def script(pilot):
@@ -729,15 +721,18 @@ def test_an_answer_too_long_for_one_row_of_the_status_line_goes_on_in_the_next(s
 
 
 def test_a_long_answer_reads_whole_in_a_lanes_own_view_too():
-    deck, app = three_lanes("simple", config_path=PLAYERS_CONFIG)
+    from pathlib import Path
+
+    deck, app = three_lanes("simple", config_path=PLAYERS_CONFIG, themes_folder=Path(PLAYERS_CONFIG).parent / "themes")
 
     async def script(pilot):
         screen = await open_focus(pilot, app, "L01")
         assert screen.query_one("#status").size.height == 1
         await press(pilot, "slash")
-        await type_line(pilot, "layout deck")
+        await type_line(pilot, "theme nope")
         await pilot.pause()
-        said = f'layout deck for this run. To keep it: layout = "deck" under [console] in {PLAYERS_CONFIG}'
+        said = ("/theme names no theme: built in are flightdeck, light, nord, gruvbox, dracula; your own is NAME.toml in "
+                "/home/player/.config/flightdeck/themes")
         assert " ".join(status_line(app).split()) == f"● {said}"
         assert screen.query_one("#status").size.height == 2 and screen.query_one("#keys").region.bottom == app.size.height
 
@@ -1238,12 +1233,12 @@ def test_layout_is_a_command_that_acts_on_no_lane_listed_beside_the_runs_other_s
     names = [c.name for c in COMMANDS]
     assert names.index("layout") == names.index("theme") + 1 == names.index("config") + 2
     assert BY_NAME["layout"].args == "[simple|deck]"
-    assert BY_NAME["layout"].help == "simple: the lanes and what needs you; deck: the board and every column; alone: the other one"
+    assert BY_NAME["layout"].help == "simple: the lanes and what needs you; deck: the board and every column; alone: try both, and save one"
 
 
 def test_help_and_the_command_menu_list_layout():
     deck, app = three_lanes("simple")
-    listed = "/layout [simple|deck] simple: the lanes and what needs you; deck: the board and every column; alone: the other one"
+    listed = "/layout [simple|deck] simple: the lanes and what needs you; deck: the board and every column; alone: try both, and save one"
 
     async def script(pilot):
         await press(pilot, "question_mark")

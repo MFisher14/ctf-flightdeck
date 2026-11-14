@@ -1,8 +1,10 @@
-"""Modal screens: fork, kill, approve-all and quit prompts, the take-over placeholder, a challenge card and
-help."""
+"""Modal screens: fork, kill, approve-all and quit prompts, the take-over placeholder, a challenge card,
+the settings dialog, the theme and layout picker, and help."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,7 +17,8 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets import Button, Input, OptionList, Select, Static, TextArea
+from textual.widgets.option_list import Option
 
 from ..core.model import AlertKind, Challenge, ChallengeStatus
 from ..text import untrusted
@@ -559,6 +562,142 @@ class ConfigPrompt(ModalScreen[tuple[str, str] | None]):
 
     def action_apply(self) -> None:
         self.dismiss((self.query_one(Input).value.strip(), str(self.query_one(Select).value)))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+@dataclass(frozen=True)
+class Choice:
+    """A row of a Picker: its name, what it is in a few words, and why it cannot be chosen
+    ("": it can). A problem is flightdeck's own sentence about a file (themes.ThemeError)."""
+
+    name: str
+    note: str = ""
+    problem: str = ""
+
+
+class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
+    """/theme and /layout alone: the choices as a list, tried as the cursor moves.
+
+    The row the cursor is on is handed to `preview`, which draws the console in it; the dialog
+    sits at the right edge over a console that is not dimmed, so what is tried can be seen.
+    Enter keeps the row for this run and `s` keeps it and has it saved: the answer is
+    (name, save). esc is None, and whoever opened the dialog puts back what was there. A row
+    with a problem says it under its name and cannot be reached by the cursor or by a click.
+
+    `save_to` is the config file a choice is saved in. With none ("": the mock with no
+    config) the dialog has no `s` row, and `s` says why instead of doing nothing.
+
+    The keys are always on screen: the title and the rows under the list are docked, and the
+    list between them scrolls when the terminal is too short for it (FittedModal)."""
+
+    DEFAULT_CSS = MODAL_CSS.format(name="Picker") + """
+    Picker { align: right middle; background: $background 0%; }
+    Picker > Vertical { width: 54; margin: 0 2; }
+    Picker #picker-title { dock: top; height: 2; }
+    Picker #picker-foot { dock: bottom; height: auto; }
+    Picker OptionList { height: auto; max-height: 1fr; border: none; padding: 0; background: $surface; }
+    Picker OptionList:focus { border: none; background-tint: $foreground 0%; }
+    Picker OptionList > .option-list--option-highlighted, Picker OptionList:focus > .option-list--option-highlighted {
+        color: $foreground; background: $fd-selected-focus; text-style: bold;
+    }
+    Picker OptionList > .option-list--option-disabled { color: $text-muted; }
+    Picker OptionList > .option-list--option-hover { background: $fd-selected; }
+    Picker #picker-note { margin-top: 1; }
+    Picker #picker-said { margin-top: 1; }
+    Picker.-short > Vertical { max-height: 100%; padding: 0 2; margin: 0; }
+    Picker.-short #picker-title { height: 1; }
+    Picker.-short #picker-note { display: none; }
+    """
+    SHORT_UNDER = 24  # rows: with fewer the dialog gives up its blank rows and the note, and the list keeps what is left
+    BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("s", "save", "keep and save")]
+
+    def __init__(self, what: str, choices: list[Choice], *, in_use: str, preview: Callable[[str], None], save_to: str = "",
+                 note: str = "") -> None:
+        """`what`: the thing chosen, as a word ("theme"). `in_use`: the choice the console is
+        drawn in now, where the cursor starts. `note`: one muted line under the list."""
+        super().__init__()
+        self.what, self.choices, self.in_use, self.preview, self.save_to, self.note = what, choices, in_use, preview, save_to, note
+
+    def _row(self, choice: Choice) -> Text:
+        text = Text()
+        text.append(choice.name, style="" if choice.problem else "bold")
+        note = ", ".join(part for part in (choice.note, "in use" if choice.name == self.in_use else "") if part)
+        if note:
+            text.append(f"  {note}", style=theme.MUTED)
+        if choice.problem:
+            text.append(f"\n  cannot be used: {untrusted(choice.problem, one_line=True)}", style=theme.YELLOW)
+        return text
+
+    def _key_rows(self) -> Table:
+        grid = Table.grid(padding=(0, 1))
+        grid.add_column(no_wrap=True)
+        grid.add_column()
+        grid.add_row(theme.key_chip("↑↓"), Text(f"try a {self.what} on the console behind this"))
+        grid.add_row(theme.key_chip("enter"), Text("keep it for this run"))
+        if self.save_to:
+            grid.add_row(theme.key_chip("s"), Text("keep it, and save it in your config"))
+        grid.add_row(theme.key_chip("esc"), Text("back to what it was"))
+        return grid
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static(Text(self.what.capitalize(), style="bold"), id="picker-title")
+            yield OptionList(*(Option(self._row(choice), id=choice.name, disabled=bool(choice.problem)) for choice in self.choices),
+                             id="picker-list")
+            with Container(id="picker-foot"):
+                notes = [self.note] if self.note else []
+                if not self.save_to:
+                    notes.append(f"This console has no config file, so a {self.what} lasts for this run.")
+                if notes:
+                    yield Static(Text("\n".join(notes)), classes="muted", id="picker-note")
+                yield Static(Text(""), id="picker-said")
+                yield Static(self._key_rows(), classes="keys", id="picker-keys")
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        choices = self.query_one(OptionList)
+        at = next((n for n, choice in enumerate(self.choices) if choice.name == self.in_use and not choice.problem), None)
+        choices.highlighted = at  # None: what is in use is not in the list, or cannot be used now; the first arrow key goes to a row
+        choices.focus()
+        self._say("")
+
+    def repaint(self) -> None:
+        """Draw the dialog's own colours again, in the palette now in use (a theme being tried)."""
+        choices = self.query_one(OptionList)
+        for choice in self.choices:
+            choices.replace_option_prompt(choice.name, self._row(choice))
+        self.query_one("#picker-keys", Static).update(self._key_rows())
+
+    def _say(self, text: str) -> None:
+        """A line over the keys: why a key did nothing ("": none, and no row for it)."""
+        said = self.query_one("#picker-said", Static)
+        said.update(Text(text, style=theme.YELLOW))  # the colour of the status line's warnings, in the palette on screen now
+        said.display = bool(text)
+
+    @on(OptionList.OptionHighlighted)
+    def _tried(self, event: OptionList.OptionHighlighted) -> None:
+        if not self.query(OptionList) or event.option is not event.option_list.highlighted_option:
+            # the dialog is closing, or the cursor has moved on since: the list starts on its first row, before
+            # on_mount puts it where it belongs
+            return
+        self._say("")
+        self.preview(str(event.option.id))
+        self.repaint()
+
+    @on(OptionList.OptionSelected)
+    def _kept(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss((str(event.option.id), False))
+
+    def action_save(self) -> None:
+        option = self.query_one(OptionList).highlighted_option
+        if not self.save_to:
+            self._say(f"Nothing to save it in: this console has no config file. Enter keeps the {self.what} for this run.")
+        elif option is None:
+            self._say(f"No {self.what} is chosen yet: move to one with ↑ or ↓.")
+        else:
+            self.dismiss((str(option.id), True))
 
     def action_cancel(self) -> None:
         self.dismiss(None)

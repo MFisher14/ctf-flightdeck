@@ -22,6 +22,7 @@ terminal's clipboard (OSC 52) and to the operating system's, by its tool (clipbo
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -1259,19 +1260,66 @@ class FlightdeckApp(App[None]):
 
     def switch_layout(self, arg: str) -> None:
         """/layout simple|deck: the console's layout for the rest of this run (the config file
-        keeps its own); /layout alone: the other one. Any other word is a warning, and the
-        layout stays."""
+        keeps its own); /layout alone: the picker (layout_picker). Any other word is a warning,
+        and the layout stays."""
         word = arg.strip().lower()
         if not word:
-            word = next(name for name in LAYOUTS if name != self.layout)
-        elif word not in LAYOUTS:  # not shown: it is not a layout
+            self.layout_picker()
+            return
+        if word not in LAYOUTS:  # not shown: it is not a layout
             self.warn(f"/layout takes {' or '.join(LAYOUTS)}")
             return
         self.set_layout(word)
-        keep = (f'. To keep it: layout = "{word}" under [console] in {self.config_path}' if self.config_path
-                else " (this console has no config file)")
-        narrow = "; this terminal is narrow, so the compact layout shows" if views.compact(self.size.width) else ""
-        self.say(f"layout {word} for this run{keep}{narrow}")
+        self.keep_look(layout=word)
+
+    def layout_picker(self) -> None:
+        """/layout alone: the two layouts in a list (screens.Picker). The console is drawn in
+        the one the cursor is on; Enter keeps it for this run, s keeps and saves it, and esc
+        puts back the layout there was."""
+        from .commands import LAYOUT_HELP
+        from .screens import Choice, Picker
+
+        before = self.layout
+
+        def show(name: str) -> None:
+            if name != self.layout:  # the same layout: nothing to lay out again
+                self.set_layout(name)
+
+        def done(answer: tuple[str, bool] | None) -> None:
+            if answer is None:
+                show(before)
+                return
+            name, save = answer
+            show(name)
+            self.keep_look(save=save, layout=name)
+
+        narrow = "This terminal is narrow, so the compact layout shows in both." if views.compact(self.size.width) else ""
+        self.push_screen(Picker("layout", [Choice(name, LAYOUT_HELP[name]) for name in LAYOUTS], in_use=before, preview=show,
+                                save_to=self.config_path, note=narrow), done)
+
+    def keep_look(self, *, save: bool = False, theme: str | None = None, layout: str | None = None) -> None:
+        """Say that the console is in the theme or the layout just chosen (or both), and for
+        how long. `save`: write it under [console] in the player's config first
+        (config_edit.save_console, which leaves the file as it was when it cannot); the run
+        keeps the look whether that worked or not, and a save that failed is a warning with
+        the reason."""
+        from ..config_edit import CONSOLE_KEYS, EditError, save_console
+
+        chosen = {"theme": theme, "layout": layout}
+        said = " and ".join(f"{key} {chosen[key]}" for key in CONSOLE_KEYS if chosen[key] is not None)
+        narrow = "; this terminal is narrow, so the compact layout shows" if layout is not None and views.compact(self.size.width) else ""
+        if not self.config_path:
+            self.say(f"{said} for this run (this console has no config file){narrow}")
+        elif not save:
+            command = " or ".join(f"/{key}" for key in CONSOLE_KEYS if chosen[key] is not None)
+            self.say(f"{said} for this run. To keep it: {command}, then s{narrow}")
+        else:
+            try:
+                save_console(Path(self.config_path), theme=theme, layout=layout)
+            except EditError as exc:
+                self.warn(f"{said} for this run; it was not saved: {exc}")
+                return
+            self.say(f"{said}, saved in your config file: {self.config_path}{narrow}")
 
     def switch_details(self) -> None:
         """/details: the lane view's details switch, as ctrl+o there (FocusScreen.action_details).
@@ -1283,14 +1331,12 @@ class FlightdeckApp(App[None]):
         focus.action_details()
 
     def set_theme(self, arg: str) -> None:
-        """/theme: the themes there are; /theme NAME: the console's colours for the rest of
-        this run (the config file keeps its own). A name that is no theme, or a theme file
-        that cannot be used, is a warning, and the theme in use stays."""
+        """/theme alone: the picker (theme_picker); /theme NAME: the console's colours for the
+        rest of this run (the config file keeps its own). A name that is no theme, or a theme
+        file that cannot be used, is a warning, and the theme in use stays."""
         name = arg.strip()
         if not name:
-            built_in, own = themes.names(self.themes_folder)
-            in_use = theme.active().name
-            self.say("themes: " + ", ".join(f"{one} (in use)" if one == in_use else one for one in built_in + own))
+            self.theme_picker()
             return
         if themes.NAME.fullmatch(name) is None:  # not shown: it is not a name
             self.warn("/theme takes a theme's name (lower-case letters, digits, - and _); /theme alone lists them")
@@ -1304,9 +1350,51 @@ class FlightdeckApp(App[None]):
             self.warn(str(exc))
             return
         self.set_palette(palette)
-        keep = (f'. To keep it: theme = "{name}" under [console] in {self.config_path}' if self.config_path
-                else " (this console has no config file)")
-        self.say(f"theme {name} for this run{keep}")
+        self.keep_look(theme=name)
+
+    def themes_listed(self) -> tuple[dict[str, themes.Palette], dict[str, str], list[tuple[str, str]]]:
+        """The themes a list offers, each read now: (the palettes that load by name, why each
+        of the others cannot be used, every (name, "built in" or "yours") in the list's
+        order). This reads every theme file of the player's folder whose name is a theme's
+        (themes.names), which only a list the player asked for does: /theme alone and /config."""
+        palettes: dict[str, themes.Palette] = {}
+        problems: dict[str, str] = {}
+        built_in, own = themes.names(self.themes_folder)
+        listed = [(name, kind) for kind, names in (("built in", built_in), ("yours", own)) for name in names]
+        for name, _ in listed:
+            try:
+                palettes[name] = themes.load(name, self.themes_folder)
+            except themes.ThemeError as exc:  # its text names the theme file and shows no value from it
+                problems[name] = str(exc).removeprefix(f"{self.themes_folder}{os.sep}")  # the file's name: the folder is said once
+        return palettes, problems, listed
+
+    def theme_picker(self) -> None:
+        """/theme alone: the themes in a list (screens.Picker), the built-in ones and the
+        player's own. The console is drawn in the one the cursor is on, a transcript's lines
+        included; Enter keeps it for this run, s keeps and saves it, and esc puts back the
+        palette there was. A theme file that cannot be used is listed with its reason and
+        cannot be chosen."""
+        from .screens import Choice, Picker
+
+        before = theme.active()
+        palettes, problems, listed = self.themes_listed()
+
+        def show(palette: themes.Palette) -> None:
+            if palette != theme.active():  # the same colours: nothing to draw again
+                self.set_palette(palette)
+
+        def done(answer: tuple[str, bool] | None) -> None:
+            if answer is None:
+                show(before)
+                return
+            name, save = answer
+            show(palettes[name])
+            self.keep_look(save=save, theme=name)
+
+        choices = [Choice(name, kind, problems.get(name, "")) for name, kind in listed]
+        own = f"Your own themes are NAME.toml files in {self.themes_folder}" if self.themes_folder is not None else ""
+        self.push_screen(Picker("theme", choices, in_use=before.name, preview=lambda name: show(palettes[name]),
+                                save_to=self.config_path, note=own), done)
 
     def config_dialog(self) -> None:
         """/config alone: the settings dialog (ConfigPrompt). What it changes goes through the

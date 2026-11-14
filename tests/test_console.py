@@ -780,7 +780,7 @@ def test_help_explains_sending_a_held_queue_and_the_marks_after_dollars_and_tell
 
 def test_help_and_the_command_menu_list_theme_and_the_bar_runs_it():
     world, app = make("sstv")
-    listed = "/theme [name] the console's colours for this run; alone: the themes you have"
+    listed = "/theme [name] the console's colours; alone: try the themes you have, and save one"
 
     async def script(pilot):
         await press(pilot, "question_mark")

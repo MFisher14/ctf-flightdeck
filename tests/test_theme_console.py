@@ -72,7 +72,7 @@ def busy(world: FakeWorld) -> bool:
 def console_colours(palette: themes.Palette, handout: Path) -> dict[str, set[str]]:
     """Every colour on each screen of the console, opened in `palette`: the fleet, the command
     menu, a lane with a diff open, help, the /config and /new dialogs (/new with `handout`,
-    a file, attached)."""
+    a file, attached), and the /theme and /layout lists, each saying why `s` saves nothing here."""
     async def adder(new):
         return True, "added"
 
@@ -102,15 +102,20 @@ def console_colours(palette: themes.Palette, handout: Path) -> dict[str, set[str
             seen["focus"] = screen_colors(app)
             app.show_fleet()
             await pilot.pause()
-            for name, command in (("help", "/help"), ("config", "/config"), ("new", "/new")):
-                app.run_command(command, None)
+            dialogs = {"help": "HelpScreen", "config": "ConfigPrompt", "new": "NewChallengePrompt", "theme": "Picker", "layout": "Picker"}
+            for name, screen in dialogs.items():
+                app.run_command(f"/{name}", None)
                 await pilot.pause()
                 await pilot.pause()
-                assert type(app.screen).__name__ == {"help": "HelpScreen", "config": "ConfigPrompt", "new": "NewChallengePrompt"}[name]
+                assert type(app.screen).__name__ == screen
                 if name == "new":
                     assert app.screen.add_files([handout])
                     await pilot.pause()
                     assert f"attached {handout.name}" in "\n".join(screen_lines(app))
+                if screen == "Picker":
+                    assert theme.active() is palette  # the cursor is on no theme but the one in use: nothing is tried
+                    await press(pilot, "s")  # no config file here: the list says so, in the colour of a warning
+                    assert "Nothing to save it in" in "\n".join(screen_lines(app))
                 seen[name] = screen_colors(app)
                 await press(pilot, "escape")
                 assert isinstance(app.screen, FleetScreen)
@@ -243,7 +248,7 @@ def test_nothing_on_any_screen_is_drawn_in_a_colour_the_palette_did_not_give(tmp
     default = console_colours(themes.DEFAULT, handout) | home_colours(themes.DEFAULT)
     assert theme.active() is themes.DEFAULT
     strange = console_colours(STRANGE, handout) | home_colours(STRANGE)
-    assert list(strange) == ["fleet", "command menu", "focus", "help", "config", "new", "home", "new event form"]
+    assert list(strange) == ["fleet", "command menu", "focus", "help", "config", "new", "theme", "layout", "home", "new event form"]
     for screen, seen in strange.items():
         assert seen & default[screen] == SVG_FRAME, f"{screen}: drawn the same in both themes: {sorted(seen & default[screen] - SVG_FRAME)}"
         assert not seen & set(colours(themes.DEFAULT).values()), screen
@@ -253,6 +258,8 @@ def test_nothing_on_any_screen_is_drawn_in_a_colour_the_palette_did_not_give(tmp
             STRANGE.error, STRANGE.warn, STRANGE.pending, STRANGE.info, STRANGE.accent, STRANGE.ink, STRANGE.ink_light} <= strange["fleet"]
     assert STRANGE.surface in strange["command menu"] and STRANGE.surface in strange["new event form"]
     assert STRANGE.ok in strange["new"]  # "attached ..."
+    for name in ("theme", "layout"):  # the list's rows, its keys, the row the cursor is on, and why s did nothing
+        assert {STRANGE.surface, STRANGE.muted, STRANGE.accent, STRANGE.ink, STRANGE.warn} <= strange[name], name
     assert {STRANGE.selected, STRANGE.brand, STRANGE.accent, STRANGE.muted, STRANGE.ink} <= strange["home"]
     nord_diff, monokai_diff = {"#bf616a", "#a3be8c"}, {"#ff4689", "#a6e22e"}  # a removed and an added line, in each Pygments style
     assert nord_diff <= strange["focus"] and not monokai_diff & strange["focus"]
@@ -318,7 +325,7 @@ def test_TEXTUAL_THEME_in_the_environment_changes_no_colour():
     assert themes.DEFAULT.page in here["config"] and themes.DEFAULT.page in here["home"]
 
 
-# ---------------------------------------------------------------------- /theme
+# ---------------------------------------------------------------------- /theme NAME (/theme alone, the list: test_look_picker.py)
 
 
 def own_themes(tmp_path: Path) -> Path:
@@ -329,28 +336,6 @@ def own_themes(tmp_path: Path) -> Path:
     (folder / "Not A Name.toml").write_text('base = "nord"\n')
     (folder / "notes.txt").write_text("not a theme\n")
     return folder
-
-
-def test_theme_alone_lists_the_built_in_themes_and_the_players_own_and_marks_the_one_in_use(tmp_path):
-    world, app = busy_console(NORD, themes_folder=own_themes(tmp_path))
-
-    async def main() -> None:
-        async with app.run_test(size=SIZE) as pilot:
-            await pilot.pause()
-            app.run_command("/theme", None)
-            assert app._status[:2] == ("themes: flightdeck, light, nord (in use), gruvbox, dracula, broken, dusk", "information")
-            assert theme.active() is NORD and app.theme == "fd-nord"
-
-    asyncio.run(main())
-    world, bare = busy_console()  # no themes folder (the mock with no config): the built-in ones
-
-    async def main() -> None:
-        async with bare.run_test(size=SIZE) as pilot:
-            await pilot.pause()
-            bare.run_command("/theme", None)
-            assert bare._status[0] == "themes: flightdeck (in use), light, nord, gruvbox, dracula"
-
-    asyncio.run(main())
 
 
 def test_theme_repaints_what_is_already_on_the_screen_a_transcripts_lines_included():
@@ -456,7 +441,7 @@ def test_theme_takes_the_players_own_theme_says_how_to_keep_it_and_reads_its_fil
             app.run_command("/theme dusk", None)
             await pilot.pause()
             await pilot.pause()
-            assert app._status[:2] == (f'theme dusk for this run. To keep it: theme = "dusk" under [console] in {config}', "information")
+            assert app._status[:2] == ("theme dusk for this run. To keep it: /theme, then s", "information")
             assert (theme.active().name, theme.active().accent, theme.active().border) == ("dusk", "#ff5fd7", NORD.border)
             assert "#ff5fd7" in screen_colors(app) and NORD.accent not in screen_colors(app)  # dusk's own accent (the focused pane's border)
             assert color_of(app, "last action", row_of(app, "last action")) == NORD.muted  # and its base's other colours
