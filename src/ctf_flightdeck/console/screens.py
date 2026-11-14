@@ -6,13 +6,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from rich.console import Group
+from rich.console import Console, ConsoleOptions, Group, RenderResult
+from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Select, Static, TextArea
 
@@ -41,6 +42,25 @@ MODAL_CSS = """
 """
 
 
+class FittedModal(ModalScreen):
+    """A dialog that must show its last rows (the keys, a refusal) on a short terminal too.
+    Those rows are docked at the dialog's bottom and what is over them is a scrolling part,
+    so a dialog too tall for the terminal scrolls that part and never cuts the rows under it.
+    While the terminal has fewer rows than SHORT_UNDER the screen also has the class -short,
+    and its styles then give the dialog the terminal's whole height and no blank rows."""
+
+    SHORT_UNDER = 0  # rows: a terminal with fewer has the short styles
+
+    def on_mount(self) -> None:
+        self._fit(self.app.size.height)
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._fit(event.size.height)
+
+    def _fit(self, rows: int) -> None:
+        self.set_class(rows < self.SHORT_UNDER, "-short")
+
+
 def _keys(*pairs: tuple[str, str]) -> Text:
     text = Text()
     for i, (key, label) in enumerate(pairs):
@@ -64,6 +84,33 @@ def _meanings(*rows: tuple[str, str]) -> Table:
     for word, meaning in rows:
         grid.add_row(Text(f"  {word}"), Text(meaning))
     return grid
+
+
+MEANING_ROOM = 40  # cells: with fewer beside the widest label, a meaning goes under its label (Described)
+
+
+class Described:
+    """Rows of a label and what it means, drawn to the width they get: two columns while the
+    meanings have MEANING_ROOM cells beside the widest label, and else each meaning under its
+    label, set in by two. Beside a label of 56 cells (/config's usage), an 80-column terminal
+    leaves a meaning 14 cells a row. Decided as it is drawn, so a resize changes it."""
+
+    def __init__(self, rows: list[tuple[Text, Text]], style: str = "") -> None:
+        self.rows, self.style = rows, style
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        widest = max((label.cell_len for label, _ in self.rows), default=0)
+        if options.max_width - widest - 2 >= MEANING_ROOM:
+            grid = Table.grid(padding=(0, 2))
+            grid.add_column(style=self.style, no_wrap=True)
+            grid.add_column()
+            for label, meaning in self.rows:
+                grid.add_row(label, meaning)
+            yield grid
+            return
+        for label, meaning in self.rows:
+            yield Text.assemble(label, style=self.style)
+            yield Padding(meaning, (0, 0, 0, 2))
 
 
 class ForkPrompt(ModalScreen[tuple[str, str] | None]):
@@ -101,7 +148,7 @@ class ForkPrompt(ModalScreen[tuple[str, str] | None]):
         self.dismiss(None)
 
 
-class NewChallengePrompt(ModalScreen["str | None"]):
+class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
     """/new: a challenge the player hands over. A name (any characters), one box for its
     description as the site shows it, and its files. The box is text and stays text: nothing
     in it is taken for a file (addchallenge.parse reads only the instance's address, on a line
@@ -111,16 +158,29 @@ class NewChallengePrompt(ModalScreen["str | None"]):
 
     ctrl+s checks the challenge and hands it to `adder`, which copies the files off the UI
     thread. The form closes once the challenge is added, with what to tell the player (None:
-    cancelled); a refusal leaves it open, everything typed still there, and says why."""
+    cancelled); a refusal leaves it open, everything typed still there, and says why.
+
+    The line a refusal is said on and the keys (ctrl+s is the only way to add the challenge,
+    and it is said nowhere else) are always on screen: the fields over them are one scrolling
+    part, which on a short terminal gives the description box fewer rows and, shorter still,
+    scrolls to the field that has the focus (FittedModal)."""
 
     DEFAULT_CSS = MODAL_CSS.format(name="NewChallengePrompt") + """
     NewChallengePrompt > Vertical { width: 124; }
-    NewChallengePrompt TextArea { height: 12; margin-top: 1; border: round $fd-border; }
+    NewChallengePrompt #new-body { height: auto; max-height: 1fr; }
+    NewChallengePrompt #new-foot { dock: bottom; height: auto; }
+    NewChallengePrompt TextArea { height: 10; margin-top: 1; border: round $fd-border; }
     NewChallengePrompt TextArea:focus { border: round $accent; }
-    NewChallengePrompt .short { width: 40; }
+    NewChallengePrompt .short { width: 1fr; max-width: 40; }
     NewChallengePrompt #new-problem { color: $warning; }
-    NewChallengePrompt TextArea { height: 10; }
+    NewChallengePrompt.-short > Vertical { height: 100%; max-height: 100%; padding: 0 2; }
+    NewChallengePrompt.-short #new-body { height: 1fr; max-height: 100%; }
+    NewChallengePrompt.-short TextArea { height: 1fr; min-height: 5; margin-top: 0; }
+    NewChallengePrompt.-short Input, NewChallengePrompt.-short Horizontal, NewChallengePrompt.-short .keys { margin-top: 0; }
     """
+    # The form as it is drawn on a tall terminal needs 35 rows of the 90% a dialog gets. With
+    # fewer the description box gives up its rows (down to three), then the fields scroll
+    SHORT_UNDER = 40
     BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("ctrl+s", "add", "add", priority=True),
                 Binding("ctrl+v", "paste_image", "paste a screenshot", priority=True),
                 Binding("ctrl+o", "choose_files", "choose files", priority=True),
@@ -225,23 +285,26 @@ class NewChallengePrompt(ModalScreen["str | None"]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static(Text("New challenge", style="bold"))
-            yield Static(Text("Name, as the site shows it:"), classes="muted")
-            yield Input(value=self.given_name, placeholder="e.g. Crab Walk", id="new-name")
-            yield Static(Text("Its description: paste it as the site shows it (it stays as you give it; a path in it is only "
-                              "text). Files: ctrl+o, or drag them in; the line under the box says what is attached. Put the "
-                              "target's address (https://... or nc host port) on a line of its own:"), classes="muted")
-            yield TextArea(id="new-text", soft_wrap=True, show_line_numbers=False)
-            yield Static(Text("no file attached", style="bold"), id="new-attached")
-            with Horizontal():
-                yield Input(placeholder="category (optional): web, crypto, pwn...", id="new-category", classes="short")
-                yield Input(placeholder="points (optional)", id="new-points", classes="short")
-            yield Static(Text(""), id="new-problem")
-            # ctrl+r is said when a file is attached (add_files): one more key here would wrap the line
-            yield Static(_keys(("ctrl+s", "add it and start a lane"), ("ctrl+o", "choose files"), ("ctrl+v", "paste a screenshot"),
-                               ("tab", "next field"), ("esc", "cancel")), classes="keys")
+            with VerticalScroll(id="new-body", can_focus=False):  # tab goes through the fields only
+                yield Static(Text("New challenge", style="bold"))
+                yield Static(Text("Name, as the site shows it:"), classes="muted")
+                yield Input(value=self.given_name, placeholder="e.g. Crab Walk", id="new-name")
+                yield Static(Text("Its description: paste it as the site shows it (it stays as you give it; a path in it is only "
+                                  "text). Files: ctrl+o, or drag them in; the line under the box says what is attached. Put the "
+                                  "target's address (https://... or nc host port) on a line of its own:"), classes="muted")
+                yield TextArea(id="new-text", soft_wrap=True, show_line_numbers=False)
+                yield Static(Text("no file attached", style="bold"), id="new-attached")
+                with Horizontal():
+                    yield Input(placeholder="category (optional): web, crypto, pwn...", id="new-category", classes="short")
+                    yield Input(placeholder="points (optional)", id="new-points", classes="short")
+            with Container(id="new-foot"):  # docked under the fields: these two rows are never scrolled or cut off
+                yield Static(Text(""), id="new-problem")
+                # ctrl+r is said when a file is attached (add_files): one more key here would wrap the line
+                yield Static(_keys(("ctrl+s", "add it and start a lane"), ("ctrl+o", "choose files"), ("ctrl+v", "paste an image"),
+                                   ("tab", "next field"), ("esc", "cancel")), classes="keys")
 
     def on_mount(self) -> None:
+        super().on_mount()
         field = self.query_one("#new-name", Input)
         field.cursor_blink = False
         (self.query_one("#new-text", TextArea) if self.given_name else field).focus()
@@ -311,16 +374,24 @@ class NewChallengePrompt(ModalScreen["str | None"]):
         self.dismiss(None)
 
 
-class WelcomeScreen(ModalScreen[bool]):
+class WelcomeScreen(FittedModal, ModalScreen[bool]):
     """What a player sees before the dashboard, the first time: what the screen is, and the
     one thing to do next. Enter does that thing (True); esc just closes it (False). `simple`:
-    the console opens in the simple layout, which has no board to describe."""
+    the console opens in the simple layout, which has no board to describe.
+
+    Its last row, the keys, says that one thing, and is always on screen: on a short terminal
+    the dialog loses its blank rows, and the text over the keys scrolls if it still does not
+    fit (FittedModal)."""
 
     DEFAULT_CSS = MODAL_CSS.format(name="WelcomeScreen") + """
     WelcomeScreen { background: $background 85%; }
     WelcomeScreen > Vertical { width: 90; padding: 2 4; }
+    WelcomeScreen #welcome-body { height: auto; max-height: 1fr; }
+    WelcomeScreen .keys { dock: bottom; }
     WelcomeScreen .gap { margin-top: 1; }
+    WelcomeScreen.-short > Vertical { max-height: 100%; padding: 0 2; }
     """
+    SHORT_UNDER = 30  # rows: its text at 80 columns, the blank rows around it and the dialog's 90% need 27
     BINDINGS = [Binding("enter", "go", "go"), Binding("escape", "close", "close"), Binding("q", "close", "close")]
 
     def __init__(self, *, mock: bool, empty: bool, lanes: int, simple: bool = False) -> None:
@@ -329,24 +400,25 @@ class WelcomeScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static(Text("Welcome to flightdeck", style="bold"))
-            if self.is_mock:
-                first = "This is a demo on fake data: no model, no network, nothing spent. Look around; you cannot break anything."
-            elif self.empty:
-                first = "Your board is empty. Give flightdeck a challenge and an AI agent starts working on it."
-            else:
-                first = f"Your board is loaded. Up to {self.lanes} AI agents start on the challenges now, cheapest first."
-            yield Static(Text(first), classes="gap")
-            yield Static(Text("What you are about to see:", style="bold"), classes="gap")
-            lanes = "the lanes: one AI agent per challenge, the one that needs you on top"
-            yield Static(_meanings(
-                *((("middle", lanes),) if self.simple else (("left", "the board: every challenge"), ("right", lanes))),
-                ("bottom", "the command bar: type / to see everything you can do"),
-            ))
-            yield Static(Text("You only need three things:", style="bold"), classes="gap")
-            third = ("/new", "hand over a challenge: its text, files, a screenshot") if self.empty and not self.is_mock \
-                else ("a", "approve a flag an agent found (d declines it)")
-            yield Static(_meanings(("enter", "open a lane to watch it and talk to it"), third, ("?", "every key, any time")))
+            with VerticalScroll(id="welcome-body"):
+                yield Static(Text("Welcome to flightdeck", style="bold"))
+                if self.is_mock:
+                    first = "This is a demo on fake data: no model, no network, nothing spent. Look around; you cannot break anything."
+                elif self.empty:
+                    first = "Your board is empty. Give flightdeck a challenge and an AI agent starts working on it."
+                else:
+                    first = f"Your board is loaded. Up to {self.lanes} AI agents start on the challenges now, cheapest first."
+                yield Static(Text(first), classes="gap")
+                yield Static(Text("What you are about to see:", style="bold"), classes="gap")
+                lanes = "the lanes: one AI agent per challenge, the one that needs you on top"
+                yield Static(_meanings(
+                    *((("middle", lanes),) if self.simple else (("left", "the board: every challenge"), ("right", lanes))),
+                    ("bottom", "the command bar: type / to see everything you can do"),
+                ))
+                yield Static(Text("You only need three things:", style="bold"), classes="gap")
+                third = ("/new", "hand over a challenge: its text, files, a screenshot") if self.empty and not self.is_mock \
+                    else ("a", "approve a flag an agent found (d declines it)")
+                yield Static(_meanings(("enter", "open a lane to watch it and talk to it"), third, ("?", "every key, any time")))
             go = "add your first challenge" if self.empty and not self.is_mock else "open the console"
             yield Static(_keys(("enter", go), ("esc", "just show me the console")), classes="keys")
 
@@ -697,6 +769,7 @@ class HelpScreen(ModalScreen[None]):
     DEFAULT_CSS = MODAL_CSS.format(name="HelpScreen") + """
     HelpScreen > Vertical { width: 112; }
     HelpScreen #help-body { height: auto; max-height: 1fr; }
+    HelpScreen .keys { dock: bottom; }
     """
     BINDINGS = [
         Binding("escape", "close", "close"),
@@ -714,11 +787,8 @@ class HelpScreen(ModalScreen[None]):
         keys.add_column()
         for key, text in KEY_HELP + BATCH_KEY_HELP + (MOCK_KEYS if self.show_mock_keys else ()):
             keys.add_row(Text(key), Text(MOCK_KEY_HELP.get(key, text) if self.show_mock_keys else text))
-        commands = Table.grid(padding=(0, 2))
-        commands.add_column(style=f"bold {theme.ACCENT}", no_wrap=True)
-        commands.add_column()
-        for command in COMMANDS:
-            commands.add_row(Text(f"/{command.name} {command.args}".rstrip()), Text(command.help))
+        commands = Described([(Text(f"/{command.name} {command.args}".rstrip()), Text(command.help)) for command in COMMANDS],
+                             style=f"bold {theme.ACCENT}")
         alerts = Table.grid(padding=(0, 2))
         alerts.add_column(no_wrap=True)
         alerts.add_column()

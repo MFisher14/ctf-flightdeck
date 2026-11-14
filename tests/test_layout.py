@@ -10,6 +10,7 @@ test reports itself. Nothing needs a model or a network.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import replace
 
 import pytest
@@ -301,6 +302,185 @@ def test_the_welcome_screens_meanings_stand_in_one_column_and_wrap_under_themsel
             assert rest[:column].strip("│ ") == "" and rest[column] != " " and rest.rstrip("│ ").endswith("top")
 
     drive(app, script, (width, 46))
+
+
+def shown_whole(app: FlightdeckApp, selector: str) -> bool:
+    """Whether a widget of the open dialog is on screen with every row and column of it: inside
+    the terminal, inside the dialog, and inside what the dialog's scrolling part shows now."""
+    widget = app.screen.query_one(selector)
+    region = widget.region
+    if not region.area or not app.screen.region.contains_region(region):
+        return False
+    return all(parent.region.contains_region(region) for parent in widget.ancestors if parent is not app.screen and hasattr(parent, "region")
+               and parent in app.screen.walk_children())
+
+
+WELCOME_SIZES = [(80, 24), (66, 24), (64, 24), (50, 20), (80, 16), (100, 24), (160, 46)]
+WELCOME_KEYS = {  # (the mock, a board the player fills): what the last row says
+    (True, False): "enter open the console esc just show me the console",
+    (False, True): "enter add your first challenge esc just show me the console",
+    (False, False): "enter open the console esc just show me the console",
+}
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+@pytest.mark.parametrize("mock, by_hand", list(WELCOME_KEYS), ids=["mock", "empty by hand", "platform"])
+@pytest.mark.parametrize("size", WELCOME_SIZES, ids=[f"{w}x{h}" for w, h in WELCOME_SIZES])
+def test_the_welcome_screen_always_says_which_key_does_what(size, mock, by_hand, layout):
+    """The last row is the one next step: it is on screen at every size, whatever the text
+    over it wraps to, and Enter does what it says."""
+    if mock:
+        world = FakeWorld(scenarios.get("sstv"))
+        app = FlightdeckApp(world.deck, ticker=world.tick, mock="MOCK · test", refresh_seconds=None, welcome=True, layout=layout)
+    else:
+        _, app = console(by_hand=by_hand, layout=layout, welcome=True)
+
+    async def script(pilot):
+        assert type(app.screen).__name__ == "WelcomeScreen"
+        said = prompt_text(app)
+        assert WELCOME_KEYS[mock, by_hand] in said, said
+        assert "Welcome to flightdeck" in said and shown_whole(app, ".keys")
+        await press(pilot, "enter")
+        assert type(app.screen).__name__ == ("NewChallengePrompt" if by_hand else "FleetScreen")
+
+    drive(app, script, size)
+
+
+def test_a_welcome_screen_too_tall_for_the_terminal_scrolls_under_its_key_line():
+    _, app = console(by_hand=True, layout="deck", welcome=True)
+
+    async def script(pilot):
+        said = prompt_text(app)
+        assert "enter add your first challenge" in said and "every key, any time" not in said  # the text's end is below
+        await press(pilot, "down", "down", "down")  # the arrows scroll the text
+        said = prompt_text(app)
+        assert "Welcome to flightdeck" not in said and "enter add your first challenge" in said
+        await press(pilot, "end")
+        said = prompt_text(app)
+        assert "every key, any time" in said and "enter add your first challenge" in said  # scrolled to, the keys still there
+        await press(pilot, "enter")
+        assert type(app.screen).__name__ == "NewChallengePrompt"
+
+    drive(app, script, (50, 14))
+
+
+FORM_SIZES = [(80, 24), (80, 30), (100, 24), (100, 28), (120, 30), (120, 36), (140, 40), (160, 46), (66, 24)]
+FORM_KEYS = "ctrl+s add it and start a lane ctrl+o choose files ctrl+v paste an image tab next field esc cancel"
+FORM_PARTS = ("#new-name", "#new-text", "#new-attached", "#new-category", "#new-points", "#new-problem", ".keys")
+
+
+@pytest.mark.parametrize("size", FORM_SIZES, ids=[f"{w}x{h}" for w, h in FORM_SIZES])
+def test_the_new_form_shows_every_field_and_how_to_add_the_challenge(size):
+    """From 66x24 up the whole /new form is on screen: each field, the line that says what is
+    attached, the line a refusal is said on, and the keys, ctrl+s first."""
+    deck, app = console(by_hand=True, layout="simple", welcome=True)
+
+    async def script(pilot):
+        await press(pilot, "enter")  # the welcome screen's one next step
+        form = app.screen
+        assert type(form).__name__ == "NewChallengePrompt"
+        said = prompt_text(app)
+        assert FORM_KEYS in said, said
+        assert "no file attached" in said and "category (optional)" in said and "points (optional)" in said
+        assert [part for part in FORM_PARTS if not shown_whole(app, part)] == []
+        assert form.query_one("#new-text").size.height >= 3  # rows to type in, inside its border
+        if size[0] >= 128:  # the dialog at its widest: the keys are one row, no key apart from its label
+            assert form.query_one(".keys").size.height == 1
+        for field in ("new-name", "new-text", "new-category", "new-points"):  # tab goes through the fields and nothing else
+            assert app.focused.id == field and shown_whole(app, f"#{field}")
+            await press(pilot, "tab")
+        assert app.focused.id == "new-name"
+        await press(pilot, "ctrl+s")  # no name yet: refused, and the reason is on screen
+        assert "give the challenge a name with some letters or digits in it" in prompt_text(app)
+        assert [part for part in FORM_PARTS if not shown_whole(app, part)] == []
+
+    drive(app, script, size)
+
+
+@pytest.mark.parametrize("size", [(80, 16), (56, 20)], ids=["80x16", "56x20"])
+def test_a_new_form_too_tall_for_the_terminal_keeps_its_keys_and_scrolls_to_the_field_in_use(size):
+    deck, app = console(by_hand=True, layout="simple")
+
+    async def script(pilot):
+        app.new_challenge()
+        await pilot.pause()
+        await pilot.pause()
+        form = app.screen
+        assert FORM_KEYS in prompt_text(app) and shown_whole(app, ".keys") and shown_whole(app, "#new-problem")
+        assert shown_whole(app, "#new-name") and not shown_whole(app, "#new-points")
+        for field in ("new-text", "new-category", "new-points"):
+            await press(pilot, "tab")
+            await pilot.wait_for_scheduled_animations()  # the scroll to the field
+            assert app.focused.id == field and shown_whole(app, f"#{field}"), field  # the field typed in is never off screen
+        await press(pilot, *"250")
+        assert form.query_one("#new-points").value == "250" and "250" in prompt_text(app)
+        await press(pilot, "ctrl+s")
+        assert "give the challenge a name" in prompt_text(app) and shown_whole(app, ".keys")
+
+    drive(app, script, size)
+
+
+def usage(command) -> str:
+    return f"/{command.name} {command.args}".rstrip()
+
+
+def help_rows(app: FlightdeckApp, label: str) -> list[str]:
+    """The rows of the open help that a command's entry takes: from the row that starts with
+    its usage (`label`, whole) to the row before the next command's."""
+    lines = [re.sub(r"[▁▂▃▄▅▆▇█▔]+$", "", line.rstrip()).rstrip() for line in region_text(app, "#help-body").splitlines()]  # less the scrollbar
+    at = next(i for i, line in enumerate(lines) if line.strip() == label or line.strip().startswith(label + "  "))
+    end = next(i for i in range(at + 1, len(lines)) if lines[i].lstrip().startswith("/") or not lines[i].strip())
+    return lines[at:end]
+
+
+def test_on_an_80_column_terminal_help_puts_what_a_command_does_under_it_not_in_a_sliver_beside_it():
+    """The longest usage (/config's) is 56 cells: beside it, 80 columns leave what each command
+    does 14 cells a row. Too narrow for two columns, the list puts it under the command."""
+    deck, app = three_lanes("simple")
+    approve = BY_NAME["approve"].help
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        assert "Commands (the bar at the bottom" in prompt_text(app)  # a terminal tall enough to show the list whole
+        rows = help_rows(app, "/approve [all]")
+        assert rows[0].strip() == "/approve [all]"
+        assert " ".join(" ".join(rows[1:]).split()) == approve and len(rows) <= 4, rows  # it took ten rows of 14 cells
+        indents = {len(row) - len(row.lstrip()) for row in rows[1:]}
+        assert indents == {rows[0].index("/") + 2}, rows  # under its command, set in
+        said = prompt_text(app)
+        for command in COMMANDS:  # every command and what it does, read whole
+            assert usage(command) in said and command.help in said, command.name
+        assert max(len(help_rows(app, usage(c))) for c in COMMANDS) <= 4
+
+    drive(app, script, (80, 200))
+
+
+def test_a_terminal_with_the_room_keeps_helps_commands_in_two_columns():
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        rows = help_rows(app, "/approve [all]")
+        assert rows[0].split(None, 2)[2].startswith("approve what the lane waits for")  # beside its command
+        starts = {help_rows(app, usage(c))[0].index(c.help[:12]) for c in COMMANDS}
+        assert len(starts) == 1  # one column
+
+    drive(app, script, (160, 200))
+
+
+@pytest.mark.parametrize("size", [(80, 24), (60, 20), (160, 46)], ids=["80x24", "60x20", "160x46"])
+def test_help_always_says_how_to_close_it(size):
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        assert "esc close ↑↓ scroll" in prompt_text(app) and shown_whole(app, ".keys")
+        body = app.screen.query_one("#help-body")
+        assert body.max_scroll_y > 0 and app.screen.query_one("Vertical").region.contains_region(body.region)
+        await press(pilot, "end")
+        assert "claimed by you" in prompt_text(app) and "esc close" in prompt_text(app)  # the last row of the text, over the keys
+
+    drive(app, script, size)
 
 
 # ---------------------------------------------------------------------- the simple layout: the header

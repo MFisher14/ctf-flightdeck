@@ -23,6 +23,10 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   to write one: [docs/PLUGINS.md](docs/PLUGINS.md).
 - An empty board now says how to add a challenge and keeps saying it, and the `/` menu scrolls
   to every command and lists `/new` first when there is no lane yet.
+- On a small terminal (80x24 and under) the `/new` form, the welcome screen and help keep
+  their last rows on screen: the keys (`ctrl+s` adds the challenge) and the line a refusal is
+  said on. The form's description box gives up rows first, then its fields scroll to the one
+  you are in. Help lists what a command does under it when there is no room beside it.
 - A status line too long for the terminal goes on in a second row instead of being cut, so
   what `/layout` and `/theme` answer (the config line that keeps the choice, and its file) is
   read whole at 80 columns.
