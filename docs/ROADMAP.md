@@ -3,11 +3,11 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: thirteen proposals, P51 to P63 (2026-11-14)
+## Built, not released: fourteen proposals, P51 to P64 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P51 to P63); the lines for players are under Unreleased in
-[CHANGELOG.md](../CHANGELOG.md). P54 to P62 were built from the list of what comes next (the
+[DECISIONS.md](DECISIONS.md) (P51 to P64); the lines for players are under Unreleased in
+[CHANGELOG.md](../CHANGELOG.md). P54 to P62 and P64 were built from the list of what comes next (the
 [milestones](https://github.com/MFisher14/ctf-flightdeck/milestones) have the rest).
 
 - **The simple layout** (P51). The console opens on one list of lanes, a short header and the
@@ -82,6 +82,12 @@ Proposals built and waiting for a release, in the order of their numbers in
   lane restarted by `/attach` or `/kill` from its own view takes the view to the fresh lane.
   Not built: selecting in the full card, the diff and the tables (the terminal's own selection
   reaches them), and a calm card in the compact layout.
+- **The command bar names the lane it talks to** (P64,
+  [#39](https://github.com/MFisher14/ctf-flightdeck/issues/39)). The bar's border reads
+  `to L04 · Ticket Desk` and follows the selection in the lane list and the lane in a lane's
+  view; `no lane` when there is none, `the run` while a command that takes no lane is typed,
+  and the lane a command names while it is typed. The empty bar reads `a message, or / for
+  commands` in both views. Not built: a border colour of its own for each of the three.
 
 Known limits, each said where it applies:
 
