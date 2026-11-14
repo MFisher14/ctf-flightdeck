@@ -245,6 +245,18 @@ def test_a_run_that_ends_in_the_same_call_says_how_many_times_in_a_row_it_ran():
     assert calm(deck, lane)[1] == "  ⎿ ×2 $ curl -s http://127.0.0.1:8080/admin → 403"
 
 
+def test_only_spaces_and_tabs_are_blanks_a_newline_or_a_control_character_makes_another_call():
+    """P72 reads a run of blanks as one space and nothing looser: a two-line script is not the
+    same words on one line, and a separator a challenge can write is not a space."""
+    assert views.same_call(Call("$ cat a  \t rm b", ""), Call("$ cat a rm b", ""))
+    for other in ("$ cat a\nrm b", "$ cat a\rrm b", "$ cat a\x1frm b", "$ cat a\x0brm b", "$ cat a\x85rm b", "$ cat a rm b"):
+        assert not views.same_call(Call(other, ""), Call("$ cat a rm b", "")), repr(other)
+    deck, _, lane = one_lane()
+    deck.report("L01", TurnReport(action="$ cat a", output="x", calls=(Call("$ cat a\nrm b", "x"), Call("$ cat a rm b", "x"))))
+    assert calm(deck, lane) == ["⏺ 2 tool calls", "  ⎿ $ cat a rm b → x"]  # no ×2: they are two calls
+    assert not [row for row in calm(deck, lane) if views.FOLD_MARK in row]
+
+
 def test_calls_that_differ_in_a_number_are_not_folded_and_a_note_between_two_ends_the_fold():
     deck, _, lane = one_lane()
     shell(deck, "xxd -s 16 -l 16 a.bin", "00000010: 01\n")

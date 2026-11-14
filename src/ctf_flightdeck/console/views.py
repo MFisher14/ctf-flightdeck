@@ -21,6 +21,7 @@ screenshotted like a run folder.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
@@ -1308,12 +1309,17 @@ def _more_lines(count: int) -> str:
     return f" …+{count} line{'' if count == 1 else 's'}"
 
 
+_BLANKS = re.compile("[ \t]+")
+
+
 def _call_key(call: Call) -> str:
     """What two tool calls must share to fold into one row: the call's whole text, every run of
-    blanks read as one space. Nothing else is read as the same: `xxd -s 16` and `xxd -s 32`
-    are two calls, since a sweep over offsets is progress, and a row that said they were one
-    command would say what the lane did not do."""
-    return " ".join(call.text.split())
+    blanks (spaces and tabs) read as one space. Nothing else is read as the same: `xxd -s 16`
+    and `xxd -s 32` are two calls, since a sweep over offsets is progress, and a row that said
+    they were one command would say what the lane did not do. A newline or any other control
+    character is not a blank (str.split would take it for one): a two-line script is not the
+    same words on one line."""
+    return _BLANKS.sub(" ", call.text).strip(" ")
 
 
 def same_call(one: Call, other: Call) -> bool:
