@@ -9,10 +9,12 @@ test reports itself. Nothing needs a model or a network.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from textual.widgets import DataTable
 
-from ctf_flightdeck.console import fleet
+from ctf_flightdeck.console import fleet, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.commands import COMMANDS
 from ctf_flightdeck.core.deck import Deck, QueueEntry
@@ -224,3 +226,46 @@ def test_the_welcome_screens_meanings_stand_in_one_column_and_wrap_under_themsel
             assert rest[:column].strip("│ ") == "" and rest[column] != " " and rest.rstrip("│ ").endswith("top")
 
     drive(app, script, (width, 46))
+
+
+# ---------------------------------------------------------------------- the simple layout: the header
+
+CALM = views.HeaderFacts(event="Example CTF", team=False, containerized=True, lanes=3, max_lanes=4, queue=0, need=0, held="",
+                         tokens=12_000, dollars=1.5, unpriced=False, clock=3600.0)
+
+
+def header(facts: views.HeaderFacts, width: int = 200, **layout) -> str:
+    return views.fit_header(facts, width, **layout)[0].plain.strip()
+
+
+def test_the_simple_header_says_only_what_is_not_the_usual():
+    assert header(CALM, simple=True) == "flightdeck ╱ Example CTF ╱ $1.50"
+    deck_header = header(CALM)
+    for gone in ("all clear", "tok", "solo", "docker", "lanes", "queue", "T+"):
+        assert gone in deck_header and gone not in header(CALM, simple=True), gone
+    odd = replace(CALM, team=True, containerized=False, queue=12, mock="MOCK")
+    assert header(odd, simple=True) == "flightdeck ╱ Example CTF ╱ MOCK ╱ team ╱ host ╱ queue 12 ╱ $1.50"
+
+
+def test_who_has_the_controls_who_needs_you_and_a_held_queue_are_in_every_layouts_header():
+    busy = replace(CALM, need=2, held="no key for the model", autopilot=True)
+    assert header(busy, simple=True) == "flightdeck ╱ Example CTF ╱ AUTOPILOT ╱ ▲ 2 need you ╱ queue held: no key for the model ╱ $1.50"
+    for layout in ({"simple": True}, {}, {"compact": True}, {"compact": True, "simple": True}):
+        for width in (200, 80, 40, 20):  # however narrow: these never drop
+            shown = header(busy, width, **layout)
+            assert "▲ 2 need you" in shown and "queue held" in shown, (layout, width, shown)
+            assert ("AP" if layout.get("compact") else "AUTOPILOT") in shown, (layout, width, shown)
+    assert header(busy, compact=True, simple=True) == header(busy, compact=True)  # a narrow terminal: the compact header wins
+
+
+def test_a_narrow_terminal_drops_the_simple_headers_pieces_in_order_and_never_the_dollars():
+    odd = replace(CALM, team=True, containerized=False, queue=12, mock="MOCK", need=1)
+    whole = views.fit_header(odd, 200, simple=True)[0].cell_len
+    dropped = []
+    for width in range(whole, 20, -1):
+        text, left = views.fit_header(odd, width, simple=True)
+        assert left[:len(dropped)] == dropped  # what went stays gone, in the order it went
+        dropped = left
+        assert "▲ 1 need you" in text.plain and "$1.50" in text.plain and "flightdeck" in text.plain
+    assert dropped == ["event", "mock", "queue", "host", "team"]
+    assert all(name in views.HEADER_WORDS for name in dropped)  # doctor has a word for each

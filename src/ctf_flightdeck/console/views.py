@@ -1,6 +1,10 @@
 """Rendering for the console: header, board and lane rows, the fleet's "why" line, and the
 focus view's transcript, "needs you now" card, files and diff.
 
+The console has two layouts (config.LAYOUTS): `deck`, the whole dashboard, and `simple`, which
+shows what needs the player and little else. The functions here that draw differently in
+`simple` take `simple=True`; the compact layout (a narrow terminal) wins over both.
+
 Everything that comes from a challenge or a lane (names, descriptions, commands, tool
 output, flags, diffs) is untrusted. It goes through text.untrusted() and is wrapped in
 rich Text, never parsed as markup, so "[@click=app.quit]" or an escape sequence shows
@@ -350,21 +354,40 @@ HEADER_WORDS = {  # the pieces that can drop, as doctor names them (console/room
     "event": "the event's name", "mock": "the mock tag", "runtime": "the runtime (docker or host)",
     "tokens": "tokens", "dollars": "dollars", "clock": "the event clock",
     "flightdeck": "the flightdeck name", "mode": "solo or team",  # these two give way in the compact layout only
+    "team": "the team tag", "host": "the host tag", "queue": "the queue",  # the simple layout's own pieces
 }
 COMPACT_HEADER_OMITS = ("tokens", "clock", "event", "mock", "runtime")  # never in the compact header, in their usual drop order
 
 
-def header_pieces(facts: HeaderFacts, *, compact: bool = False) -> list[tuple[str, int, tuple[str, str, str, bool]]]:
+def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = False) -> list[tuple[str, int, tuple[str, str, str, bool]]]:
     """(name, drop rank, segment) for each piece, in order. Rank 0 never drops; on a narrow
     terminal the highest rank drops first, the later piece first on a tie (D16). The compact
     layout's header has what needs the player and the dollars, which never drop, the lanes and
-    the queue in short, and the flightdeck name and solo/team, which give way in that order."""
+    the queue in short, and the flightdeck name and solo/team, which give way in that order.
+
+    The simple layout's header (`simple`; the compact one wins over it) says only what is not
+    the usual: team mode, lanes on the host, a queue that is not empty, autopilot, who needs
+    the player, a held queue. Those last three and the dollars never drop. It has no solo,
+    docker, lane count, "all clear", tokens or clock."""
     if compact:
         out = [
             ("flightdeck", 2, ("flightdeck", theme.WHITE, theme.BLUE, True)),
             ("mode", 1, ("team" if facts.team else "solo", theme.CYAN if facts.team else theme.TEXT, theme.SEGMENT, True)),
             ("lanes", 0, (f"{facts.lanes}/{lanes_text(facts.max_lanes)} · q{facts.queue}", theme.TEXT, theme.SEGMENT, False)),
         ]
+    elif simple:
+        out = [
+            ("flightdeck", 0, ("flightdeck", theme.WHITE, theme.BLUE, True)),
+            ("event", 3, (untrusted(facts.event, one_line=True), theme.TEXT, theme.SEGMENT, True)),
+        ]
+        if facts.mock:
+            out.append(("mock", 2, (facts.mock, theme.INK, theme.ACCENT, True)))
+        if facts.team:
+            out.append(("team", 1, ("team", theme.CYAN, theme.SEGMENT, True)))
+        if not facts.containerized:
+            out.append(("host", 1, ("host", theme.INK, theme.YELLOW, True)))
+        if facts.queue:
+            out.append(("queue", 1, (f"queue {facts.queue}", theme.TEXT, theme.SEGMENT, False)))
     else:
         out = [
             ("flightdeck", 0, ("flightdeck", theme.WHITE, theme.BLUE, True)),
@@ -381,12 +404,12 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False) -> list[tuple[st
         out.append(("autopilot", 0, (AUTOPILOT_SHORT if compact else AUTOPILOT, theme.INK, theme.GREEN, True)))
     if facts.need:
         out.append(("need", 0, (f"▲ {facts.need} need you", theme.WHITE, theme.RED, True)))
-    elif not facts.held:  # a held queue is not all clear: nothing starts until the player lifts it
+    elif not facts.held and (compact or not simple):  # a held queue is not all clear: nothing starts until the player lifts it
         out.append(("need", 0, ("all clear", theme.MUTED, theme.SEGMENT, False)))
     if facts.held:
         out.append(("held", 0, (HELD, theme.INK, theme.YELLOW, True)))
     dollars = f"${fmt.dollars(facts.dollars)}" + ("+" if facts.unpriced else "") + (LATER if facts.later else "")  # as lane_dollars
-    if compact:
+    if compact or simple:
         out.append(("dollars", 0, (dollars, theme.TEXT, theme.SEGMENT, False)))
         return out
     out += [
@@ -397,13 +420,15 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False) -> list[tuple[st
     return out
 
 
-def fit_header(facts: HeaderFacts, width: int, *, compact: bool = False) -> tuple[Text, list[str]]:
+def fit_header(facts: HeaderFacts, width: int, *, compact: bool = False, simple: bool = False) -> tuple[Text, list[str]]:
     """The header in `width` cells, and the names of the pieces it leaves out, in the order
     they drop. While the queue is held, why follows "queue held": the event's name, the clock,
     tokens and dollars give way to it (in their usual order), and it is cut to the room left.
     The compact layout's header (header_pieces) never has tokens, the clock, the event's name,
-    the mock tag or the runtime: they come first in what it leaves out."""
-    pieces = header_pieces(facts, compact=compact)
+    the mock tag or the runtime: they come first in what it leaves out. The simple layout's
+    header leaves out only what a narrow terminal makes it drop: what it never shows is not
+    missing from it."""
+    pieces = header_pieces(facts, compact=compact, simple=simple)
     left_out: list[str] = [name for name in COMPACT_HEADER_OMITS if name != "mock" or facts.mock] if compact else []
     text = theme.segments([part for _, _, part in pieces])
 
@@ -434,10 +459,10 @@ def _cut(text: str, cells: int) -> str:
     return text if cell_len(text) <= cells else set_cell_size(text, cells - 1) + "…"
 
 
-def header(deck: Deck, *, mock: str = "", note: str = "", width: int = 200, compact: bool = False) -> Text:
+def header(deck: Deck, *, mock: str = "", note: str = "", width: int = 200, compact: bool = False, simple: bool = False) -> Text:
     """The slanted header. Low-priority pieces drop out first when the terminal is narrow.
     While the queue is held it says so, never "all clear", and why, as room allows."""
-    text, _ = fit_header(header_facts(deck, mock), width, compact=compact)
+    text, _ = fit_header(header_facts(deck, mock), width, compact=compact, simple=simple)
     if note and text.cell_len + len(note) + 2 <= width:
         text.append("  " + note, theme.MUTED)
     return text
