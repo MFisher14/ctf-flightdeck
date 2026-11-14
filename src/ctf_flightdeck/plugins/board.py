@@ -15,10 +15,15 @@ and each board id's ref, the platform's own id for the challenge that a submit i
 A folder that holds another plugin's board, a board from another address, or challenges
 flightdeck did not pull through the plugin is refused: flags would go to the wrong place.
 A second pull adds only the refs the board does not have yet.
+
+What one pull may do is bounded: an answer lists at most plugins.call.MAX_CHALLENGES
+challenges, MAX_PROBLEMS of those left out are named and the rest counted, and the folders are
+made in a thread, so a run's console and lanes go on while a large board lands.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -44,6 +49,7 @@ REPLY_KEYS = ("ref", "name", "category", "points", "description", "files", "urls
 (manual.CHALLENGE_KEYS), and are checked by its loader."""
 _COPIED = tuple(key for key in REPLY_KEYS if key not in ("ref", "files"))
 _STAGING = ".plugin-pull-"
+MAX_PROBLEMS = 20  # challenges a pull names as left out: each is a warning in a run, so the rest are counted
 _IGNORED = (".DS_Store",)
 assert all(key in CHALLENGE_KEYS for key in REPLY_KEYS if key != "ref")
 
@@ -53,7 +59,7 @@ class Written:
     """What a pull did to the board."""
 
     added: list[str] = field(default_factory=list)  # the board ids of the new challenge folders
-    problems: list[str] = field(default_factory=list)  # "<name or ref>: <why it was left out>", made safe
+    problems: list[str] = field(default_factory=list)  # "<name or ref>: <why it was left out>", made safe: MAX_PROBLEMS, then how many more
     notes: list[str] = field(default_factory=list)  # what the plugin wants the player to know, made safe
 
 
@@ -96,39 +102,56 @@ async def pull_into(caller: Caller, board: Path, *, plugin: str, url: str) -> Wr
         built.mkdir()
         reply = await caller.pull(files, sorted(set(refs.values())))
         written.notes = list(reply.notes)
-        _write_state(root, plugin, url, refs)  # the folder is this plugin's board from here on, with nothing in it too
-        known = frozenset(refs.values())  # on the board before this pull
-        seen = set(known)
-        for item in reply.challenges:
-            label = _label(item, token)
-            folder = None
-            try:
-                ref = _checked(item)
-                if ref in seen:
-                    if ref in known:
-                        continue  # on the board already
-                    raise _Left("its ref is another challenge's in the same pull")
-                seen.add(ref)
-                cid = _free_id(root, built, item["name"], ref)
-                folder = built / cid
-                _build(folder, item, files)
-                try:
-                    load_challenge(folder)  # read back as any untrusted board is
-                except BoardError as exc:
-                    raise _Left(_board_error(exc, folder, root / cid)) from None
-                os.rename(folder, root / cid)
-            except (_Left, OSError) as exc:
-                why = str(exc) if isinstance(exc, _Left) else f"could not be written ({exc.strerror or exc})"
-                written.problems.append(f"{label}: {scrub(why, token, limit=2 * MAX_SHOWN)}")
-                if folder is not None:
-                    shutil.rmtree(folder, ignore_errors=True)
-                continue
-            refs[cid] = ref
-            _write_state(root, plugin, url, refs)
-            written.added.append(cid)
+        # The folders are made in a thread: in a run this is awaited on the console's loop, which every lane shares
+        await asyncio.to_thread(_land, written, reply.challenges, root, files, built, refs, plugin, url, token)
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, staging, ignore_errors=True)
     return written
+
+
+def _land(written: Written, challenges, root: Path, files: Path, built: Path, refs: dict[str, str], plugin: str, url: str,
+          token: str | None) -> None:
+    """Add a pull's new challenges to the board `root`, each built and read back in the staging
+    area first (`files`: where the plugin put its downloads; `built`: where a folder is made).
+    `written` takes what was added and what was left out; `refs` the new refs, and plugin.json
+    is written as each folder lands, so a pull that is cut short leaves a board that knows
+    what it has. Blocking work on files: run in a thread (pull_into)."""
+    _write_state(root, plugin, url, refs)  # the folder is this plugin's board from here on, with nothing in it too
+    known = frozenset(refs.values())  # on the board before this pull
+    seen = set(known)
+    left = 0
+    for item in challenges:
+        folder = None
+        try:
+            ref = _checked(item)
+            if ref in seen:
+                if ref in known:
+                    continue  # on the board already
+                raise _Left("its ref is another challenge's in the same pull")
+            seen.add(ref)
+            cid = _free_id(root, built, item["name"], ref)
+            folder = built / cid
+            _build(folder, item, files)
+            try:
+                load_challenge(folder)  # read back as any untrusted board is
+            except BoardError as exc:
+                raise _Left(_board_error(exc, folder, root / cid)) from None
+            os.rename(folder, root / cid)
+        except (_Left, OSError) as exc:
+            left += 1
+            if left <= MAX_PROBLEMS:
+                why = str(exc) if isinstance(exc, _Left) else f"could not be written ({exc.strerror or exc})"
+                written.problems.append(f"{_label(item, token)}: {scrub(why, token, limit=2 * MAX_SHOWN)}")
+            if folder is not None:
+                shutil.rmtree(folder, ignore_errors=True)
+            continue
+        refs[cid] = ref
+        _write_state(root, plugin, url, refs)
+        written.added.append(cid)
+    if left > MAX_PROBLEMS:
+        more = left - MAX_PROBLEMS
+        written.problems.append(f"{more:,} more challenge{' was' if more == 1 else 's were'} left out too: the first {MAX_PROBLEMS} "
+                                "are named, and they may share a cause")
 
 
 class _Left(Exception):

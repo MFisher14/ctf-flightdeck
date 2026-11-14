@@ -203,6 +203,12 @@ then moves it into the board. A challenge that does not pass (an unknown key, a 
 entry, a file that is not there) is left out and named, with the reason; the others land. A
 challenge already on the board is never changed by a later pull: a pull only adds.
 
+One pull lists at most 1,000 challenges, the ones already on the board included: an answer
+with more is refused whole and nothing is added (`its answer lists 1,200 challenges, more than
+the 1,000 flightdeck takes from one pull`), so a plugin for a larger platform lists the event's
+own challenges. Of the challenges left out, the first 20 are named and the rest counted. In a
+run the folders are written off the console's loop: lanes go on while a large board lands.
+
 ### `submit`
 
 ```json

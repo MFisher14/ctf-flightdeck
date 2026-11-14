@@ -455,6 +455,67 @@ def test_a_folder_that_is_another_board_is_refused_before_the_plugin_is_asked(tm
         boards.load_refs(board, plugin="acme", url=URL)
 
 
+def test_a_pull_that_lists_more_challenges_than_a_board_holds_adds_none(tmp_path):
+    """One answer may be 8 MB: without a limit it lists 200,000 challenges, each a folder and
+    a rewrite of plugin.json. More than MAX_CHALLENGES is no answer flightdeck uses."""
+    board = tmp_path / "board"
+    assert call.MAX_CHALLENGES == 1000
+    many = [challenge(str(n), f"Challenge {n}") for n in range(call.MAX_CHALLENGES + 1)]
+    with pytest.raises(CallFailed) as caught:
+        pull(tmp_path / "acme", board, {"pull": {"answer": {"challenges": many}}})
+    assert str(caught.value) == ("its answer lists 1,001 challenges, more than the 1,000 flightdeck takes from one pull: nothing "
+                                 "was added (a plugin for a larger platform lists the event's own challenges)")
+    assert list(board.iterdir()) == [] and sorted(entry.name for entry in tmp_path.iterdir()) == ["acme", "board"]
+    written = pull(tmp_path / "acme", board, {"pull": {"answer": {"challenges": many[:40]}}})  # as many as an event has: all land
+    assert len(written.added) == 40 and written.problems == []
+
+
+def test_a_pull_names_the_first_challenges_it_leaves_out_and_counts_the_rest(tmp_path):
+    """Each problem is a warning in a run and a line of `plugin pull`: a platform that lists
+    thousands of broken challenges gets MAX_PROBLEMS of them named, not thousands of alerts."""
+    board = tmp_path / "board"
+    assert boards.MAX_PROBLEMS == 20
+    broken = [{**challenge(str(n), f"Broken {n}"), "flag": "no such key"} for n in range(75)]
+    written = pull(tmp_path / "acme", board, {"pull": {"answer": {"challenges": [challenge("ok", "Fine"), *broken]}}})
+    assert written.added == ["fine"] and len(written.problems) == 21
+    assert written.problems[0].startswith("Broken 0: unknown key flag") and written.problems[19].startswith("Broken 19: unknown key flag")
+    assert written.problems[20] == "55 more challenges were left out too: the first 20 are named, and they may share a cause"
+    again = pull(tmp_path / "acme", board, {"pull": {"answer": {"challenges": broken[:21]}}})
+    assert again.problems[20] == "1 more challenge was left out too: the first 20 are named, and they may share a cause"
+
+
+def test_a_pulls_folders_are_written_off_the_loop_that_called_it(tmp_path, monkeypatch):
+    """In a run the pull is awaited on the console's loop, which every lane shares: the
+    folders are built, read back and moved in a thread, and the loop goes on meanwhile."""
+    import threading
+
+    ticked, seen = threading.Event(), []
+    real = boards.load_challenge
+
+    def checked(folder):
+        ticked.clear()
+        seen.append((ticked.wait(3), threading.current_thread() is threading.main_thread()))  # blocks the loop, if it runs on it
+        return real(folder)
+
+    monkeypatch.setattr(boards, "load_challenge", checked)
+    plugin = manifest.read(make_plugin(tmp_path / "acme", {"pull": {"answer": {"challenges": [challenge("1", "One"), challenge("2", "Two")]}}}))
+
+    async def main():
+        async def tick():
+            while True:
+                await asyncio.sleep(0.01)
+                ticked.set()
+
+        beat = asyncio.create_task(tick())
+        try:
+            return await boards.pull_into(Caller(plugin, URL, "Quals", TOKEN), tmp_path / "board", plugin="acme", url=URL)
+        finally:
+            beat.cancel()
+
+    written = run(main())
+    assert written.added == ["one", "two"] and seen == [(True, False), (True, False)]  # the loop ticked while each folder was read back
+
+
 def test_a_pull_that_fails_adds_nothing_and_leaves_no_staging_folder(tmp_path):
     board = tmp_path / "board"
     with pytest.raises(CallFailed, match="^it exited with status 1: the platform is down$"):

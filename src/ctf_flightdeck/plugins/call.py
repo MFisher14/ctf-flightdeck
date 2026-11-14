@@ -55,6 +55,7 @@ MAX_STDERR = 16_384  # bytes of stderr kept: its end
 MAX_SHOWN = 300  # characters of a plugin's string in a message
 MAX_REF = 128
 MAX_NOTES = 20
+MAX_CHALLENGES = 1000  # challenges one pull may list: more is no answer (an 8 MB answer has room for 200,000 folders to make)
 VERDICTS = ("correct", "incorrect", "already_solved", "rate_limited", "unjudged")
 PULL_KEYS = ("challenges", "notes")
 SUBMIT_KEYS = ("verdict", "detail", "tries_left", "retry_after")
@@ -138,6 +139,9 @@ class Caller:
         challenges = reply.get("challenges")
         if not isinstance(challenges, list) or not all(isinstance(item, dict) for item in challenges):
             raise CallFailed('its answer must have "challenges": a list of objects, one for each challenge')
+        if len(challenges) > MAX_CHALLENGES:
+            raise CallFailed(f"its answer lists {len(challenges):,} challenges, more than the {MAX_CHALLENGES:,} flightdeck takes "
+                             "from one pull: nothing was added (a plugin for a larger platform lists the event's own challenges)")
         notes = reply.get("notes", [])
         if not isinstance(notes, list) or not all(isinstance(note, str) for note in notes):
             raise CallFailed('"notes" must be a list of strings')
