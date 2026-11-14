@@ -90,6 +90,7 @@ class FlightdeckApp(App[None]):
         palette: themes.Palette | None = None,
         themes_folder: Path | None = None,
         layout: str = "deck",
+        mouse: bool = True,
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -97,10 +98,13 @@ class FlightdeckApp(App[None]):
         `run_dir` is where the run's log goes (the quit prompt says it stays there).
         `palette` is the theme the console opens in (None: the default); `themes_folder` is
         where /theme looks for the player's own themes (None: only the built-in ones).
-        `layout` is the layout it opens in (config.LAYOUTS; a run passes the config's)."""
+        `layout` is the layout it opens in (config.LAYOUTS; a run passes the config's).
+        `mouse`: False never asks the terminal to report the mouse (TerminalDriver), which
+        leaves the terminal its own text selection; the console is driven by keys."""
         if layout not in LAYOUTS:
             raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {layout!r}")
         self.layout = layout
+        self.mouse = mouse
         self._open_first = False  # the first lane a /new starts is still to open in the focus view (simple layout)
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()

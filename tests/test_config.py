@@ -936,6 +936,11 @@ def test_the_console_table_takes_either_layout_and_keeps_the_default_of_the_key_
     assert console('layout = "simple"') == ConsoleConfig()
     assert console("") == ConsoleConfig()
     assert console('theme = "light"') == ConsoleConfig(theme="light", palette=themes.BUILTIN["light"])
+    assert console("").mouse is True  # the console asks for the mouse unless the config says not to
+    assert console("mouse = false") == ConsoleConfig(mouse=False)
+    assert console("mouse = true") == ConsoleConfig()
+    assert console('mouse = false\ntheme = "light"\nlayout = "deck"') == ConsoleConfig(
+        layout="deck", theme="light", palette=themes.BUILTIN["light"], mouse=False)
     for name, palette in themes.BUILTIN.items():
         assert console(f'theme = "{name}"').palette is palette
 
@@ -950,7 +955,9 @@ def test_the_console_table_takes_either_layout_and_keeps_the_default_of_the_key_
     (f'theme = "{"a" * 33}"', "console.theme must be a theme's name (lower-case letters, digits, - and _)"),
     ("theme = 3", "console.theme must be a theme's name (lower-case letters, digits, - and _) (got 3)"),
     ('theme = ["nord"]', "console.theme must be a theme's name (lower-case letters, digits, - and _) (got a list)"),
-    ('colour = "nord"', "unknown key console.colour (known in console: layout, theme)"),
+    ('colour = "nord"', "unknown key console.colour (known in console: layout, mouse, theme)"),
+    ('mouse = "off"', "console.mouse must be true or false (got a string)"),
+    ("mouse = 0", "console.mouse must be true or false (got 0)"),
 ])
 def test_a_bad_console_table_is_refused_with_its_message(tmp_path, body, problem):
     path, message = console_error(tmp_path, body)

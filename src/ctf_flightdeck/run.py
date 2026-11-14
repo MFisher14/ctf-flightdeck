@@ -488,6 +488,7 @@ class Run:
             welcome=welcome,
             palette=self.config.console.palette,
             layout=self.config.console.layout,
+            mouse=self.config.console.mouse,
             themes_folder=self.config.source.parent / "themes" if self.config.source is not None else None,
             adder=self.add_challenge if self.by_hand else None,
             paster=self.paste_image if self.by_hand else None,
