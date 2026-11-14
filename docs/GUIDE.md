@@ -162,7 +162,9 @@ a model API charges for. A **setting** is a line of your config.
 - **Ladder**: your models, weakest first (`[models] ladder`). Lanes start on the first.
   **Escalate** (`e`) restarts a lane on the next one, with a summary of what it did.
 - **Fork** (`f`): a second lane on the same challenge. **Take over** (`t`): the lane's shell is
-  yours; exit it to hand the lane back.
+  yours; exit it to hand the lane back. When the shell cannot open (Docker is not running, the
+  lane's container is gone), you are back in the console at once, the lane carries on as it
+  was, and the status line says what went wrong.
 - **Park**: set a challenge aside. A parked challenge is not queued and no lane works it, but it
   can still be solved: `/queue` puts it back in the queue. `/kill park` parks a lane's challenge
   when it kills the lane, and Autopilot parks one it gave up on for now.

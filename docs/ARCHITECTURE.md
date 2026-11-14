@@ -266,7 +266,17 @@ title it shows (xterm's title stack) and `close()` has it take that title back.
 `FlightdeckApp.refresh_view()` calls `show()` with `len(deck.needing())` and `deck.held`, the
 header's facts; `on_mount` opens it, `on_unmount` closes it (the driver's output closes after),
 and Textual's `app_suspend_signal` and `app_resume_signal` close and open it round a
-take-over. The bytes go through `FlightdeckApp._to_terminal()`, the driver's `write`, so a
+take-over.
+
+**Take-over** (P69). `console/takeover.py`'s `run_in_terminal` runs the lane's shell inside
+Textual's `App.suspend()`, which resumes the console only when the code inside it returns. So
+nothing is raised inside it: what the shell's start raised (the program missing, no terminal,
+a cancel) is kept and raised once the console is back, and a shell that ran ends as a
+`ShellExit` (its status, how long it ran), whose `problem()` names one that ended at once with
+an error or by a signal. `FlightdeckApp._shell` hands the lane back on every way out, a
+cancel too; a shell that never ran is abandoned (the driver's `Takeover.abandon`: its home
+folder goes, and the lane is told nothing), one that ran is finished (the lane hears what
+changed). The bytes go through `FlightdeckApp._to_terminal()`, the driver's `write`, so a
 headless console's driver gets them too (`App.bell()` skips a headless driver), which is how
 `tests/test_terminal_title.py` reads them; one test there runs `flightdeck mock` on a pty.
 `Run.app()` and `flightdeck mock` pass `[console] title` and `bell`.

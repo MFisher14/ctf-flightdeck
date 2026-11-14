@@ -3,11 +3,11 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: eighteen proposals, P51 to P68 (2026-11-14)
+## Built, not released: nineteen proposals, P51 to P69 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P51 to P68); the lines for players are under Unreleased in
-[CHANGELOG.md](../CHANGELOG.md). P54 to P62 and P64 to P68 were built from the list of what comes next (the
+[DECISIONS.md](DECISIONS.md) (P51 to P69); the lines for players are under Unreleased in
+[CHANGELOG.md](../CHANGELOG.md). P54 to P62 and P64 to P69 were built from the list of what comes next (the
 [milestones](https://github.com/MFisher14/ctf-flightdeck/milestones) have the rest).
 
 - **The simple layout** (P51). The console opens on one list of lanes, a short header and the
@@ -115,6 +115,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   the command bar still talks to that lane. `space` or `esc` closes it. On a short terminal,
   and beside the `/` menu or a status line of several rows, it gives up its oldest rows first.
   In the mock, `,` freezes the clock.
+- **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
+  container that is gone, a cancel: the console comes back at once, the lane is handed back as
+  it was, and the status line says why. Until now Textual's suspend was never left when the
+  shell's start raised, and the console drew nothing.
 
 Known limits, each said where it applies:
 
