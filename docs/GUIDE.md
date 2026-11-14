@@ -584,25 +584,22 @@ What it leaves:
 with an `event.toml` in it is played by that file. `flightdeck start ~/ctf/example-ctf` does the
 same for a folder already set up.
 
-For a script, every question has an option (`flightdeck start --help`); away from a terminal
-`start` asks nothing and names any answer it still needs. The token is the one answer that is
-never an option's value, since a command line shows in the process list and stays in the shell's
-history. Give it one of two ways:
+For a script, every question but the token has an option (`flightdeck start --help`). Away from
+a terminal `start` asks nothing, names any answer it still needs, and launches only with
+`--launch`. The token it reads from the event's own variable, in your environment or your keys
+file: `CTFD_TOKEN_` and the event's name in capitals, `CTFD_TOKEN_EXAMPLE_CTF` for "Example CTF".
 
 ```sh
-# the token is already in a variable of yours (your environment or your keys file): name the variable
+# the token, here from a file only you can read; a line CTFD_TOKEN_EXAMPLE_CTF=<the token> in your
+# keys file does the same
+export CTFD_TOKEN_EXAMPLE_CTF="$(cat ~/example-ctf.token)"
 flightdeck start --name "Example CTF" --platform ctfd --url https://ctf.example.org \
-    --ai-allowed --token-env EXAMPLE_CTF_TOKEN --no-launch
-
-# or hand the token over on standard input, here from a file only you can read
-flightdeck start --name "Example CTF" --platform ctfd --url https://ctf.example.org \
-    --ai-allowed --token-stdin --no-launch < ~/example-ctf.token
-
+    --ai-allowed --no-launch
 flightdeck play ~/ctf/example-ctf        # then play it (--launch on start does the same at once)
 ```
 
-With neither, `start` still sets the event up and says which variable to put the token in;
-`play` does not start a CTFd event until that variable is set.
+Without the variable, `start` still sets the event up and says which variable to put the token
+in; `play` does not start a CTFd event until it is set.
 
 By hand (a site that is not CTFd): the board starts empty and the console opens on it. Type
 `/new` to hand a challenge over. The form asks for its name and has one box for everything you
