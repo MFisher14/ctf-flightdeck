@@ -432,6 +432,73 @@ def test_the_guide_explains_its_words_second_and_names_commands_the_console_has(
     assert "are in [Words used here](#words-used-here), the next section." in flat(section(guide, "## Install and first run"))
 
 
+def test_the_guide_and_the_spec_say_of_the_command_menu_what_the_commands_do():
+    """The guide's "The command bar" and the spec's `/` menu name every alias, and what they
+    say the menu finds it finds; what they say is refused, parse refuses in those words; the
+    words they say a command lists are the ones it lists. A `/word` either page shows is a
+    command, an alias, or one of its examples of text that is not a command."""
+    from ctf_flightdeck.config import LAYOUTS
+    from ctf_flightdeck.console import commands
+    from ctf_flightdeck.core.attention import SortMode
+
+    guide = section(read(GUIDE), "### The command bar")
+    spec = read(ROOT / "docs" / "CONSOLE-SPEC.md")
+    menu = "- **The `/` menu**" + spec.split("\n- **The `/` menu**", 1)[1].split("\n## ", 1)[0]
+    assert commands.BY_ALIAS, "no alias: this test checks nothing"
+    for alias, command in commands.BY_ALIAS.items():
+        for page in (guide, menu):
+            said = flat(page)
+            assert f"`/{alias}`" in said and f"`/{command.name}`" in said, (alias, command.name)
+        assert commands.parse(f"/{alias}").command is command
+    # the spec's table of commands names each alias on its command's row
+    table = [line for line in section(spec, "## Interventions").splitlines() if line.startswith("|")]
+
+    def row(start: str) -> str:
+        (line,) = [line for line in table if re.match(rf"\|[^|]*\| {re.escape(start)}", line)]  # the row whose command cell starts so
+        return line
+
+    assert row("`/quit` (also `/q`, `/exit`) |") and "(also `/settings`) | Alone: a dialog" in row("`/config ")
+    assert "(`esc` or `/back`, also typed `/lanes`, returns)" in row("`/open <lane>` |")
+    assert "/a`" not in guide + menu and commands.BY_NAME["approve"].aliases == ()  # approve is typed whole, and no page offers a short form
+
+    def found(typed: str) -> list[str]:
+        return [completion.text.strip()[1:] for completion in commands.complete(f"/{typed}")]
+
+    for page in (guide, menu):
+        pairs = re.findall(r"`/([a-z]+)` (?:finds|lists) `/([a-z]+)`", flat(page))
+        assert ("over", "takeover") in pairs, pairs
+        for typed, name in pairs:
+            assert name in found(typed), (typed, name)
+    for name, second in commands.SECOND_WORD.items():  # the spec gives all of them
+        assert f"`/{second}`" in menu and f"`/{name}`" in menu and found(second) == [name]
+    assert found("q") == ["quit", "queue"] and "(`/q` lists `/quit`, then `/queue`)" in flat(menu)
+
+    # text the pages give as no command is none, and the line they quote is the one said
+    for page in (guide, menu):
+        named = set(re.findall(r"`/([a-z]+)", page))
+        loose = named - set(commands.BY_NAME) - set(commands.BY_ALIAS)
+        assert loose <= {"over", "hold", "pilot", "direct"}, loose
+        assert commands.no_match("/x") == 'No commands match "/x"' and '`No commands match "/x"`' in flat(page)
+        assert "`Unknown command /over`" in flat(page)
+    with pytest.raises(commands.CommandError, match=r"^Unknown command /over: type / to see the list$"):
+        commands.parse("/over")
+    with pytest.raises(commands.CommandError, match="/approve takes no argument; name a lane like /approve L02"):
+        commands.parse("/approve 2")
+    assert "`/approve 2` is refused" in flat(guide) and "`/approve 2` is refused" in flat(menu) and "`/approve L02`" in guide
+
+    # the commands the pages say list words after their name are the ones that do
+    with_words = [name for name, command in commands.BY_NAME.items() if command.words is not None]
+    assert sorted(with_words) == ["autopilot", "layout", "open", "queue", "sort", "theme"]
+    for page in (guide, menu):
+        for name in with_words:
+            assert f"`/{name}`" in page, name
+    assert [word.text for word in commands.BY_NAME["layout"].words(commands.State())] == list(LAYOUTS) == ["simple", "deck"]
+    assert [word.text for word in commands.BY_NAME["autopilot"].words(commands.State())] == ["on", "off"]
+    assert [word.text for word in commands.BY_NAME["sort"].words(commands.State())] == [mode.value for mode in SortMode]
+    assert "`simple` and `deck` after `/layout`" in flat(guide) and "`on` and `off` after `/autopilot`" in flat(guide)
+    assert "`simple` and `deck` for `/layout`" in flat(menu) and "`on` and `off` for `/autopilot`" in flat(menu)
+
+
 def test_the_guide_offers_the_deb_a_release_builds_and_no_homebrew_tap_while_there_is_none():
     guide = read(GUIDE)
     section = guide.split("\n### Install with Homebrew or apt\n", 1)[1].split("\n## ", 1)[0]

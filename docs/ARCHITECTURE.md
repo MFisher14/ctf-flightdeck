@@ -240,6 +240,20 @@ headless console's driver gets them too (`App.bell()` skips a headless driver), 
 `tests/test_terminal_title.py` reads them; one test there runs `flightdeck mock` on a pty.
 `Run.app()` and `flightdeck mock` pass `[console] title` and `bell`.
 
+**The command menu** (P62). Two rules in `console/commands.py`, kept apart. `complete()` is
+loose: while the name is typed it lists a command whose name, alias (`Command.aliases`) or
+second word (`SECOND_WORD`) starts with what is typed, the nearest first (`_name_rank`); after
+the name and a space it lists the command's own words (`Command.words`, a callable over
+`State`) that what follows finds (`_word_rank`). `parse()` is strict: `find()` takes a whole
+name or a whole alias, and the checks on a command's arguments are unchanged. `State` is what
+the words are made from, a snapshot `FlightdeckApp.command_state()` gives: the lanes, the
+challenges `/queue` is for, the themes, the layout in use. `widgets.CommandBar` asks the app
+that hosts it for that state, and only while a menu of such words is drawn; the screens still
+hand it the lane's suggestions each time they draw (`set_suggestions`), which is also when an
+open menu is compared with the deck and drawn again if it differs. `no_match()` is the one
+row for a name that is no command. The bar's Enter takes a row while the name is incomplete
+or once the arrow keys chose one (`_chosen`), and otherwise posts what is typed.
+
 ## 4. Lanes
 
 | Piece | Where | Job |
