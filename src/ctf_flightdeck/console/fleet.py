@@ -239,6 +239,7 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     def on_screen_resume(self) -> None:
         self.refresh_view()
+        self.fd.open_first_lane()  # back from the /new form: the lane it started may be there already
 
     def _set_columns(self) -> None:
         """Fit both tables to their panes: low-value columns drop first, one column stretches."""

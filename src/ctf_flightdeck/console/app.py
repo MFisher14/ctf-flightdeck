@@ -95,6 +95,7 @@ class FlightdeckApp(App[None]):
         if layout not in LAYOUTS:
             raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {layout!r}")
         self.layout = layout
+        self._open_first = False  # the first lane a /new starts is still to open in the focus view (simple layout)
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
         self._use_textual_theme()
@@ -390,23 +391,55 @@ class FlightdeckApp(App[None]):
 
     def new_challenge(self, name: str = "") -> None:
         """/new: ask for a challenge (NewChallengePrompt), which puts it on the board (the
-        adder) and closes once it is there; a lane takes it."""
+        adder) and closes once it is there; a lane takes it. In the simple layout, the first
+        lane of the run that a /new starts opens in the focus view (open_first_lane)."""
         if self.adder is None:
             self.warn("/new adds a challenge to a board you fill yourself; this board comes from the platform" if self._ticker is None
                       else "/new adds a challenge to a real board; the mock's board is scripted")
             return
         from .screens import NewChallengePrompt
 
+        adder = self.adder
+        first = not self.deck.lanes  # asked before the challenge is added: its lane may start while the adder runs
+
+        async def add(new: object) -> tuple[bool, str]:
+            ok, message = await adder(new)
+            if ok and first and self.layout == "simple":
+                self._open_first = True  # its lane may be there now, or only once its images are read
+            return ok, message
+
         def done(said: str | None) -> None:
             if said:
                 self.say(said)
                 self.refresh_view()
 
-        self.push_screen(NewChallengePrompt(name, paster=self.paster, adder=self.adder), done)
+        self.push_screen(NewChallengePrompt(name, paster=self.paster, adder=add), done)
 
     def action_new(self) -> None:
         """A click on `/new` in the key line."""
         self.new_challenge()
+
+    def open_first_lane(self) -> None:
+        """Open the first lane of the run in the focus view, once: the lane the player's /new
+        started on a board that had none (simple layout). A player who hands over a challenge
+        wants to watch it, and one lane makes a list of one. Looked at when the deck says
+        something (_redraw) and when the lane list comes back from under the /new form
+        (FleetScreen.on_screen_resume), and left for the next look while the lane is not there
+        yet (its images are being read) or the form is still open. Then only if the player is
+        in the lane list, with nothing typed in its command bar, and that lane is the only
+        one: nobody is moved from what they turned to meanwhile, and what they are typing
+        never lands in the lane's chat box as a message to it."""
+        from .screens import NewChallengePrompt
+
+        if not self._open_first or not self.deck.lanes or isinstance(self.screen, NewChallengePrompt):
+            return
+        self._open_first = False
+        fleet = self._fleet
+        if self.layout != "simple" or self.screen is not fleet or len(self.deck.lanes) != 1:
+            return
+        field = fleet.query_one("#bar-input")
+        if not field.has_focus and not field.value:
+            self.open_lane(next(iter(self.deck.lanes)))
 
     def inform(self, text: str) -> None:
         self.say(text)
@@ -450,6 +483,7 @@ class FlightdeckApp(App[None]):
     def _redraw(self) -> None:
         self._redraw_queued = False
         self.refresh_view()
+        self.open_first_lane()
 
     # ------------------------------------------------------------------ navigation
 

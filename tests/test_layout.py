@@ -659,6 +659,138 @@ def test_the_deck_focus_view_keeps_every_part_and_layout_switches_an_open_lane()
     drive(app, script, SIZE)
 
 
+# ---------------------------------------------------------------------- the first lane a /new starts
+
+
+def by_hand_console(layout: str = "simple", *, later: bool = False) -> tuple[Deck, FlightdeckApp, list]:
+    """A console on an empty board whose /new releases the challenge as a run's does: at once,
+    or with `later` only when the test calls what it puts in the list (a run that reads the
+    challenge's images first says yes and releases it seconds later)."""
+    held: list = []
+    deck_box: list[Deck] = []
+
+    async def adder(new) -> tuple[bool, str]:
+        def go() -> None:
+            release(deck_box[0], slug(new.name))
+
+        if later:
+            held.append(go)
+        else:
+            go()
+        return True, f"added {new.name}"
+
+    deck, app = console(by_hand=True, layout=layout, adder=adder)
+    deck_box.append(deck)
+    return deck, app, held
+
+
+async def hand_over(pilot, app: FlightdeckApp, name: str) -> None:
+    """/new NAME, then the form's own key to add it."""
+    await press(pilot, "slash")
+    await type_line(pilot, f"new {name}")
+    assert type(app.screen).__name__ == "NewChallengePrompt"
+    await press(pilot, "ctrl+s")
+    for _ in range(20):  # the adder runs in a worker
+        if type(app.screen).__name__ != "NewChallengePrompt":
+            break
+        await pilot.pause(0.01)
+    await pilot.pause()
+    await pilot.pause()
+
+
+def test_the_first_lane_a_new_starts_opens_in_the_focus_view_and_the_second_does_not_move_the_player():
+    deck, app, _ = by_hand_console("simple")
+
+    async def script(pilot):
+        await hand_over(pilot, app, "Alpha")
+        assert list(deck.lanes) == ["L01"]
+        assert isinstance(app.screen, FocusScreen) and app.screen.lane_id == "L01"  # one lane: a list of one is no help
+        await press(pilot, "escape")
+        assert isinstance(app.screen, FleetScreen)
+        await hand_over(pilot, app, "Beta")
+        assert list(deck.lanes) == ["L01", "L02"] and isinstance(app.screen, FleetScreen)  # the second: the player stays
+        assert lane_rows(app) == ["L01", "L02"]
+
+    drive(app, script, SIZE)
+
+
+def test_the_first_lane_opens_when_it_starts_only_after_the_form_has_closed():
+    deck, app, held = by_hand_console("simple", later=True)
+
+    async def script(pilot):
+        await hand_over(pilot, app, "Alpha")
+        assert isinstance(app.screen, FleetScreen) and not deck.lanes  # the challenge is still being read
+        held.pop()()  # now it is released, and its lane starts
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, FocusScreen) and app.screen.lane_id == "L01"
+
+    drive(app, script, SIZE)
+
+
+def test_a_player_who_turned_to_something_else_meanwhile_is_not_moved_to_the_first_lane():
+    deck, app, held = by_hand_console("simple", later=True)
+
+    async def script(pilot):
+        await hand_over(pilot, app, "Alpha")
+        await press(pilot, "question_mark")
+        assert isinstance(app.screen, HelpScreen)
+        held.pop()()
+        await pilot.pause()
+        await pilot.pause()
+        assert list(deck.lanes) == ["L01"] and isinstance(app.screen, HelpScreen)
+        await press(pilot, "escape")
+        assert isinstance(app.screen, FleetScreen)  # and not afterwards either: the moment has passed
+        release(deck, "beta")
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, FleetScreen)
+
+    drive(app, script, SIZE)
+
+
+def test_a_player_typing_in_the_command_bar_is_not_moved_to_the_first_lane():
+    """What is being typed must not land in the lane's chat box, where plain text is a message
+    to the lane."""
+    deck, app, held = by_hand_console("simple", later=True)
+
+    async def script(pilot):
+        await hand_over(pilot, app, "Alpha")
+        await press(pilot, "slash", *"sor")
+        held.pop()()
+        await pilot.pause()
+        await pilot.pause()
+        assert list(deck.lanes) == ["L01"] and isinstance(app.screen, FleetScreen)
+        assert bar(app).field.has_focus and bar(app).field.value == "/sor"
+        await press(pilot, "t", "enter", "enter")  # the menu fills in /sort, then it runs: here, on the lane list
+        assert app.fleet.sort is SortMode.IDLE and not deck.lanes["L01"].hints
+
+    drive(app, script, SIZE)
+
+
+def test_the_deck_layout_and_a_platforms_board_never_open_a_lane_by_themselves():
+    deck, app, _ = by_hand_console("deck")
+
+    async def script(pilot):
+        await hand_over(pilot, app, "Alpha")
+        assert list(deck.lanes) == ["L01"] and isinstance(app.screen, FleetScreen)
+
+    drive(app, script, SIZE)
+    deck, app = console(by_hand=False, layout="simple")
+
+    async def platform(pilot):
+        await press(pilot, "slash")
+        await type_line(pilot, "new Alpha")
+        assert isinstance(app.screen, FleetScreen)  # no form: /new is not for this board
+        assert_warning(app, "/new adds a challenge to a board you fill yourself")
+        release(deck, "alpha")  # the platform's first challenge: its lane starts, and the player stays in the list
+        await pilot.pause()
+        await pilot.pause()
+        assert list(deck.lanes) == ["L01"] and isinstance(app.screen, FleetScreen)
+
+    drive(app, platform, SIZE)
+
+
 # ---------------------------------------------------------------------- the command, and what a run opens in
 
 
