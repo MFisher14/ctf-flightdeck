@@ -2522,7 +2522,7 @@ def test_at_80x24_the_focus_view_keeps_rows_for_the_transcript():
         focus = await open_focus(pilot, app, lane.id)
         talk = focus.query_one("#talk-pane").content_region.height
         assert focus.query_one("#transcript").region.height >= 3
-        assert focus.query_one("#now").region.height <= (talk + 1) // 2
+        assert focus.query_one("#now-scroll").region.height <= (talk + 1) // 2  # the card's box: a taller card scrolls in it
         assert _transcript(app)  # some of it is drawn
 
     drive(app, script, size=(80, 24))

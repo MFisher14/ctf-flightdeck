@@ -300,3 +300,203 @@ def test_the_full_card_keeps_further_approvals_under_the_first_and_messages_last
         "› sent, not read yet: try the header",
         "press a number to answer (chat box empty), / to pick a command, or write a message",
     ]
+
+
+# ---------------------------------------------------------------------- the card on the screen
+
+
+@pytest.mark.parametrize("size", [BIG, NARROW], ids=["254x71", "120x36"])
+def test_in_the_simple_layout_four_things_at_once_are_a_card_of_five_rows(size):
+    deck, app, lane = four_at_once("simple")
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, lane.id)
+        assert not view.details
+        rows = card(app)
+        assert len(rows) == 5 and rows[0].startswith("╭─ needs you now ─") and rows[-1].startswith("╰─")
+        assert inside(app) == FOUR_CALM
+        text = "\n".join(rows)
+        for absent in ("/kill", "/approve", "/hint", "The budget shrinks", "press a number"):
+            assert absent not in text, absent
+        box, log = view.query_one("#now-scroll"), view.query_one("#transcript")
+        assert box.max_scroll_y == 0 and box.region.y == log.region.bottom  # nothing to scroll, and it sits under the transcript
+        row = view.query_one("#now").region.y
+        budget = theme.alert_colors(AlertKind.BUDGET)[1].lower()
+        assert color_of(app, "needs you now", row) == budget and color_of(app, "╭", row) == budget  # the most urgent alert's, as on the full card
+        assert footer_line(app).strip().startswith("1-9 answer  esc lanes")  # the key line says a number answers: the card has no row for it
+
+    drive(app, script, size)
+
+
+def test_in_the_deck_layout_the_approval_and_its_answers_are_in_view_on_a_card_too_tall_for_its_half_and_the_card_scrolls():
+    deck, app, lane = four_at_once("deck")
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, lane.id)
+        assert view.details
+        box, pane = view.query_one("#now-scroll"), view.query_one("#talk-pane")
+        assert box.region.height <= (pane.content_region.height + 1) // 2 and view.query_one("#transcript").region.height >= 3
+        assert view.query_one("#now").region.height > box.region.height and box.max_scroll_y > 0  # taller than its box: it scrolls
+        rows = card(app)
+        assert rows[0].startswith("╭─ needs you now ─")
+        shown = one_line(rows)
+        assert shown.startswith("╭─ needs you now ─") and f"{ASKS} 1 /approve more budget 0 /decline stop the lane ▲ Budget" in shown
+        assert "press a number to answer" not in shown  # the card's last row is below its box
+        box.scroll_end(animate=False)
+        await pilot.pause()
+        shown = one_line(card(app))
+        assert "press a number to answer (chat box empty), / to pick a command, or write a message" in shown and "/approve" not in shown
+        assert not box.can_focus
+        await press(pilot, "tab")  # tab still goes chat -> files, not to the card
+        assert app.focused is view.query_one("#files")
+
+    drive(app, script, NARROW)
+
+
+def test_ctrl_o_turns_the_calm_card_into_the_full_one_and_back():
+    deck, app, lane = four_at_once("simple")
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, lane.id)
+        assert inside(app) == FOUR_CALM
+        await press(pilot, "ctrl+o")
+        assert view.details and status_line(app).strip().endswith(DETAILS_ON)
+        shown = one_line(card(app))
+        assert view.query_one("#now-scroll").max_scroll_y == 0  # at this size all of it is in view
+        assert f"{ASKS} 1 /approve more budget 0 /decline stop the lane" in shown
+        for one in lane.alerts:  # every alert: its label and its whole reason
+            assert f"▲ {one.kind.label} {' '.join(untrusted(one.reason, one_line=True).split())}" in shown, one.kind
+        for command in ("/kill kill the lane", "/hint You are repeating cd /work && python3", "/kill kill and re-queue fresh",
+                        "/hint This is a 0-point challenge", "/escalate", "/redirect", "press a number to answer"):
+            assert command in shown, command
+        assert len(card(app)) > 12 and "ctrl+o shows all" not in shown
+        await press(pilot, "ctrl+o")
+        assert not view.details and status_line(app).strip().endswith(DETAILS_OFF)
+        assert inside(app) == FOUR_CALM and len(card(app)) == 5
+
+    drive(app, script, BIG)
+
+
+def test_in_the_deck_layout_the_card_is_the_full_one_until_ctrl_o_and_the_layout_sets_it_until_then():
+    deck, app, lane = four_at_once("deck")
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, lane.id)
+        assert "/approve" in one_line(card(app)) and len(card(app)) > 12
+        await send(pilot, app, "/layout simple")
+        assert inside(app) == FOUR_CALM
+        await send(pilot, app, "/layout deck")
+        assert "/approve" in one_line(card(app))
+        await press(pilot, "ctrl+o")  # by hand, in the deck layout: the calm card there too
+        assert not view.details and inside(app) == FOUR_CALM
+
+    drive(app, script, BIG)
+
+
+def test_the_numbers_on_the_calm_card_answer_as_before():
+    deck, app, lane = four_at_once("simple")
+
+    async def more(pilot):
+        await open_focus(pilot, app, lane.id)
+        assert inside(app)[1] == "  1 more budget   0 stop the lane"
+        await press(pilot, "1")
+        assert lane.token_cap == 600_000 and lane.state is LaneState.RUNNING and lane.pending is None
+        rows = inside(app)  # the next question: the loop, with its own numbers
+        assert rows[0].startswith("▲ Loop: The same command ran") and rows[1].startswith('  1 hint "You are repeating cd /work && python3')
+        assert rows[2] == "  also: past its effort budget · stalled   ctrl+o shows all"
+        await press(pilot, "2")
+        assert isinstance(app.screen, KillPrompt) and not lane.finished
+
+    drive(app, more, BIG)
+
+    deck, app, lane = four_at_once("simple")
+
+    async def stop(pilot):
+        await open_focus(pilot, app, lane.id)
+        await press(pilot, "0")
+        assert lane.finished and lane.state is LaneState.STOPPED and lane.token_cap == 400_000
+        assert region_text(app, "#now-scroll").strip().endswith("this lane has ended; esc goes back to the lanes")
+        assert "needs you now" not in region_text(app, "#talk-pane")  # one line, no border
+
+    drive(app, stop, BIG)
+
+
+def test_answer_1_of_a_loop_sends_the_hint_the_card_quotes_and_the_card_then_shows_it_as_sent():
+    deck, app, lane = one_lane("simple", watch=True)
+    for _ in range(3):
+        deck.report("L01", TurnReport(action="python3 solve.py", output="no"))
+    hint = "You are repeating python3 solve.py: it gives the same result. Try something else."
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, "L01")
+        assert inside(app)[1] == f'  1 hint "{hint[:48]}…"   2 kill and re-queue fresh   /dismiss not a problem'
+        await press(pilot, "1")
+        assert lane.hints == [hint] and not lane.alerts
+        assert inside(app) == [f"› sent, not read yet: {hint}"] and len(card(app)) == 3
+        row = view.query_one("#now").region.y
+        assert color_of(app, "needs you now", row) == theme.BORDER.lower()  # nothing to answer: the plain border
+        deck.report("L01", TurnReport(action="python3 other.py", output="yes", hints_taken=1))  # the lane reads it: nothing is open
+        app.refresh_view()
+        await pilot.pause()
+        assert not view.query_one("#now").display and not view.query_one("#now-scroll").display
+        assert "needs you now" not in region_text(app, "#talk-pane")
+
+    drive(app, script, BIG)
+
+
+def test_a_calm_row_longer_than_the_card_is_cut_at_its_edge_and_never_wraps():
+    deck, app, lane = four_at_once("simple")
+
+    async def script(pilot):
+        await open_focus(pilot, app, lane.id)
+        await press(pilot, "1")  # the loop is the question: its reason quotes five lines of command
+        rows = card(app)
+        assert len(rows) == 5
+        width = len(rows[0])
+        assert all(len(row) == width for row in rows)
+        assert rows[1].startswith("│ ▲ Loop: The same command ran 6 times in the last 6 turns: cd /work && python3") and rows[1].endswith("… │")
+        assert rows[3] == "│   also: past its effort budget · stalled   ctrl+o shows all".ljust(width - 1) + "│"
+
+    drive(app, script, NARROW)
+
+
+def test_the_calm_card_takes_the_colours_of_a_new_theme_and_another_lanes_card_starts_at_its_first_row():
+    deck, app, lane = four_at_once("deck")
+    deck.release([Challenge("d", "Other", "misc", 100)], [QueueEntry("d", "glm")])
+    (other,) = deck.lanes_on("d")
+    deck.report(other.id, TurnReport(action="ls", pending=Pending(PendingKind.LIVE_BOX, "connect to the live instance")))
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, lane.id)
+        box = view.query_one("#now-scroll")
+        box.scroll_end(animate=False)
+        await pilot.pause()
+        assert box.scroll_y > 0
+        await open_focus(pilot, app, other.id)
+        assert box.scroll_y == 0 and one_line(card(app)).startswith("╭─ needs you now ─")
+        await press(pilot, "ctrl+o")
+        assert inside(app) == ["◆ waiting for you: connect to the live instance", "  1 use the live box   0 stay off it"]
+        row = view.query_one("#now").region.y
+        before = color_of(app, "needs you now", row)
+        assert before == theme.PURPLE.lower()
+        await send(pilot, app, "/theme nord")
+        after = color_of(app, "needs you now", row)
+        assert after == theme.PURPLE.lower() != before and color_of(app, "◆ waiting for you", row + 1) == after
+
+    drive(app, script, NARROW)
+
+
+def test_on_a_narrow_terminal_the_card_keeps_its_compact_form_with_details_off():
+    deck, app, lane = four_at_once("simple")
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, lane.id)
+        assert view.compact and view.details
+        before = card(app)
+        text = one_line(before)
+        assert text.startswith("╭─ needs you now ─") and "1 /approve more budget" in text and "0 /decline stop the lane" in text
+        assert view.query_one("#now-scroll").region.bottom <= view.query_one("#transcript").region.y  # above its transcript
+        await press(pilot, "ctrl+o")
+        assert not view.details and card(app) == before and not view.query_one("#now", Static).has_class("-calm")
+
+    drive(app, script, PHONE)

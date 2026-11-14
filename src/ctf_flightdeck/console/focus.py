@@ -10,11 +10,18 @@ the lane it was written for. When the lane is ended to start afresh (/attach, a 
 re-queues), the view goes to the fresh lane, and the unsent message with it
 (FlightdeckApp.follow_restart).
 
-The transcript has one switch, `details` (`ctrl+o`, /details). On: every line the lane's log
-keeps, each action as views.transcript_lines draws it. Off, the calm transcript: one row for
-each entry, a run of tool calls on two (views.entries, views.entry_text). It starts off in the
-simple layout and on in the deck and compact layouts, and follows the layout until the player
-switches it by hand in this view.
+The view has one switch, `details` (`ctrl+o`, /details), for the transcript and the card
+together. On: every line the lane's log keeps, each action as views.transcript_lines draws it,
+and the full card: every open alert with its reason and its commands. Off, the calm
+transcript: one row for each entry, a run of tool calls on two (views.entries,
+views.entry_text), and the calm card: the question, its numbered answers, what else is open
+(views.calm_card). It starts off in the simple layout and on in the deck and compact layouts,
+and follows the layout until the player switches it by hand in this view. The compact layout's
+card is never calm: every answer's number stays on it.
+
+The card is in a box that scrolls (#now-scroll) and takes half the pane at most: a full card
+taller than that keeps its first rows, the approval's, in view, and the mouse wheel shows the
+rest.
 
 At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: one pane, with
 what the lane needs from you above its transcript, and no files pane.
@@ -100,6 +107,11 @@ def key_room(columns: int, *, simple: bool = False) -> tuple[list[str], int]:
     return left + cut, _key_line(whole).cell_len + KEY_MARGIN
 
 
+class CardScroll(VerticalScroll, can_focus=False):
+    """The box the "needs you now" card is in: it carries the card's share of the pane, and
+    scrolls a card taller than that. Not focusable: tab goes chat -> files -> diff."""
+
+
 class FocusScreen(Screen, inherit_bindings=False):
     DEFAULT_CSS = """
     FocusScreen { layout: vertical; }
@@ -110,13 +122,15 @@ class FocusScreen(Screen, inherit_bindings=False):
     FocusScreen #files-pane { width: 2fr; }
     FocusScreen #transcript { height: 1fr; min-height: 3; background: transparent; overflow-y: scroll; }
     FocusScreen.-simple #transcript { overflow-y: auto; }
-    FocusScreen #now { height: auto; max-height: 50%; }
+    FocusScreen #now-scroll { height: auto; max-height: 50%; }
+    FocusScreen #now { height: auto; }
+    FocusScreen #now.-calm { padding: 0 1; text-wrap: nowrap; text-overflow: ellipsis; border-title-style: bold; }
     FocusScreen #files { height: auto; max-height: 8; background: transparent; border: none; }
     FocusScreen #diff-scroll { height: 1fr; }
     FocusScreen #status { height: auto; min-height: 1; max-height: 3; margin: 0 2; }
     FocusScreen #keys { height: 1; margin: 0 1; }
     FocusScreen.-compact #main { margin-top: 0; width: 100%; }
-    FocusScreen.-compact #now { max-height: 60%; }
+    FocusScreen.-compact #now-scroll { max-height: 60%; }
     FocusScreen.-compact #files-pane { display: none; }
     FocusScreen .-nothing { display: none; }
     FocusScreen.-simple #main { width: 100%; }
@@ -157,7 +171,8 @@ class FocusScreen(Screen, inherit_bindings=False):
         with Horizontal(id="main"):
             with Vertical(id="talk-pane", classes="panel"):
                 yield LaneLog(id="transcript")  # not focusable: pgup/pgdn scroll it from anywhere, so tab goes chat -> files -> diff
-                yield Static(id="now")
+                with CardScroll(id="now-scroll"):
+                    yield Static(id="now")
             with Vertical(id="files-pane", classes="panel"):
                 yield OptionList(id="files")
                 with VerticalScroll(id="diff-scroll"):
@@ -169,6 +184,7 @@ class FocusScreen(Screen, inherit_bindings=False):
     def on_mount(self) -> None:
         self._ready = True
         self.query_one("#chat", CommandBar).field.quick = self._quick
+        self.query_one("#now", Static).border_title = "needs you now"  # drawn on the calm card's border (_show_card)
         self._fit_layout(self.size.width)
         self.show_lane(self.lane_id, self._first_file)
 
@@ -187,7 +203,7 @@ class FocusScreen(Screen, inherit_bindings=False):
             return False
         self.compact = compact
         self.set_class(compact, "-compact")
-        pane, now, log = self.query_one("#talk-pane"), self.query_one("#now"), self.query_one("#transcript")
+        pane, now, log = self.query_one("#talk-pane"), self.query_one("#now-scroll"), self.query_one("#transcript")
         if compact:
             pane.move_child(now, before=log)
             if self.focused is not None and self.focused.id in ("files", "diff-scroll"):
@@ -285,6 +301,7 @@ class FocusScreen(Screen, inherit_bindings=False):
             chat.hide_menu()
         if lane_id != self.lane_id:
             self.query_one("#transcript", LaneLog).clear()  # another lane's transcript starts at its end
+            self.query_one("#now-scroll", CardScroll).scroll_home(animate=False)  # and its card at its first row
         self.lane_id = lane_id
         self._file_paths = None
         self.diff_path = file or None  # "" means: the newest file
@@ -314,10 +331,7 @@ class FocusScreen(Screen, inherit_bindings=False):
             pane.border_title = views.focus_title(deck, lane, compact=self.compact)
             pane.border_subtitle = views.plan_line(deck, lane)
             self.query_one("#transcript", LaneLog).show(self._rows(lane))  # a player reading back stays where they are
-            card = views.now_card(deck, lane, compact=self.compact, simple=simple)
-            now = self.query_one("#now", Static)
-            now.update(card)
-            now.set_class(isinstance(card, Text) and not card.plain, "-nothing")  # no card: no blank row either
+            self._show_card(lane, simple)
             self._render_files()
             self._show_keys(again=False)
             chat = self.query_one("#chat", CommandBar)
@@ -325,6 +339,21 @@ class FocusScreen(Screen, inherit_bindings=False):
             placeholder = simple_placeholder(lane.id) if simple else CHAT_PLACEHOLDER
             if placeholder != chat.bar_placeholder:
                 chat.set_placeholder(placeholder)
+
+    def _show_card(self, lane: Lane, simple: bool) -> None:
+        """What the lane needs from the player: the full card, or with details off the calm
+        one, its rows cut at the edge inside a border this view draws (the compact layout's
+        card is never calm). No card: no blank row either."""
+        calm = not self.details and not self.compact
+        card = views.now_card(self.fd.deck, lane, compact=self.compact, simple=simple, calm=calm)
+        border = views.card_border(lane) if calm else ""  # "" too for the one line of a lane that ended or needs nothing
+        now = self.query_one("#now", Static)
+        now.set_class(bool(border), "-calm")
+        now.styles.border = ("round", border) if border else None  # its title (on_mount) shows with it
+        now.update(card)
+        nothing = isinstance(card, Text) and not card.plain
+        for part in (now, self.query_one("#now-scroll")):
+            part.set_class(nothing, "-nothing")
 
     def _render_files(self) -> None:
         lane = self.lane
