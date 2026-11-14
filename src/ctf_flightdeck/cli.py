@@ -1105,7 +1105,7 @@ def _mount() -> None:
     from . import (
         build_cli, gaps_cli, localmodel_cli, pack_cli, postflight_cli, practice_cli, preflight_cli, share_cli, start_cli, team_cli, vpn_cli, writeup_cli,
     )
-    from . import models_cli, plugin_cli
+    from . import http_cli, models_cli, plugin_cli
     from .l1 import cli as l1_cli
     from .platform import ctfd_cli, gamemaster_cli
 
@@ -1115,6 +1115,7 @@ def _mount() -> None:
     app.add_typer(gamemaster_cli.app, name="gm", rich_help_panel=EVENT)
     app.add_typer(team_cli.app, name="team", rich_help_panel=EVENT)
     app.add_typer(vpn_cli.app, name="vpn", rich_help_panel=EVENT)
+    app.add_typer(http_cli.app, name="http", rich_help_panel=EVENT)
     app.add_typer(plugin_cli.app, name="plugin", rich_help_panel=EVENT)
     app.add_typer(l1_cli.app, name="l1", rich_help_panel=SOLVERS)
     app.add_typer(pack_cli.app, name="pack", rich_help_panel=SOLVERS)

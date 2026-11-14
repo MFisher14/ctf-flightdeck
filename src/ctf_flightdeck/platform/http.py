@@ -804,18 +804,19 @@ class HttpCaller:
             listed: list[str] = []
             unreadable = 0  # of the challenges past the first `show`
             for n, item in enumerate(items):
+                ref = self._scalar(cfg.list.ref, item)
+                if ref is not None and valid_ref(ref):
+                    listed.append(ref)
                 if n >= show:
                     try:
-                        listed.append(self._challenge(item)["ref"])
+                        self._challenge(item)
                     except _Skip:
                         unreadable += 1
                     continue
                 lines.append(f"  challenge {n + 1}")
                 problems += self._show_fields(lines, "list", {"ref": cfg.list.ref, **cfg.list.fields}, item, required=("ref", "name"))
-                ref = self._scalar(cfg.list.ref, item)
                 if ref is None or not valid_ref(ref):
                     continue
-                listed.append(ref)
                 if cfg.detail is not None:
                     try:
                         detail = await self._read(http, cfg.detail.request, {"ref": ref})
