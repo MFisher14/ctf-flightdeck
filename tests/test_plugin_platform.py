@@ -8,6 +8,8 @@ fake_platform's talks HTTP to a stand-in platform on 127.0.0.1. Nothing real is 
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -25,8 +27,22 @@ from ctf_flightdeck.platform.plugin_run import PluginLink
 from ctf_flightdeck.plugins.call import CallFailed, Verdict
 from ctf_flightdeck.preflight import PLUGIN_BOARD, Policies, ProfileError, check, describe, load_profile
 
+from ctf_flightdeck.addchallenge import NewChallenge
+from ctf_flightdeck.platform.manual import cannot_check
+from ctf_flightdeck.plugins import board as boards
+from ctf_flightdeck.plugins import manifest
+from ctf_flightdeck.plugins.call import Caller
+from ctf_flightdeck.run import RunError, RunOptions, prepare_run
+
+import plugin_kit
+from fake_ctfd import Reply
+from fake_model import FakeModelServer
+from fake_platform import FLAG_FORMAT, FakePlatform, FakeTask, make_adapter, sample
+from fake_platform import TOKEN as PLATFORM_TOKEN
 from plugin_kit import make_plugin
+from test_console import OSC, open_focus, osc, screen_text, terminal_frame
 from test_deck import events, lane_on
+from test_event_run import Model, config, log, model_api, play, platform_solves, submit, wait_for  # noqa: F401
 from test_platform_submit import asked, chall, notes, platform_deck
 
 CONFIG = '[api]\nbase_url = "http://127.0.0.1:11434/v1"\nkey_env = "{key_env}"\n\n[models]\nladder = ["local-model"]\n\n[lanes]\nruntime = "host"\n'
@@ -359,8 +375,15 @@ def test_no_verdict_gives_the_flag_back_to_the_player_and_never_records_it_wrong
     assert deck.apply(iv.Approve(lane.id)).ok and deck.challenges["c0"].status is ChallengeStatus.SOLVED  # the player's word
 
 
+def state_file(board: Path, refs: dict[str, str]) -> None:
+    """The board's plugin.json, as a pull through the acme plugin from the FakeCaller's address writes it."""
+    board.mkdir(exist_ok=True)
+    (board / "plugin.json").write_text(json.dumps({"format": 1, "plugin": "acme", "url": FakeCaller.url, "refs": refs}))
+
+
 def test_a_challenge_with_no_ref_is_never_sent_and_goes_back_to_the_player(tmp_path):
     deck, link, caller = linked(tmp_path, refs={"c1": "23"})
+    state_file(tmp_path / "board", {"c1": "23"})
     lane = lane_on(deck, "c0")
 
     async def body():
@@ -371,6 +394,27 @@ def test_a_challenge_with_no_ref_is_never_sent_and_goes_back_to_the_player(tmp_p
     why = "c0 was not pulled through the plugin, so flightdeck has nowhere to send its flag: submit it by hand, then say whether it was accepted"
     assert caller.submits == [] and asked(lane) == [(PendingKind.CONFIRM, "t{c0}")]
     assert warnings(deck) == [f"the acme plugin did not judge t{{c0}} for Chall 0: {why}"] and len(link.told) == 1
+
+
+def test_a_ref_a_pull_wrote_since_is_found_when_its_flag_goes_out_and_a_board_file_that_is_gone_is_said_once(tmp_path):
+    deck, link, caller = linked(tmp_path, Verdict("correct"), refs={})
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+
+    async def body():
+        deck.report(first.id, TurnReport(action="solve.py", flag="t{c0}"))  # no plugin.json in the board folder at all
+        await settled(link, deck, "c0")
+        state_file(tmp_path / "board", {"c1": "23"})  # a pull in another terminal
+        deck.report(second.id, TurnReport(action="solve.py", flag="t{c1}"))
+        await settled(link, deck, "c1")
+
+    drive(link, body)
+    assert caller.submits == [("23", "t{c1}")] and second.state is LaneState.SOLVED and link.refs == {"c1": "23"}
+    assert asked(first) == [(PendingKind.CONFIRM, "t{c0}")]
+    assert warnings(deck)[0] == (
+        f"{tmp_path / 'board'} was not pulled by the acme plugin, so flightdeck has nowhere to send its flags: `flightdeck "
+        "plugin pull EVENT.toml` first, or set policies.pull to auto or confirm; flags of challenges added since the last read "
+        "are not sent")
+    assert len(warnings(deck)) == 2 and warnings(deck)[1].startswith("the acme plugin did not judge t{c0} for Chall 0: ")
 
 
 def test_a_rate_limited_flag_is_sent_again_after_the_wait_the_plugin_gives(tmp_path):
@@ -527,3 +571,469 @@ def test_flags_on_their_way_when_the_run_ends_are_named(tmp_path):
         f"acme plugin: t{{again}} ({first.id}, Chall 0) was not submitted: it was waiting for the answer to another flag of that "
         "challenge when the run ended",
     ]
+
+
+# ---------------------------------------------------------------------- a whole run
+
+
+TOKEN_VAR = "ACME_TOKEN"
+
+
+@pytest.fixture
+def token(monkeypatch):
+    monkeypatch.setenv(TOKEN_VAR, PLATFORM_TOKEN)
+
+
+def yes(question: str) -> bool:
+    return True
+
+
+def event_file(tmp_path: Path, url: str, *, board: Path | None = None, **policies: str) -> Path:
+    lines = ["[event]", 'name = "Fake Quals"', 'platform = "acme"', f'url = "{url}"', f'token_env = "{TOKEN_VAR}"',
+             f"board = '{board or tmp_path / 'board'}'", f"flag_format = '{FLAG_FORMAT}'",
+             "[rules]", "ai_allowed = true", "platform_automation = true", 'live_targets = "allowed"']
+    if policies:
+        lines += ["[policies]", *[f'{stage} = "{policy}"' for stage, policy in policies.items()]]
+    path = tmp_path / "event.toml"
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def run_options(tmp_path: Path, url: str, plugin: Path, server=None, *, max_lanes: int = 1, pull: str = "auto",
+                submit_policy: str = "auto", **options) -> RunOptions:
+    """Options for a run of the acme event: the plugin in `plugin` is the one the config allows."""
+    path = config(tmp_path, server.base_url if server is not None else None, max_lanes=max_lanes)
+    path.write_text(path.read_text() + f'\n[plugins.acme]\npath = "{plugin}"\n')
+    return RunOptions(event=event_file(tmp_path, url, pull=pull, submit=submit_policy), config=path, **options)
+
+
+def acme_run(tmp_path: Path, fake: FakePlatform, server=None, **options):
+    """A run of the acme event against the fake platform, through the synthetic adapter."""
+    return prepare_run(run_options(tmp_path, fake.url, make_adapter(tmp_path / "acme"), server, **options))
+
+
+def kinds(fake: FakePlatform) -> list[str]:
+    return [kind for r in list(fake.requests) for kind in ("challenges", "file", "solved", "attempt") if r in fake.sent(kind)]
+
+
+def plugin_warnings(run) -> list[str]:
+    return [e["text"] for e in log(run) if e["kind"] == "warning" and e["data"].get("source") == "plugin"]
+
+
+def lane_for(run, challenge_id: str):
+    return next(lane for lane in run.deck.lanes.values() if lane.challenge_id == challenge_id)
+
+
+def test_a_run_pulls_the_board_through_the_plugin_and_a_correct_flag_is_accepted_once(tmp_path, token):
+    with FakePlatform(sample()) as fake, FakeModelServer(responder=Model({"Warm Up": [submit("t{nope}"), submit("t{warm}")]})) as server:
+        run = acme_run(tmp_path, fake, server)
+        assert kinds(fake) == ["challenges", "file", "solved"]  # one pull with its file, one solved list: before anything starts
+        board = tmp_path / "board"
+        assert (board / "warm-up" / "note.txt").read_bytes() == b"a synthetic handout\n"
+        assert run.plug is not None and run.plug.pulls and run.deck.submitter is run.plug and run.links == [run.plug]
+        assert run.plug.refs == {"warm-up": "17", "web-thing": "23", "done-before": "31"}
+
+        async def body(run):
+            assert run.deck.challenges["done-before"].status is ChallengeStatus.TEAMMATE  # listed as solved: no lane
+            assert [lane.challenge_id for lane in run.deck.lanes.values()] == ["warm-up"]
+            await wait_for(lambda: run.deck.challenges["warm-up"].status is ChallengeStatus.SOLVED, "the solve")
+
+        play(run, body)
+        assert fake.attempts() == [(17, "t{nope}"), (17, "t{warm}")]  # each flag went out once
+        assert all(r.headers["authorization"] == f"Bearer {PLATFORM_TOKEN}" for r in fake.requests)
+    submitted = [(e["data"]["flag"], e["data"]["correct"], e["data"]["by"]) for e in log(run) if e["kind"] == "submit"]
+    assert submitted == [("t{nope}", False, "platform"), ("t{warm}", True, "platform")]
+    assert platform_solves(run) == [("done-before", "your account", True)]
+    assert lane_for(run, "warm-up").state is LaneState.SOLVED and plugin_warnings(run) == [] and run.errors == []
+    said = run.notes()
+    assert f"flags go to {fake.url} through the acme plugin" in said
+    assert f"board: 3 challenges from {fake.url} through the acme plugin in {board} (3 new); flightdeck pulls again every 300 s" in said
+    everything = run.log.path.read_text() + "\n".join(said) + (run.dir / "status.json").read_text()
+    assert PLATFORM_TOKEN not in everything
+
+
+def test_a_flag_the_platform_rate_limits_is_sent_again_after_its_wait_and_then_judged(tmp_path, token):
+    with FakePlatform(sample()[:1]) as fake, FakeModelServer(responder=Model({"Warm Up": [submit("t{warm}")]})) as server:
+        run = acme_run(tmp_path, fake, server)
+        fake.limited, fake.retry_after = 2, 4
+        waits: list[float] = []
+
+        async def nap(seconds: float) -> None:
+            waits.append(seconds)
+
+        run.plug.sleep = nap
+
+        async def body(run):
+            await wait_for(lambda: run.deck.challenges["warm-up"].status is ChallengeStatus.SOLVED, "the solve")
+
+        play(run, body)
+        assert fake.attempts() == [(17, "t{warm}")] * 3 and waits == [5.0, 5.0]  # what the platform asked, and a second
+    assert plugin_warnings(run) == []
+    assert ("the platform rate-limited the submission of t{warm} and did not check it; flightdeck sends it again in 5s "
+            "(send 2 of 4)") in [action.text for action in lane_for(run, "warm-up").actions]
+
+
+@pytest.mark.parametrize("pull, appears", [("auto", True), ("confirm", False)])
+def test_a_challenge_the_platform_releases_later_starts_a_lane_under_pull_auto_and_not_under_confirm(tmp_path, token, pull, appears):
+    with FakePlatform(sample()[:1]) as fake, FakeModelServer(responder=Model({})) as server:
+        run = acme_run(tmp_path, fake, server, pull=pull, max_lanes=4, solves_seconds=0.1, confirm=yes)
+        run.plug.pull_seconds = 0.2
+        assert run.plug.pulls is appears
+
+        async def body(run):
+            run.plug.solved.add("41")  # as a read of the solved list would: the platform lists the late one as solved
+            fake.add(FakeTask(40, "Second Wave", points=75, files={"wave.txt": b"later\n"}), FakeTask(41, "Late And Done", solved=True))
+            if appears:
+                await wait_for(lambda: any(lane.challenge_id == "second-wave" for lane in run.deck.lanes.values()), "its lane")
+                await wait_for(lambda: run.deck.challenges["late-and-done"].closed, "the late solved one closed")
+            else:
+                await wait_for(lambda: len(fake.sent("solved")) >= 6, "time enough for several pulls")
+
+        play(run, body)
+        pulls = len(fake.sent("challenges"))
+    if appears:
+        assert pulls > 1 and (tmp_path / "board" / "second-wave" / "wave.txt").read_bytes() == b"later\n"
+        assert run.plug.refs["second-wave"] == "40" and run.deck.challenges["late-and-done"].status is ChallengeStatus.TEAMMATE
+        assert sorted(lane.challenge_id for lane in run.deck.lanes.values()) == ["second-wave", "warm-up"]  # none on the solved one
+        assert any("pulls again every 300 s" in note for note in run.notes())
+    else:
+        assert pulls == 1 and sorted(run.deck.challenges) == ["warm-up"] and not (tmp_path / "board" / "second-wave").exists()
+        assert any('pull is "confirm" in the event profile: flightdeck pulled the board once, after you said yes' in n for n in run.notes())
+    assert plugin_warnings(run) == []
+
+
+def test_pull_confirm_asks_first_and_a_no_or_nobody_to_ask_pulls_nothing(tmp_path, token):
+    with FakePlatform(sample()) as fake:
+        options = run_options(tmp_path, fake.url, make_adapter(tmp_path / "acme"), pull="confirm")
+        asked_for: list[str] = []
+        with pytest.raises(RunError, match="you said no to the pull, so nothing was pulled and the run did not start"):
+            prepare_run(RunOptions(**{**options.__dict__, "confirm": lambda question: bool(asked_for.append(question))}))
+        assert asked_for == [f"Pull the board from {fake.url} through the acme plugin into {tmp_path / 'board'}?"]
+        with pytest.raises(RunError, match='the event\'s pull policy is "confirm", so flightdeck asks before it pulls the board'):
+            prepare_run(options)  # nobody to ask
+        assert fake.requests == [] and not (tmp_path / "board").exists()
+
+
+@pytest.mark.parametrize("kind, said", [
+    ("challenges", "the acme plugin could not pull the board: it exited with status 1: the platform answered HTTP 500; nothing was started"),
+    ("solved", "could not read the solved list from the acme plugin: it exited with status 1: the platform answered HTTP 500; "
+               "nothing was started"),
+])
+def test_a_pull_or_a_solved_list_that_fails_at_the_start_stops_the_run_before_anything_starts(tmp_path, token, kind, said):
+    with FakePlatform(sample()) as fake, FakeModelServer(responder=Model({})) as server:
+        fake.script("GET", kind, Reply(500, {"error": "internal"}))
+        with pytest.raises(RunError) as refused:
+            acme_run(tmp_path, fake, server)
+        assert str(refused.value) == said
+        assert server.chats() == [] and fake.attempts() == []  # no lane ran, nothing was submitted
+    assert not (tmp_path / "runs").exists() or list((tmp_path / "runs").iterdir()) == []  # no run folder
+
+
+def test_a_solved_list_that_keeps_failing_in_a_run_warns_once_and_tells_autopilot_once(tmp_path, token):
+    with FakePlatform(sample()[:1]) as fake, FakeModelServer(responder=Model({})) as server:
+        run = acme_run(tmp_path, fake, server, pull="confirm", solves_seconds=0.05, confirm=yes)
+        assert run.plug.needs_human == run.autopilot.platform  # autopilot is told the platform needs a human
+        told: list[str] = []
+        run.plug.needs_human = told.append
+        fake.script("GET", "solved", *[Reply(500, {"error": "internal"})] * 5)
+
+        async def body(run):
+            await wait_for(lambda: len(fake.sent("solved")) >= 8, "the reads")  # one at the start, five failing, two that work
+
+        play(run, body)
+    why = "it exited with status 1: the platform answered HTTP 500"
+    assert plugin_warnings(run) == [f"could not read the solved list from the acme plugin: {why}; flightdeck reads it again in 0.05 s"]
+    assert told == [f"reading the solved list from the acme plugin has failed 3 times in a row: {why}"]
+
+
+def test_new_and_attach_are_refused_on_a_board_a_plugin_fills(tmp_path, token):
+    with FakePlatform(sample()) as fake, FakeModelServer(responder=Model({})) as server:
+        run = acme_run(tmp_path, fake, server)
+        try:
+            assert run.watches_folder and not run.by_hand  # its folders are watched for later pulls, but the player adds none
+            app = run.app(refresh_seconds=None)
+            assert app.adder is None and app.attacher is None and app.paster is None
+            before = sorted(entry.name for entry in (tmp_path / "board").iterdir())
+            assert asyncio.run(run.add_challenge(NewChallenge(name="Mine"))) == (
+                False, "this board comes from the platform: challenges are added there, not here")
+            handout = tmp_path / "extra.txt"
+            handout.write_text("x")
+            assert asyncio.run(run.attach_files("warm-up", [handout])) == (
+                False, "files are attached to a challenge on a board you fill yourself")
+            assert sorted(entry.name for entry in (tmp_path / "board").iterdir()) == before
+        finally:
+            run.close()
+
+
+def pulled_before(tmp_path: Path, fake: FakePlatform, *, url: str | None = None) -> Path:
+    """The board as `flightdeck plugin pull` writes it, before the run; the fake's requests are forgotten."""
+    plugin = manifest.read(make_adapter(tmp_path / "acme"))
+    caller = Caller(plugin, fake.url, "Fake Quals", PLATFORM_TOKEN)
+    asyncio.run(boards.pull_into(caller, tmp_path / "board", plugin="acme", url=url or fake.url))
+    fake.requests.clear()
+    return tmp_path / "board"
+
+
+def test_under_pull_manual_the_run_pulls_nothing_and_plays_the_board_plugin_pull_wrote(tmp_path, token):
+    with FakePlatform(sample()) as fake, FakeModelServer(responder=Model({"Warm Up": [submit("t{warm}")]})) as server:
+        board = pulled_before(tmp_path, fake)
+        run = acme_run(tmp_path, fake, server, pull="manual")
+        assert kinds(fake) == ["solved"] and not run.plug.pulls  # the solved list only: no pull
+
+        async def body(run):
+            await wait_for(lambda: run.deck.challenges["warm-up"].status is ChallengeStatus.SOLVED, "the solve")
+
+        play(run, body)
+        assert fake.sent("challenges") == [] and fake.attempts() == [(17, "t{warm}")]
+    assert any(note.startswith(f'board: 3 challenges in {board}, as `flightdeck plugin pull` wrote it; pull is "manual"')
+               for note in run.notes())
+
+
+def test_a_challenge_plugin_pull_adds_from_another_terminal_during_the_run_is_played_and_its_flag_finds_its_ref(tmp_path, token):
+    script = {"Second Wave": [submit("t{second}")]}
+    with FakePlatform(sample()[:1]) as fake, FakeModelServer(responder=Model(script)) as server:
+        board = pulled_before(tmp_path, fake)
+        run = acme_run(tmp_path, fake, server, pull="manual", max_lanes=4, folder_seconds=0.05)
+
+        async def body(run):
+            fake.add(FakeTask(40, "Second Wave", flag="t{second}"), FakeTask(41, "Late And Done", solved=True))
+            run.plug.solved.add("41")  # as a read of the solved list would
+            other = Caller(manifest.read(tmp_path / "acme"), fake.url, "Fake Quals", PLATFORM_TOKEN)
+            await boards.pull_into(other, board, plugin="acme", url=fake.url)  # what `flightdeck plugin pull` does
+            await wait_for(lambda: run.deck.challenges.get("second-wave") is not None
+                           and run.deck.challenges["second-wave"].status is ChallengeStatus.SOLVED, "the late one solved")
+
+        play(run, body)
+        assert fake.attempts() == [(40, "t{second}")]
+    assert run.plug.refs == {"warm-up": "17", "second-wave": "40", "late-and-done": "41"}
+    assert sorted(lane.challenge_id for lane in run.deck.lanes.values()) == ["second-wave", "warm-up"]  # none on the solved one
+    assert plugin_warnings(run) == []
+
+
+def test_a_board_the_plugin_did_not_pull_has_nowhere_to_send_flags_so_the_run_does_not_start(tmp_path, token):
+    with FakePlatform(sample()) as fake:
+        board = tmp_path / "board"
+        (board / "by-hand").mkdir(parents=True)
+        (board / "by-hand" / "challenge.json").write_text(json.dumps({"name": "By Hand", "category": "misc", "points": 10}))
+        options = run_options(tmp_path, fake.url, make_adapter(tmp_path / "acme"), pull="manual")
+        with pytest.raises(RunError) as refused:
+            prepare_run(options)
+        assert str(refused.value) == (
+            f"{board} was not pulled by the acme plugin, so flightdeck has nowhere to send its flags: `flightdeck plugin pull "
+            "EVENT.toml` first, or set policies.pull to auto or confirm")
+        with pytest.raises(RunError, match="is not empty and holds no plugin.json, so it is not a board the acme plugin pulled"):
+            prepare_run(RunOptions(**{**options.__dict__, "event": event_file(tmp_path, fake.url, pull="auto", submit="auto")}))
+        assert fake.requests == []  # refused before the plugin was asked anything
+
+
+def test_a_board_pulled_from_another_address_is_refused(tmp_path, token):
+    with FakePlatform(sample()) as fake:
+        board = pulled_before(tmp_path, fake, url="https://other.example.test")
+        for pull in ("manual", "auto"):
+            with pytest.raises(RunError) as refused:
+                prepare_run(run_options(tmp_path, fake.url, tmp_path / "acme", pull=pull))
+            assert str(refused.value) == f"{board} holds a board pulled by another plugin or from another address: use a new folder"
+        assert fake.requests == []
+
+
+def test_a_profile_that_uses_the_plugin_for_nothing_plays_as_a_by_hand_board_and_never_runs_it(tmp_path):
+    """pull and submit both by hand: no token is read, the plugin's program is never started,
+    and the player fills the board themself."""
+    root = make_plugin(tmp_path / "acme", {})
+    (tmp_path / "board").mkdir()
+    with FakeModelServer(responder=Model({})) as server:
+        run = prepare_run(run_options(tmp_path, "https://ctf.example.test", root, server, pull="manual", submit_policy="manual"))
+        try:
+            assert run.plug is None and run.links == [] and run.by_hand and run.watches_folder
+            assert run.deck.verify is cannot_check and run.deck.submitter is None and run.app(refresh_seconds=None).adder is not None
+            assert any(note == "event profile: this run does not use the acme plugin: pull and submit are both by hand"
+                       for note in run.notes())
+        finally:
+            run.close()
+    assert plugin_kit.calls(root) == []
+
+
+def test_under_submit_manual_the_plugin_pulls_and_lists_but_no_flag_goes_through_it(tmp_path, token):
+    with FakePlatform(sample()[:1]) as fake, FakeModelServer(responder=Model({"Warm Up": [submit("t{warm}")]})) as server:
+        run = acme_run(tmp_path, fake, server, submit_policy="manual")
+        assert run.plug is not None and run.deck.submitter is None and run.deck.verify is cannot_check
+
+        async def body(run):
+            await wait_for(lambda: run.deck.lanes and lane_for(run, "warm-up").pending is not None, "the flag, with the player")
+            assert lane_for(run, "warm-up").pending.kind is PendingKind.CONFIRM  # the player submits it and says how it went
+
+        play(run, body)
+        assert fake.attempts() == [] and kinds(fake)[:3] == ["challenges", "file", "solved"]
+    assert f"the acme plugin reads the solved list from {fake.url}; no flag goes through it" in run.notes()
+    assert not any(note.startswith("flags go to") for note in run.notes())
+
+
+def test_answers_cannot_be_checked_against_a_file_when_flags_go_through_a_plugin(tmp_path, token):
+    with FakePlatform(sample()) as fake:
+        options = run_options(tmp_path, fake.url, make_adapter(tmp_path / "acme"))
+        answers = tmp_path / "answers.sha256.json"
+        answers.write_text("{}")
+        with pytest.raises(RunError, match="--answers checks flags against a file, and this event checks them on its platform, "
+                                           "through the acme plugin: drop --answers"):
+            prepare_run(RunOptions(**{**options.__dict__, "answers": answers}))
+        assert fake.requests == []
+
+
+def test_a_plugin_event_needs_a_board_folder(tmp_path, token):
+    with FakePlatform(sample()) as fake:
+        options = run_options(tmp_path, fake.url, make_adapter(tmp_path / "acme"))
+        profile = tmp_path / "event.toml"
+        profile.write_text("\n".join(line for line in profile.read_text().splitlines() if not line.startswith("board")) + "\n")
+        with pytest.raises(RunError, match="an event on a plugin's platform needs the board folder its challenges are pulled into"):
+            prepare_run(options)
+        named = prepare_run(RunOptions(**{**options.__dict__, "board": tmp_path / "elsewhere"}))  # FOLDER on the command line
+        named.close()
+        assert (tmp_path / "elsewhere" / "warm-up").is_dir() and named.plug.board == tmp_path / "elsewhere"
+
+
+def test_a_flag_on_its_way_through_the_plugin_when_the_run_ends_is_named_and_its_program_is_stopped(tmp_path, monkeypatch):
+    monkeypatch.setenv(TOKEN_VAR, plugin_kit.TOKEN)
+    root = make_plugin(tmp_path / "acme", {
+        "pull": {"answer": {"challenges": [plugin_kit.challenge("17", "Warm Up")]}}, "solved": {"answer": {"solved": []}},
+        "submit": {"sleep": 30, "answer": {"verdict": "correct"}},  # a platform slow to answer
+    })
+
+    def submits() -> list[dict]:
+        return [call for call in plugin_kit.calls(root) if call["request"]["op"] == "submit"]
+
+    with FakeModelServer(responder=Model({"Warm Up": [submit("t{warm}")]})) as server:
+        run = prepare_run(run_options(tmp_path, "https://ctf.example.test", root, server, pull="confirm", confirm=yes))
+
+        async def main():
+            run.release()
+            try:
+                await wait_for(lambda: len(submits()) == 1, "the flag with the plugin")
+            finally:
+                await run.shutdown()
+
+        asyncio.run(main())
+        run.close()
+    (sent,) = submits()
+    assert (sent["request"]["ref"], sent["request"]["flag"]) == ("17", "t{warm}")
+    with pytest.raises(ProcessLookupError):  # the program did not outlive the run
+        os.kill(sent["pid"], 0)
+    assert [e for e in run.errors if e.startswith("acme plugin: ")] == [
+        "acme plugin: t{warm} (L01, Warm Up) was on its way to the platform when the run ended, so it is not known to have been "
+        "submitted: check the challenge there before you submit it again"]
+
+
+def test_a_later_pull_that_fails_warns_once_and_what_a_pull_leaves_out_is_said_once(tmp_path, monkeypatch):
+    """What the first pull left out or noted is in the run's notes; a later pull says only what
+    is new. A pull that fails is one warning while the same failure lasts, and the next still runs."""
+    monkeypatch.setenv(TOKEN_VAR, plugin_kit.TOKEN)
+    warm, odd, odder = (plugin_kit.challenge("17", "Warm Up"), plugin_kit.challenge("18", "Odd", points=-1),
+                        plugin_kit.challenge("19", "Odder", points=-2))
+    first = {"answer": {"challenges": [warm, odd], "notes": ["2 challenges are locked"]}}
+    down = {"stderr": "the platform is down\n", "exit": 1}
+    later = {"answer": {"challenges": [warm, odd, odder, plugin_kit.challenge("20", "Late")], "notes": ["2 challenges are locked"]}}
+    root = make_plugin(tmp_path / "acme", {"pull": [first, down, down, later], "solved": {"answer": {"solved": []}}})
+    with FakeModelServer(responder=Model({})) as server:
+        run = prepare_run(run_options(tmp_path, "https://ctf.example.test", root, server, max_lanes=4))
+        run.plug.pull_seconds = 0.05
+        left_out = 'acme: not added: Odd: "points" must be a whole number, 0 or more'
+        assert left_out in run.notes() and "acme: 2 challenges are locked" in run.notes()
+
+        async def body(run):
+            await wait_for(lambda: any(lane.challenge_id == "late" for lane in run.deck.lanes.values()), "the late one's lane")
+            pulls = len([call for call in plugin_kit.calls(root) if call["request"]["op"] == "pull"])
+            await wait_for(lambda: len([c for c in plugin_kit.calls(root) if c["request"]["op"] == "pull"]) >= pulls + 2, "two more pulls")
+
+        play(run, body)
+    assert plugin_warnings(run) == [
+        "the acme plugin could not pull new challenges: it exited with status 1: the platform is down; flightdeck pulls again in 0.05 s",
+        'acme: not added: Odder: "points" must be a whole number, 0 or more',
+    ]
+    known = [call["request"]["known"] for call in plugin_kit.calls(root) if call["request"]["op"] == "pull"]
+    assert known[0] == [] and known[1] == ["17"] and known[-1] == ["17", "20"]  # the refs on the board already, each time
+
+
+# ---------------------------------------------------------------------- what a plugin says is never trusted
+
+
+def test_a_run_gives_the_plugin_the_events_token_and_none_of_the_players_other_keys(tmp_path, monkeypatch):
+    """The token comes from the keys file here, where a model key sits beside it: the plugin's
+    program gets the first as FLIGHTDECK_PLUGIN_TOKEN and nothing of the second."""
+    root = make_plugin(tmp_path / "acme", {
+        "pull": {"answer": {"challenges": [plugin_kit.challenge("17", "Warm Up")]}}, "solved": {"answer": {"solved": []}}})
+    keys = tmp_path / "keys.env"
+    keys.write_text(f"{TOKEN_VAR}={plugin_kit.TOKEN}\nOPENROUTER_API_KEY=sk-or-fake-for-this-test\n")
+    keys.chmod(0o600)
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake-for-this-test")
+    with FakeModelServer(responder=Model({})) as server:
+        prepare_run(run_options(tmp_path, "https://ctf.example.test", root, server)).close()
+    seen = plugin_kit.calls(root)
+    assert [call["request"]["op"] for call in seen] == ["pull", "solved"]
+    for call in seen:
+        assert call["env"]["FLIGHTDECK_PLUGIN_TOKEN"] == plugin_kit.TOKEN
+        assert not {"OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", TOKEN_VAR} & set(call["env"])
+        assert plugin_kit.TOKEN not in json.dumps(call["request"]) and plugin_kit.TOKEN not in " ".join(call["argv"])
+        assert (call["request"]["url"], call["request"]["event"]) == ("https://ctf.example.test", "Fake Quals")
+
+
+def seen(tag: str) -> str:
+    """osc(tag) as text.untrusted() shows it: the whole sequence, made visible."""
+    return f"^[]0;{tag}^[" + chr(92)
+
+
+def test_a_token_the_plugin_prints_and_an_escape_sequence_it_passes_on_never_reach_the_console_or_the_runs_files(tmp_path, monkeypatch):
+    """The plugin answers a flag with the platform's words, which carry an escape sequence and
+    the token; then its submit fails with the token on stderr, and so does its solved list.
+    Nothing of the token is drawn or written, and the sequence is shown made visible."""
+    secret = plugin_kit.TOKEN
+    monkeypatch.setenv(TOKEN_VAR, secret)
+    root = make_plugin(tmp_path / "acme", {
+        "pull": {"answer": {"challenges": [plugin_kit.challenge("17", "Warm Up")]}},
+        "solved": [{"answer": {"solved": []}}, {"stderr": "cannot list for {token} " + osc("sv") + "\n", "exit": 1}],
+        "submit": [{"answer": {"verdict": "incorrect", "detail": f"wrong {osc('dt')} for {secret}"}},
+                   {"stderr": "refused for {token} " + osc("er") + "\n", "exit": 3}],
+    })
+    model = Model({"Warm Up": [submit("t{one}"), submit("t{two}")]})
+
+    async def main():
+        with FakeModelServer(responder=model) as server:
+            run = prepare_run(run_options(tmp_path, "https://ctf.example.test", root, server, pull="confirm", confirm=yes,
+                                          solves_seconds=0.05))
+            app = run.app(refresh_seconds=None)
+            frames, texts = [], []
+            async with app.run_test(size=(160, 46)) as pilot:
+                await pilot.pause()
+                for _ in range(2000):
+                    lanes = list(run.deck.lanes.values())
+                    if lanes and lanes[0].pending is not None and len(plugin_warnings(run)) >= 2:
+                        break
+                    await pilot.pause(0.01)
+                (lane,) = run.deck.lanes.values()
+                assert lane.pending.kind is PendingKind.CONFIRM and lane.pending.flag == "t{two}"
+                app.refresh_view()
+                await pilot.pause()
+                frames.append(terminal_frame(app))
+                texts.append(screen_text(app))
+                await open_focus(pilot, app, lane.id)
+                frames.append(terminal_frame(app))
+                texts.append(screen_text(app))
+            await run.shutdown()
+            run.close()
+            return run, lane, frames, texts
+
+    run, lane, frames, texts = asyncio.run(main())
+    said = sorted(plugin_warnings(run))
+    assert said == [
+        f"could not read the solved list from the acme plugin: it exited with status 1: cannot list for <token> {seen('sv')}; "
+        "flightdeck reads it again in 0.05 s",
+        f"the acme plugin did not judge t{{two}} for Warm Up: it exited with status 3: refused for <token> {seen('er')}",
+    ]
+    assert f"the platform's answer to t{{one}}: wrong {seen('dt')} for <token>" in [action.text for action in lane.actions]
+    assert all(secret not in frame and OSC not in frame for frame in frames)
+    assert "^[]0;dt" in texts[1] and "<token>" in "".join(texts)  # shown, made visible, with the token cut out
+    written = [path for path in run.dir.rglob("*") if path.is_file()]
+    assert {"events.jsonl", "status.json"} <= {path.name for path in written}
+    for path in written:
+        data = path.read_bytes()
+        assert secret.encode() not in data and OSC.encode() not in data, path
+    assert secret not in "\n".join(run.notes() + run.errors)

@@ -136,12 +136,23 @@ class PluginLink:
                     self.deck.warn(problem, challenge=challenge_id, data=SOURCE)
             self.sending = None
 
+    def reload(self) -> None:
+        """Read the board's plugin.json again for the refs of challenges a pull added since:
+        this run's, or `flightdeck plugin pull` in another terminal. One that cannot be read
+        is a warning, once while it lasts; a challenge with no ref gets no flag sent."""
+        try:
+            self.refs.update(load_refs(self.board, plugin=self.name, url=self.caller.url))
+        except PluginError as exc:
+            if self.deck is not None and self._said.get("refs") != str(exc):
+                self._said["refs"] = str(exc)
+                self.deck.warn(f"{exc}; flags of challenges added since the last read are not sent", data=SOURCE)
+        else:
+            self._said.pop("refs", None)
+
     def _ref(self, challenge_id: str) -> str | None:
-        """The challenge's ref. One the link does not have is looked for in plugin.json again:
-        `flightdeck plugin pull` in another terminal may have added the challenge since."""
+        """The challenge's ref; one the link does not have is looked for in plugin.json again."""
         if challenge_id not in self.refs:
-            with contextlib.suppress(PluginError):
-                self.refs.update(load_refs(self.board, plugin=self.name, url=self.caller.url))
+            self.reload()
         return self.refs.get(challenge_id)
 
     async def _send(self, lane_id: str, challenge_id: str, flag: str) -> Verdict | str:
@@ -345,7 +356,7 @@ class PluginLink:
                 deck.warn(line, data=SOURCE)
         if not written.added:
             return
-        self.refs.update(load_refs(self.board, plugin=self.name, url=self.caller.url))
+        self.reload()
         if self.added is not None:
             self.added()
         self.apply_solved()
