@@ -2,6 +2,31 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+- The console opens in a simpler layout: one list of lanes, a short header, and only the keys
+  that apply to the selected lane now. Every key still acts, and `?` lists them. `/layout deck`
+  brings the full dashboard back for the rest of a run; `layout = "deck"` under `[console]` in
+  your config keeps it.
+- In the simple layout a lane's own view shows the files pane once the lane has changed a file,
+  and the strip of other lanes only while one needs you. On a board you fill yourself, the first
+  lane your `/new` starts opens full screen.
+- Themes: `theme = "nord"` under `[console]` (`flightdeck`, `light`, `nord`, `gruvbox`,
+  `dracula`, or your own `themes/NAME.toml` beside the config: as little as a `base` and one
+  colour). `/theme NAME` tries one in a running console, and `/theme` lists them. A theme you
+  could not read the console in is refused, with the pair of colours named.
+- Plugins: an event on a platform flightdeck does not know can be played with a small adapter
+  of your own. `flightdeck plugin new NAME` writes one to fill in, `flightdeck plugin add
+  FOLDER` shows what it runs and enables it on your yes, and `platform = "NAME"` in event.toml
+  uses it: flightdeck pulls the board, submits the flags you approve and follows the solved
+  list through it. `flightdeck plugin pull EVENT.toml` tries the pull and submits nothing. How
+  to write one: [docs/PLUGINS.md](docs/PLUGINS.md).
+- An empty board now says how to add a challenge and keeps saying it, and the `/` menu scrolls
+  to every command and lists `/new` first when there is no lane yet.
+- The mock opens in your config's layout and theme, and the home screen in its theme.
+  `flightdeck doctor` measures your terminal in the layout your config names, and reports each
+  plugin you added.
+
 ## 0.4.0 (2026-11-13)
 
 The solver pack (M6), and a first run that needs no reading: `flightdeck` alone opens a home
