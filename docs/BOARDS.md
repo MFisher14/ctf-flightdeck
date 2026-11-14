@@ -419,6 +419,17 @@ max_running = 3                 # the most kept running at once: the site's cap 
   earlier run's) is used and never stopped by this run. When the site says its cap is reached,
   flightdeck says so once and asks again every 30 seconds: teammates' instances take slots it
   cannot see.
+- **A start with no answer.** flightdeck waits 20 seconds for each answer, and some plugins
+  start the container inside the request, which can take longer. A start that got no answer
+  (or an answer that was not the plugin's) may have been done all the same, so flightdeck
+  says so and remembers it for ten minutes: when the instance is up the next time it asks,
+  it is taken as the one flightdeck started, used, and stopped when the challenge is done.
+  If nobody works the challenge by then, flightdeck keeps asking for those ten minutes and
+  stops the instance when it turns up, and it looks once more when the run ends. Before a
+  start is sent again, the status is always asked. This is a guess in one case: a teammate
+  who starts the same challenge's instance in those ten minutes has it taken for
+  flightdeck's. After a start the site refused in words, or after the ten minutes, an
+  instance that turns up is a teammate's, as above.
 - **What it needs.** `platform = "ctfd"`, `platform_automation = true`, and the `instance` policy
   at `auto` (so `live_targets = "allowed"`): starting an instance is reaching it. Otherwise
   flightdeck starts none, and `preflight` and the start of a run say why; start it on the site

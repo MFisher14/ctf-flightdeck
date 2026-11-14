@@ -27,6 +27,17 @@ slots are shared, and stopping a teammate's instance would cut their lane off. T
 (status, then start) also means a start is never sent for a challenge whose instance the
 plugin says is up, whatever that plugin's start would do to it.
 
+A start with no clear answer. The platform may start an instance and the answer never
+arrive: a plugin that launches the container inside the request can outlast the client's
+wait. Such a start (InstanceError.maybe_done) is remembered for CLAIM_FOR seconds, and an
+instance of that challenge the status names in that time is this run's own: used as a
+started one, and stopped when the challenge is done. Taken for a teammate's it would never
+be stopped, and on a plugin with one container per account it would keep every other
+challenge out until the platform ended it. If nobody works the challenge by then, the
+status is asked every RETRY_FULL seconds for that long and the instance stopped when it
+turns up; close() looks once more. After CLAIM_FOR seconds, or after a start the platform
+refused in words, an instance that turns up is a teammate's as before.
+
 A plugin that keeps one container per account (ctfd-owl: InstancesConfig.single) has a
 `max_running` of 1, so the queue's on-demand challenges take turns. A teammate's container
 of another challenge is not seen by a status; the start is then refused in the plugin's
@@ -70,6 +81,7 @@ RENEW_BEFORE = 300.0  # seconds before an instance's end at which it is renewed
 RETRY_FULL = 30.0  # seconds before a start is tried again when the team's cap was reached
 RETRY_FIRST = 30.0  # seconds before a start that failed is tried again, the first time
 RETRY_MOST = 300.0  # and at most
+CLAIM_FOR = 600.0  # seconds after a start with no clear answer in which an instance of its challenge that turns up is this run's
 WAITS = "waits for its instance: the platform has not started it yet"
 WEB = "web"  # the category code whose instances are web servers
 
@@ -128,6 +140,7 @@ class InstanceRunner:
         self.every = every
         self.running: dict[str, Instance] = {}  # challenge id -> its instance, as last known
         self.adopted: set[str] = set()  # running, but not started by this run: never stopped here
+        self.unanswered: dict[str, float] = {}  # challenge id -> when a start of this run got no clear answer (CLAIM_FOR)
         self.retry_at: dict[str, float] = {}  # challenge id -> not before this clock time
         self.failures: dict[str, int] = {}
         self._said: set[tuple[str, str]] = set()  # (challenge id, message) warned of already
@@ -155,9 +168,11 @@ class InstanceRunner:
 
     async def step(self) -> Plan:
         """One look: stop what nobody works, start what is wanted, renew what ends soon."""
-        todo = plan(self.needs(), self.max_running)
+        needs = self.needs()
+        todo = plan(needs, self.max_running)
         for cid in todo.stop:
             await self._stop(cid)
+        await self._unanswered({n.challenge for n in needs if n.wanted})  # before the starts: what it stops frees a slot
         for cid in todo.start:
             if self.clock() >= self.retry_at.get(cid, 0.0):
                 await self._start(cid)
@@ -173,6 +188,16 @@ class InstanceRunner:
             except InstanceError as exc:
                 left.append(f"the instance of {self._name(cid)} may still run on the platform: {exc}")
             self.running.pop(cid, None)
+        for cid in [c for c in self._claims() if c not in self.running]:  # a start with no clear answer: is it up now?
+            try:
+                if await asyncio.to_thread(self.client.status, cid) is None:
+                    left.append(f"the start of {self._name(cid)}'s instance got no answer, and the platform names no instance of it "
+                                "yet: if one comes up, it runs until the platform ends it or you stop it on the site")
+                else:
+                    await asyncio.to_thread(self.client.stop, cid)
+            except InstanceError as exc:
+                left.append(f"the instance of {self._name(cid)} may still run on the platform: {exc}")
+        self.unanswered.clear()
         return left
 
     # ------------------------------------------------------------------ the deck, read
@@ -198,7 +223,12 @@ class InstanceRunner:
         try:
             there = await asyncio.to_thread(self.client.status, cid)
             got = there if there is not None else await asyncio.to_thread(self.client.start, cid)
-        except InstanceRefused as exc:
+        except InstanceError as exc:
+            if exc.maybe_done:  # only a start is marked so: the platform may have started it all the same
+                self.unanswered[cid] = self.clock()
+            if not isinstance(exc, InstanceRefused):
+                self._failed(cid, str(exc), maybe_done=exc.maybe_done)
+                return
             if exc.full:
                 self.retry_at[cid] = self.clock() + RETRY_FULL
                 if not self._full_said:
@@ -209,17 +239,18 @@ class InstanceRunner:
                         challenge=cid, data={"source": "instances", "full": True},
                     )
                 return
-            self._failed(cid, str(exc))
-            return
-        except InstanceError as exc:
-            self._failed(cid, str(exc))
+            self._failed(cid, str(exc), maybe_done=exc.maybe_done)
             return
         self._full_said = False
         self.failures.pop(cid, None)
         self.retry_at.pop(cid, None)
-        adopted = there is not None and not mine
+        claimed = there is not None and not mine and cid in self._claims()  # it came up after this run's own start
+        self.unanswered.pop(cid, None)
+        adopted = there is not None and not mine and not claimed
         if adopted:
             self.adopted.add(cid)
+        else:  # this run's: one it started now, or one adopted before that ended and was started again
+            self.adopted.discard(cid)
         before = self.running.get(cid)
         if mine and there is not None and got.expires_at is not None and got.expires_at <= self.clock():
             got = replace(got, expires_at=None)  # the platform still runs it past the end it named: its end is not known
@@ -230,8 +261,11 @@ class InstanceRunner:
         ch.live = True
         if before is None or (before.host, before.port) != (got.host, got.port):
             how = "was already running (a teammate's, or an earlier run's: flightdeck will not stop it)" if adopted else "started"
-            self.deck.warn(f"instances: the instance of {self._name(cid)} {how}: {untrusted(url, one_line=True)}",
-                           challenge=cid, data={"source": "instances", "url": url, "adopted": adopted})
+            text = f"instances: the instance of {self._name(cid)} {how}: {untrusted(url, one_line=True)}"
+            if claimed:
+                text = (f"instances: the instance of {self._name(cid)} is up: {untrusted(url, one_line=True)} (the start flightdeck sent "
+                        "earlier got no answer and was done all the same, so this is its own: it stops it when the challenge is done)")
+            self.deck.warn(text, challenge=cid, data={"source": "instances", "url": url, "adopted": adopted})
         if before is not None and (before.host, before.port) != (got.host, got.port):
             self._moved(cid, url)
         self.deck.ready(cid)
@@ -243,6 +277,36 @@ class InstanceRunner:
             self._warn(cid, f"instances: could not stop the instance of {self._name(cid)}: {exc}; it holds one of the team's slots "
                             "until the platform ends it")
         self._gone(cid)
+
+    def _claims(self) -> list[str]:
+        """The challenges with a start of this run that got no clear answer in the last
+        CLAIM_FOR seconds; older ones are forgotten."""
+        now = self.clock()
+        for cid in [c for c, sent in self.unanswered.items() if now - sent > CLAIM_FOR]:
+            del self.unanswered[cid]
+        return list(self.unanswered)
+
+    async def _unanswered(self, wanted: set[str]) -> None:
+        """A start with no clear answer whose challenge nobody works any more (solved or
+        parked meanwhile): no lane will ask for its instance, so the status is asked here,
+        every RETRY_FULL seconds, and the instance is stopped when it turns up."""
+        for cid in self._claims():
+            if cid in wanted or cid in self.running or self.clock() < self.retry_at.get(cid, 0.0):
+                continue
+            try:
+                if await asyncio.to_thread(self.client.status, cid) is None:
+                    self.retry_at[cid] = self.clock() + RETRY_FULL
+                    continue
+                await asyncio.to_thread(self.client.stop, cid)
+            except InstanceError as exc:
+                self.retry_at[cid] = self.clock() + RETRY_FULL
+                self._warn(cid, f"instances: the start of {self._name(cid)}'s instance got no answer, and flightdeck could not tell "
+                                f"whether it runs, or stop it: {exc}; it asks again for a while")
+                continue
+            del self.unanswered[cid]
+            self.retry_at.pop(cid, None)
+            self._warn(cid, f"instances: the instance of {self._name(cid)} came up after a start that got no answer, and nobody works "
+                            "it now: flightdeck stopped it")
 
     def _gone(self, cid: str) -> None:
         self.running.pop(cid, None)
@@ -283,13 +347,15 @@ class InstanceRunner:
 
     # ------------------------------------------------------------------ said to the player
 
-    def _failed(self, cid: str, why: str) -> None:
+    def _failed(self, cid: str, why: str, *, maybe_done: bool = False) -> None:
         count = self.failures.get(cid, 0) + 1
         self.failures[cid] = count
         wait = min(RETRY_FIRST * (2 ** (count - 1)), RETRY_MOST)
         self.retry_at[cid] = self.clock() + wait
+        then = (f". If the instance is up when it asks again (within {CLAIM_FOR / 60:g} minutes), flightdeck takes it as the one "
+                "it started: it uses it, and stops it when the challenge is done") if maybe_done else ""
         self._warn(cid, f"instances: could not start the instance of {self._name(cid)}: {why}; its lanes wait, and flightdeck "
-                        "tries again later (queued challenges behind it go on)")
+                        f"tries again later (queued challenges behind it go on){then}")
 
     def _moved(self, cid: str, url: str) -> None:
         shown = untrusted(url, one_line=True)

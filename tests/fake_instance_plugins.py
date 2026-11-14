@@ -27,6 +27,8 @@ db_utils.py). Site-root routes, the challenge's number in the query:
   should wait at least 1 min.": the code compares against 1 second). The plugin keeps that
   clock in the session; this fake keeps one for the account, as a client that keeps its
   cookies meets it. `limit = 0` turns it off.
+- The launch runs inside the POST, so a start answers only when the container is up: `slow`
+  holds that answer back, as a launch that outlasts the client's patience does.
 
 ctfd-chall-manager (github.com/ctfer-io/ctfd-chall-manager: api/instance.py,
 utils/decorators.py, utils/helpers.py, utils/instance_manager.py). Under CTFd's API:
@@ -51,6 +53,7 @@ utils/decorators.py, utils/helpers.py, utils/instance_manager.py). Under CTFd's 
 from __future__ import annotations
 
 import json
+import threading
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -88,6 +91,7 @@ class FakeOwl:
         self.max_containers: int | None = None  # docker_max_container_count, for the whole site
         self.others = 0  # containers other accounts run, counted against max_containers
         self.launch_fails = False  # the launch throws: answered as success with a msg, and no container
+        self.slow: threading.Event | None = None  # set: a start's answer waits for it (the plugin launches inside the POST)
         self.limit = 1  # seconds between two changing requests; 0: no limit
         self._changed: int | None = None
         self._next = 0
@@ -126,7 +130,9 @@ class FakeOwl:
             if self.launch_fails:
                 return _reply(200, {"success": True, "msg": "Failed when launch instance, please contact with the admin."})
             self.boot(number)
-            return _reply(200, {"success": True})
+            done = _reply(200, {"success": True})
+            done.hold = self.slow  # the container is up; only the answer is late
+            return done
         if method == "DELETE":
             self.container = None  # whatever its challenge: the route never looks at challenge_id
             return _reply(200, {"success": True})

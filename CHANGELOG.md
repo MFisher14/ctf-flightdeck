@@ -16,6 +16,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   sends the number in a body.
 - `plugin = "ctfd_docker"` under `[instances]` is refused: it was a guess that matched no
   plugin. Write `docker_per_team` for CTFd-Docker-Plugin and its forks.
+- An instance whose start got no answer in time, and that is up when flightdeck asks again
+  within ten minutes, is now taken as the one flightdeck started: it is used and stopped when
+  the challenge is done. Before, it was taken for a teammate's and never stopped, which held
+  one of the team's slots until the site ended it
+  ([BOARDS.md](docs/BOARDS.md#instances-on-demand)).
 - A lane can look at a picture: flightdeck's own lanes have a `view_image` tool that shows the
   model a PNG, JPEG, GIF or WebP file in the lane's workspace, as it is (at most 4.5 MB, never
   scaled down). When your model's API will not take a picture, or the `[fallback]` model a lane
