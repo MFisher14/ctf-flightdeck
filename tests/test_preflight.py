@@ -690,8 +690,13 @@ def test_an_unknown_key_is_an_error_naming_it(tmp_path, table, key, named):
 
 
 BAD_VALUES = [
-    ("event", "platform", '"ctfe"', 'event.platform must be "ctfd", "manual" or "gamemaster" (got a string)'),
-    ("event", "platform", "1", 'event.platform must be "ctfd", "manual" or "gamemaster" (got 1)'),
+    ("event", "platform", '"CTFd"', 'event.platform must be "ctfd", "manual", "gamemaster" or the name of a plugin you added '
+                                    "(lower-case letters, digits, - and _)"),
+    ("event", "platform", '"my ctf"', 'event.platform must be "ctfd", "manual", "gamemaster" or the name of a plugin you added'),
+    ("event", "platform", f'"{CTFD_SHAPED[:21]}"', 'event.platform must be "ctfd", "manual", "gamemaster" or the name of a plugin you added'),
+    ("event", "platform", f'"{"a" + HEX_SHAPED[1:32]}"', 'event.platform must be "ctfd", "manual", "gamemaster" or the name of a plugin you added'),
+    ("event", "platform", "1", 'event.platform must be "ctfd", "manual", "gamemaster" or the name of a plugin you added '
+                               "(lower-case letters, digits, - and _) (got 1)"),
     ("rules", "live_targets", '"maybe"', 'rules.live_targets must be "allowed", "confirm" or "off"'),
     ("policies", "submit", '"sometimes"', 'policies.submit must be "auto", "confirm", "manual" or "off" (got a string)'),
     ("policies", "pull", "true", 'policies.pull must be "auto", "confirm", "manual" or "off" (got true)'),
@@ -736,6 +741,27 @@ def test_a_bad_value_is_an_error_naming_the_key(tmp_path, table, key, value, exp
     tables[table][key] = value
     message = load_error(write(tmp_path, toml(**tables)))
     assert message.startswith(f"{tmp_path / 'event.toml'}: {expected}"), message
+
+
+def test_a_platform_that_is_not_built_in_loads_as_a_plugins_and_no_run_plays_it_as_a_folder_board(tmp_path):
+    """The profile only selects a plugin by name. Until a run can use one, check() refuses it:
+    it is never played as a manual board, and the profile's word for it is not shown."""
+    board = tmp_path / "board"
+    board.mkdir()
+    event = {"name": '"Quals"', "platform": '"harbourctf"', "url": '"https://ctf.example.org"', "token_env": '"HARBOUR_TOKEN"',
+             "board": '"board"'}
+    loaded, chosen = load_profile(write(tmp_path, toml(event, RULES_OPEN)))
+    assert (loaded.platform, loaded.plugin) == ("harbourctf", True)
+    assert not profile().plugin and not manual(tmp_path).plugin
+    problems = check(loaded, chosen, max_lanes=4, environ={})
+    assert [p.message for p in problems if p.refuse] == [
+        "event.platform names a plugin's platform, and a run does not play one: `flightdeck plugin pull EVENT.toml` pulls "
+        "its board and submits nothing"
+    ]
+    shown = "\n".join([p.message for p in problems] + describe(loaded, chosen, environ={}))
+    assert "harbourctf" not in shown and "manual" not in shown and "a plugin's platform" in shown
+    with pytest.raises(ValueError, match="platform must be"):
+        profile(platform="Harbour CTF")
 
 
 def test_a_board_under_a_home_that_does_not_exist_is_an_error(tmp_path):
@@ -786,7 +812,14 @@ def test_error_messages_never_show_a_string_from_the_profile(tmp_path, pasted):
     for table, key in [("event", "token_env"), ("event", "platform"), ("event", "url"), ("rules", "live_targets"), ("policies", "agents"), ("rules", "ai_allowed")]:
         tables = {"event": dict(EVENT_CTFD), "rules": dict(RULES_OPEN), "policies": {}}
         tables[table][key] = f'"{pasted}"'
-        message = load_error(write(tmp_path, toml(**tables)))
+        path = write(tmp_path, toml(**tables))
+        if key == "platform" and pasted.startswith("pasted"):
+            # shaped like a plugin's name, so it loads: only the player's config makes it one, and nothing shows it
+            loaded, chosen = load_profile(path)
+            shown = [p.message for p in check(loaded, chosen, max_lanes=4, environ={})] + describe(loaded, chosen, environ={})
+            assert loaded.plugin and pasted not in "\n".join(shown)
+            continue
+        message = load_error(path)
         assert pasted not in message, (table, key)
         assert f"{table}.{key}" in message
 
@@ -894,7 +927,7 @@ def test_a_bad_flag_format_is_shown_safely(tmp_path, env, char, code, shown):
 
 def test_profile_fields_are_checked_when_built_in_code():
     with pytest.raises(ValueError, match="platform"):
-        profile(platform="ctfe")
+        profile(platform="CTFe")
     with pytest.raises(ValueError, match="live_targets"):
         profile(live_targets="sometimes")
     with pytest.raises(ValueError, match="stages that do not exist"):

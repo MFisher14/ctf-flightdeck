@@ -70,7 +70,7 @@ from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import SplitResult, urlsplit
 
-from .config import Config, ConfigError
+from .config import PLUGIN_NAME, Config, ConfigError
 from .flagformat import problem as flag_format_problem
 from .platform.instances import InstancesConfig
 from .platform.instances import parse_config as parse_instances
@@ -183,7 +183,7 @@ class EventProfile:
 
     # [event]
     name: str
-    platform: str  # "ctfd" | "manual" | "gamemaster"
+    platform: str  # "ctfd" | "manual" | "gamemaster", or the name of a plugin's platform (`plugin`)
     url: str | None = None  # ctfd, gamemaster: the site's address, without a trailing /
     token_env: str | None = None  # ctfd, gamemaster: the NAME of the variable that holds the API token
     board: Path | None = None  # manual, gamemaster: the folder board (absolute: ~ expanded, else from the profile's folder)
@@ -203,8 +203,8 @@ class EventProfile:
     source: Path | None = None  # the file it was read from
 
     def __post_init__(self) -> None:
-        if self.platform not in PLATFORMS:
-            raise ValueError(f"platform must be {_or(PLATFORMS)}")
+        if self.platform not in PLATFORMS and not _plugin_name(self.platform):
+            raise ValueError(f"platform must be {_or(PLATFORMS)} or the name of a plugin")
         if self.live_targets not in LIVE_TARGETS:
             raise ValueError(f"live_targets must be {_or(LIVE_TARGETS)}")
         if self.token_env is not None and not _is_env_name(self.token_env):
@@ -221,6 +221,12 @@ class EventProfile:
         if unknown:
             raise ValueError(f"explicit names stages that do not exist: {', '.join(sorted(unknown))}")
         object.__setattr__(self, "explicit", frozenset(self.explicit))
+
+    @property
+    def plugin(self) -> bool:
+        """Whether the platform is a plugin's (plugins/), not one flightdeck has built in. The
+        profile only selects it: the player's config must allow the plugin by that name."""
+        return self.platform not in PLATFORMS
 
 
 @dataclass(frozen=True)
@@ -330,15 +336,18 @@ def check(
         _check_ctfd(profile, requested, env, model_config, refuse, warn)
     elif profile.platform == "gamemaster":
         _check_gamemaster(profile, requested, env, model_config, refuse, warn)
-    else:
+    elif profile.platform == "manual":
         _check_manual(profile, refuse)
+    else:  # a plugin's platform is never played as a folder board
+        refuse.append("event.platform names a plugin's platform, and a run does not play one: `flightdeck plugin pull "
+                      "EVENT.toml` pulls its board and submits nothing")
     if profile.instances is not None:
         why = instances_off(profile, requested)
         if why:
             warn.append(f"the [instances] table does nothing in this run: {why}, so flightdeck starts no instance "
                         "(start one on the site yourself; a lane then works from the files)")
     for key, platforms in _PLATFORM_ONLY.items():
-        if getattr(profile, key) is not None and profile.platform not in platforms:
+        if getattr(profile, key) is not None and profile.platform not in platforms and not profile.plugin:
             warn.append(f'event.{key} is only for platform {_or(platforms)}, so this {profile.platform} profile does not use it')
     agents_on = requested.agents in (Policy.AUTO, Policy.CONFIRM)  # the policies under which play starts lanes
     if not agents_on:
@@ -606,8 +615,10 @@ def describe(
         where = f"ctfd at {_shown_url(profile)}"
     elif profile.platform == "gamemaster":
         where = f"a Game Master at {_shown_url(profile)}"
-    else:
+    elif profile.platform == "manual":
         where = "manual (a folder board)"
+    else:
+        where = "a plugin's platform"
     lines = [f"event     {untrusted(profile.name, one_line=True)} · {where} · {mode}"]
     rules = [
         "AI allowed" if profile.ai_allowed else "no AI",
@@ -738,11 +749,7 @@ def load_profile(path: Path) -> tuple[EventProfile, Policies]:
     stages = _requested(path, _table(path, doc, "policies", required=False))
     profile = EventProfile(
         name=_string(path, event, ("event", "name"), required="the event's name, as the console shows it"),
-        platform=_choice(
-            path, event, ("event", "platform"), PLATFORMS,
-            required='"ctfd" (flightdeck uses CTFd\'s API), "manual" (a folder of challenge folders) or "gamemaster" '
-                     "(a board `flightdeck gm pull` wrote)",
-        ),
+        platform=_platform(path, event),
         url=_url(path, event),
         token_env=_token_env(path, event),
         board=_board(path, event),
@@ -856,6 +863,27 @@ def _choice(path: Path, table: dict, key: tuple[str, str], choices: tuple[str, .
     value = table[key[1]]
     if not isinstance(value, str) or value not in choices:
         raise _error(path, key, f"must be {_or(choices)}{_got(value)}")
+    return value
+
+
+def _plugin_name(value: object) -> bool:
+    """Whether `value` could be the name of a plugin's platform: a name as the config's
+    [plugins] table takes one, and not shaped like a token pasted where the name belongs."""
+    return isinstance(value, str) and PLUGIN_NAME.fullmatch(value) is not None and _TOKEN_SHAPE.fullmatch(value) is None
+
+
+def _platform(path: Path, event: dict) -> str:
+    """event.platform: one flightdeck has built in, or a name that a plugin could have. The
+    value is never shown: only the player's config makes it a plugin's name (check())."""
+    key = ("event", "platform")
+    if "platform" not in event:
+        raise _error(path, key, 'is required: "ctfd" (flightdeck uses CTFd\'s API), "manual" (a folder of challenge folders), '
+                                '"gamemaster" (a board `flightdeck gm pull` wrote) or the name of a plugin you added')
+    value = event["platform"]
+    if value not in PLATFORMS and not _plugin_name(value):
+        names = ", ".join(json.dumps(name) for name in PLATFORMS)
+        raise _error(path, key, f"must be {names} or the name of a plugin you added (lower-case letters, digits, - and _)"
+                                + ("" if isinstance(value, str) else _got(value)))
     return value
 
 
