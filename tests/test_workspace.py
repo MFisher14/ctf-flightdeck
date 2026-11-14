@@ -798,6 +798,7 @@ case "$1" in
       "command -v "*) echo "/usr/bin/${last#command -v }" ;;
       flightdeck-tools)  # the lane's question (workspace._TOOLS): tools.txt is what this image has, tools.fail a docker that fails
         if [ -f "$(dirname "$0")/tools.fail" ]; then echo "Error response from daemon: no" >&2; exit 126; fi
+        if [ -f "$(dirname "$0")/tools.hang" ]; then exec sleep 300; fi  # an image whose r2 never answers
         cat "$(dirname "$0")/tools.txt" 2>/dev/null ;;
       *) exit 1 ;;
     esac ;;
@@ -884,6 +885,21 @@ def test_an_image_that_does_not_say_what_it_has_gets_no_programs_named_and_a_lin
     assert ws.shell_tools == ()
     assert (ws.root / ".flightdeck" / "prepare.log").read_text().splitlines()[-1] == (
         f"image {FAKE_IMAGE} did not say which analysis programs it has (docker exec exited 126): this lane's brief names none"
+    )
+
+
+def test_an_image_that_never_says_what_it_has_still_gets_its_lane_started(fake_docker, tmp_path, handout, monkeypatch):
+    """The question is optional: a container that does not answer it in time (a slow docker, an
+    r2 that hangs loading a plugin) is a lane whose brief names no program, not a lane that ends."""
+    monkeypatch.setattr(workspace_module, "TOOLS_PROBE_TIMEOUT", 1.0)
+    (fake_docker / "tools.hang").write_text("")
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker", probe_tools=True)
+    run(ws.prepare())  # the lane still starts
+    run(ws.close())
+    assert ws.shell_tools == ()
+    assert (ws.root / ".flightdeck" / "prepare.log").read_text().splitlines()[-1] == (
+        f"image {FAKE_IMAGE} did not say which analysis programs it has (docker exec did not finish within 1 s): "
+        "this lane's brief names none"
     )
 
 

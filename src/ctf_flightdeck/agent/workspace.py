@@ -62,6 +62,7 @@ OUTPUT_CAP = 10 * 1024 * 1024  # bytes of a command's output kept; the rest is d
 NOT_RUN = 126  # the exit status of a command the host runtime could not start (bash's "cannot execute")
 DOCKER_BACKSTOP = 15.0  # seconds past a command's own timeout before the docker exec client is killed
 DOCKER_CALL_TIMEOUT = 60.0  # seconds for docker's own housekeeping calls (run, inspect, rm)
+TOOLS_PROBE_TIMEOUT = 30.0  # seconds a lane's container has to say which analysis programs it has (_TOOLS)
 RECORD_NOTES = 5.0  # seconds between a host workspace's notes of what runs in its process groups (its run's record)
 
 SNAPSHOT_FILES = 5000
@@ -946,13 +947,19 @@ class DockerWorkspace:
             add_to_log(self.root, f"python3 is not in image {self.image}: the python tool will not work in this lane "
                                   "(`flightdeck image build` builds the lane image, which has it)")
         if self.probe_tools:
-            code, out = await _docker("exec", self.name, "bash", "-c", _TOOLS, "flightdeck-tools")
-            if code == 0:
-                said = out.split()
-                self.shell_tools = tuple(tool for tool in SHELL_TOOLS if tool in said)
-            else:  # the lane runs all the same: its brief names no program, and the log says why
-                add_to_log(self.root, f"image {self.image} did not say which analysis programs it has (docker exec exited "
-                                      f"{code}): this lane's brief names none")
+            # The lane runs all the same when the image does not answer: its brief names no program, and the log says why.
+            try:
+                code, out = await _docker("exec", self.name, "bash", "-c", _TOOLS, "flightdeck-tools", timeout=TOOLS_PROBE_TIMEOUT)
+            except WorkspaceError as exc:
+                add_to_log(self.root, f"image {self.image} did not say which analysis programs it has ({exc}): "
+                                      "this lane's brief names none")
+            else:
+                if code == 0:
+                    said = out.split()
+                    self.shell_tools = tuple(tool for tool in SHELL_TOOLS if tool in said)
+                else:
+                    add_to_log(self.root, f"image {self.image} did not say which analysis programs it has (docker exec "
+                                          f"exited {code}): this lane's brief names none")
         self._ready = True
 
     async def run(self, command: str, *, timeout: float, stdin: bytes | None = None) -> RunResult:
