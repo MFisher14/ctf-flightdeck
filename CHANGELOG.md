@@ -25,6 +25,11 @@ screen, `flightdeck start` sets an event up, and `/new` hands a challenge to a l
 - `flightdeck vpn add|up|status|down` keeps an event's WireGuard or OpenVPN file and connects
   it; `flightdeck start` asks for the file and `flightdeck play` offers to connect it. A missing
   `wg-quick` or `openvpn` is installed with your package manager, on your yes.
+- flightdeck connects only a VPN file you added (`vpn add`, or the VPN answer of `start`): one
+  merely found in a folder you play, or changed since, is said to be unverified and is left
+  alone. Lines of the file that run a program as root (`PostUp`, `up`, `plugin` and the like)
+  are shown and asked about first, with no as the default; `--yes` does not answer for them.
+  `vpn down` stops only the OpenVPN flightdeck started; a stale `vpn.pid` is removed, not killed.
 
 - A board you fill yourself can start empty, and `/new` in the console hands a challenge to a
   lane: its name, then one box for its description, its files and screenshots (dragged in) and

@@ -625,6 +625,22 @@ flightdeck vpn status ~/ctf/example-ctf
 flightdeck vpn down ~/ctf/example-ctf
 ```
 
+A VPN file can run programs as root (WireGuard's `PreUp`, `PostUp`, `PreDown` and `PostDown`
+lines; OpenVPN's `up` and `down` scripts, `plugin`, `script-security 2` and their kin), so
+flightdeck is careful with one:
+
+- It connects only a file you added: with `flightdeck vpn add`, or as the VPN answer of
+  `flightdeck start` or the home screen's form. A `vpn.conf` or `vpn.ovpn` that is merely in a
+  folder you play (a board somebody shared), or that changed since you added it, is
+  unverified: `play` says so and connects nothing, and `vpn up` refuses. Read the file, then
+  `flightdeck vpn add FOLDER FILE` adds it (again).
+- Before it connects, it shows every line of the file that runs a program as root, as written,
+  and asks, with no as the answer if you only press Enter. `--yes` does not answer that
+  question, and with no terminal to ask at (a script, `--headless`) the file is not connected.
+- `vpn down` stops an OpenVPN only when it is the one flightdeck started for that file (it
+  checks the process with `ps`). A `vpn.pid` left from before a reboot, or naming some other
+  program, is removed and reported as not connected; nothing is stopped.
+
 The VPN is this machine's. Lanes on the host runtime use it as any program does. A Docker
 lane reaches a target through flightdeck's fence, which leaves by this machine's routes; if a
 target you can reach from your shell is not reached from a Docker lane, play with `--host`.
