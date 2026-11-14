@@ -3,7 +3,8 @@
 Everything a player needs after the [README](../README.md)'s quickstart: where lanes run, models
 and keys, the console, boards, your own solvers, events and teams, coding-agent lanes, and what a
 run leaves behind. Deeper pages: [Model APIs](MODEL-APIS.md), [Models](MODELS.md),
-[Boards](BOARDS.md), [Solvers](SOLVERS.md) and the [console spec](CONSOLE-SPEC.md).
+[Boards](BOARDS.md), [Solvers](SOLVERS.md), [Plugins](PLUGINS.md) and the
+[console spec](CONSOLE-SPEC.md).
 
 ## Install and first run
 
@@ -182,6 +183,12 @@ can read the practice set's reference solutions in a clone of this repository.
   `auto`, `confirm`, `manual` or `off`.
 - **Run folder**: where a run's event log, transcripts and reports go
   (`~/.local/share/ctf-flightdeck/runs/`).
+- **Layout**: how the console is laid out: `simple` (the default: one list of lanes and what
+  needs you) or `deck` (the whole dashboard, with the board). **Theme**: its colours
+  ([The console](#the-console)).
+- **Plugin**: a small program of your own that lets flightdeck play an event on a platform it
+  does not know ([Plugins](PLUGINS.md)). Not a pack: a pack solves challenges, a plugin talks
+  to the platform.
 
 ## Models and keys
 
@@ -247,11 +254,12 @@ at each job: [Models](MODELS.md).
 
 ## The console
 
-The console raises an alert when a lane spends big on a low-value challenge, ignores what the
+The console opens on one list of your lanes (the simple layout; [Layouts](#layouts) has the
+other one). It raises an alert when a lane spends big on a low-value challenge, ignores what the
 description hints at, heads the wrong way on web, loops or stalls. Lanes that need you sort
 first, and the line under the list says why and numbers the answers: one key answers.
 
-![A wave of 43 challenges: 16 lanes run and 33 wait in the queue. The selected lane ignores the description's hint of slow-scan TV, and the line under the list offers 1 to redirect it to the hinted technique and 2 to send a hint](screenshots/alert-hint.png)
+![A wave of 43 challenges in the simple layout: 16 lanes run and 33 challenges wait. The selected lane ignores the description's hint of slow-scan TV, and the line under the list offers 1 to redirect it to the hinted technique, 2 to send a hint and x to dismiss the alert](screenshots/simple-alert.png)
 
 *An alert with its quick answers, from `flightdeck mock` (invented challenges).*
 
@@ -259,7 +267,7 @@ first, and the line under the list says why and numbers the answers: one key ans
 box (plain text is a message to the lane; `/redirect`, `/approve`, `/diff` and the rest are
 commands; `esc` goes back).
 
-![One lane full screen: its commands and their output, a needs-you box with two numbered answers, the files it changed and the diff of one of them, and the chat box](screenshots/lane.png)
+![One lane full screen: the two other lanes that need you, its commands and their output, a needs-you box with two numbered answers, the files it changed and the diff of one of them, and the chat box](screenshots/simple-lane.png)
 
 *A lane full screen, from `flightdeck mock` (invented challenges).*
 
@@ -299,11 +307,135 @@ gets this layout and what it leaves out.
 
 `q` asks first while lanes are open, and a run cannot be resumed.
 
-The fleet's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,
+The lane list's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,
 `e` escalate, `t` take over, `a` approve, `d` decline, `x` dismiss, `1`-`9`/`0` quick answers,
 `c` claim (team), `/` commands, `s` sort, `?` help (every key and command), `q` quit; `A`
-approves every waiting flag; **Enter** opens the lane full screen. The whole design is in the
+approves every waiting flag; **Enter** opens the lane full screen. They act in both layouts; the
+simple layout's key line shows only the ones that apply now. The whole design is in the
 [console spec](CONSOLE-SPEC.md).
+
+### Layouts
+
+The console has two layouts.
+
+**simple** (the default) shows what needs you and little else:
+
+- a short header: the event, `team` in team mode, `host` when lanes run on this machine, the
+  queue when challenges wait, `AUTOPILOT` while it is engaged, `▲ N need you`, a held queue and
+  why, and the run's dollars;
+- one list of lanes: what each needs from you, the lane, its challenge, state, cost and last
+  action. Its title counts the lanes, the challenges that wait and the ones solved;
+- under the list, why the selected lane is flagged and its numbered answers; nothing for a lane
+  that needs nothing;
+- a key line of the keys that apply to the selected lane now: `a approve` and `d decline` while
+  it waits for you, `1-9 answer` and `x dismiss` for an alert, then `enter open`, `/ commands`,
+  `? help` and `q quit`. Every other key still acts, and `?` lists them all.
+
+A lane's own view shows a part only when it has something in it: the files pane once the lane
+has changed a file, the strip of other lanes while one of them needs you. Its title has the
+lane's model, turns, tokens and idle time, which the list leaves out.
+
+**deck** is the whole dashboard: the board of every challenge beside the lanes, each lane's
+model, turns and idle time in its row, tokens and the event clock in the header, and every key
+on the key line.
+
+![The deck layout: the board of eight challenges on the left and six lanes on the right with their model, turns, cost and idle time](screenshots/fleet.png)
+
+*The deck layout, from `flightdeck mock` (invented challenges).*
+
+Choose one in your config, or switch in a running console:
+
+```toml
+[console]
+layout = "deck"     # "simple" (the default) or "deck"
+```
+
+`/layout deck` and `/layout simple` switch for the rest of the run, and `/layout` alone goes to
+the other one; the selection, the filter and anything you were typing stay. The status line
+says which line in your config keeps it. At 64 columns or fewer the compact layout (below)
+shows, whichever you chose. `flightdeck mock` opens in your config's layout too, and
+`flightdeck doctor` measures your terminal in it.
+
+In both layouts an empty board says what to do in the page itself: `No challenges yet. Type
+/new to hand one over (its text, files, a screenshot).` on a board you fill, or that the
+challenges appear when the event releases them. In the simple layout, on a board you fill, the
+first lane your `/new` starts opens full screen, so you watch the challenge you just handed
+over; later ones start in the list.
+
+### Themes
+
+A theme is the console's colours; the layout, the chips and the marks stay as they are.
+
+```toml
+[console]
+theme = "nord"      # flightdeck (the default), light, nord, gruvbox, dracula, or your own
+```
+
+`/theme` in a running console lists the themes and marks the one in use; `/theme nord` repaints
+everything for the rest of the run, and the status line says which line in your config keeps
+it. `flightdeck mock` and the home screen open in your config's theme.
+
+![The deck layout in the light theme](screenshots/theme-light.png)
+
+*`theme = "light"`, from `flightdeck mock` (invented challenges).*
+
+**Your own theme** is a file `NAME.toml` in a `themes` folder beside your config
+(`~/.config/ctf-flightdeck/themes/dusk.toml` for `theme = "dusk"`). The name is lower-case
+letters, digits, `-` and `_`, and not a built-in's. The smallest one starts from a built-in and
+changes one colour:
+
+```toml
+base = "flightdeck"
+
+[colors]
+accent = "#ff5fd7"
+```
+
+Every key:
+
+```toml
+base = "flightdeck"     # optional: a built-in theme; the colours you leave out come from it
+dark = true             # is the page dark? Required when there is no base
+syntax = "monokai"      # the Pygments style of the diff view. Required when there is no base
+
+[colors]                # each written "#rrggbb"; all 17 are required when there is no base
+page = "#1a1b26"            # behind everything
+surface = "#24283b"         # dialogs, the command menu
+border = "#414868"
+text = "#c0caf5"
+muted = "#7f88b0"           # labels, hints, finished lanes
+accent = "#ff9e64"          # keys, the focused border, your own messages
+selected = "#283457"        # the selected row
+selected_focus = "#33467c"  # the selected row of the list that has the focus
+brand = "#3d6fd9"           # the flightdeck segment, "sending", flightdeck's own lines
+segment = "#2f334d"         # header segments
+ok = "#9ece6a"              # running, solved, a flag
+error = "#e0566f"           # killed, blocked, alerts about a lane's course, "need you"
+warn = "#e0af68"            # paused, parked, a held queue, problems
+info = "#7dcfff"            # teammates, model names, take-over
+pending = "#9d7cd8"         # what waits for you
+ink = "#15161e"             # the text on ok, warn, accent and info chips
+ink_light = "#ffffff"       # the text on brand, error and pending chips
+```
+
+A theme you could not read the console in is refused. flightdeck checks 19 pairs of colours
+that you must be able to tell apart (the text of each chip on its chip, the text on the page
+and on a selected row, each state's colour on the page), and each needs a contrast of at least
+3.0, the WCAG floor for large text. The error names the pair and what it shows:
+
+```
+/home/you/.config/ctf-flightdeck/themes/dusk.toml: colors.ink_light on colors.error has contrast 2.1, under 3.0: "▲ N need you" could not be read
+```
+
+Other mistakes are named the same way, with the file and the key and never a value from the
+file: an unknown key (`unknown key colors.acent`, with the known ones), a colour that is not
+`#` and six hex digits, colours missing when there is no `base`, a `base` that is not a
+built-in, a `syntax` that names no Pygments style, a file over 64 KiB. A theme that cannot be
+used stops the command that loads your config (`play`, `doctor`, `mock`, the home screen)
+with that error; flightdeck never falls back to the default without telling you. In a running
+console, `/theme NAME` with a broken or unknown theme is a warning, and the theme in use stays.
+`/theme NAME` reads the file again each time, so you can edit a theme and try it without
+leaving the run.
 
 ## Play a board
 
@@ -682,8 +814,23 @@ export CTFD_TOKEN=...                             # the variable event.toml name
 flightdeck play ~/ctf/event-board --event event.toml
 ```
 
-flightdeck talks to CTFd and to a Game Master. For any other platform, make a folder board (`platform = "manual"` in
-`event.toml`) and submit flags by hand.
+flightdeck talks to CTFd and to a Game Master. For any other platform there are two ways. By
+hand: a folder board (`platform = "manual"` in `event.toml`), and you submit the flags on the
+site. Or through a **plugin**: a small adapter of your own, which flightdeck runs to pull the
+board, submit the flags you approve and read the solved list:
+
+```sh
+flightdeck plugin new myctf                        # writes ./myctf/: plugin.toml, adapter.py, event.example.toml
+flightdeck plugin add ./myctf                      # shows what it runs and what it gets, and asks before your config allows it
+flightdeck plugin pull ~/ctf/quals/event.toml      # tries it: pulls the board, submits nothing
+flightdeck play --event ~/ctf/quals/event.toml     # event.toml says platform = "myctf"
+```
+
+A plugin is code you choose to run: it runs on this machine as you, is given the event's
+address and token and none of your other keys, and is not sandboxed. Only `flightdeck plugin
+add` allows one, in your own config; an event profile someone sends you can select a plugin you
+added, never add one. flightdeck never downloads or installs a plugin. How to write one, what
+it is sent and what each answer means: [Plugins](PLUGINS.md).
 
 With a CTFd event, flightdeck pulls the board into that folder (and, with `pull = "auto"`, adds
 new waves as they appear), submits the flags you approve through CTFd and follows your team's
@@ -882,6 +1029,12 @@ the file `$FLIGHTDECK_KEYS` names). Each run writes a folder under
 `~/.local/share/ctf-flightdeck/runs/` (`[run] dir`, or `--run-dir`). flightdeck keeps notes of its
 own in `~/.local/state/ctf-flightdeck/` (or under `$XDG_STATE_HOME`). `l1 import` writes manifests
 into `FOLDER/.flightdeck/generated/`.
+
+Two optional parts of the config are about the console and about platforms. `[console]` has
+`layout` and `theme` ([Layouts](#layouts), [Themes](#themes)); your own themes are `NAME.toml`
+files in a `themes` folder beside the config file, read only when the config or `/theme` names
+one. `[plugins.NAME]` tables, each with the `path` of a plugin's folder, are written by
+`flightdeck plugin add` ([Plugins](PLUGINS.md)); to stop allowing a plugin, take its table out.
 
 To remove flightdeck: `pipx uninstall ctf-flightdeck` (or `uv tool uninstall ctf-flightdeck`),
 `docker image rm ctf-flightdeck-lane:1`, and delete those folders.
