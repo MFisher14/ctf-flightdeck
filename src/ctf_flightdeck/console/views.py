@@ -369,6 +369,13 @@ HEADER_WORDS = {  # the pieces that can drop, as doctor names them (console/room
 COMPACT_HEADER_OMITS = ("tokens", "clock", "event", "mock", "runtime")  # never in the compact header, in their usual drop order
 
 
+def plain(text: str, colour: str = "") -> tuple[str, str, str, bool]:
+    """A header piece drawn as text on the page, not as a block: the simple layout's for what
+    is not "look here" (P66). `colour` is the text's (the palette's text by default); each pair
+    it makes with the page is one a theme is checked for (themes.CONTRAST)."""
+    return (text, colour or theme.TEXT, theme.PAGE, False)
+
+
 def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = False) -> list[tuple[str, int, tuple[str, str, str, bool]]]:
     """(name, drop rank, segment) for each piece, in order. Rank 0 never drops; on a narrow
     terminal the highest rank drops first, the later piece first on a tie (D16). The compact
@@ -378,7 +385,9 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = F
     The simple layout's header (`simple`; the compact one wins over it) says only what is not
     the usual: team mode, lanes on the host, a queue that is not empty, autopilot, who needs
     the player, a held queue. Those last three and the dollars never drop. It has no solo,
-    docker, lane count, "all clear", tokens or clock."""
+    docker, lane count, "all clear", tokens or clock. Only "look here" has a background in it
+    (P66): flightdeck, host, AUTOPILOT, the need-you count and a held queue. The event's name,
+    team, the queue and the dollars are text on the page (plain()), and the mock tag muted."""
     if compact:
         out = [
             ("flightdeck", 2, ("flightdeck", theme.WHITE, theme.BLUE, True)),
@@ -388,16 +397,16 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = F
     elif simple:
         out = [
             ("flightdeck", 0, ("flightdeck", theme.WHITE, theme.BLUE, True)),
-            ("event", 3, (untrusted(facts.event, one_line=True), theme.TEXT, theme.SEGMENT, True)),
+            ("event", 3, plain(untrusted(facts.event, one_line=True))),
         ]
         if facts.mock:
-            out.append(("mock", 2, (facts.mock, theme.INK, theme.ACCENT, True)))
+            out.append(("mock", 2, plain(facts.mock, theme.MUTED)))
         if facts.team:
-            out.append(("team", 1, ("team", theme.CYAN, theme.SEGMENT, True)))
+            out.append(("team", 1, plain("team", theme.CYAN)))
         if not facts.containerized:
             out.append(("host", 1, ("host", theme.INK, theme.YELLOW, True)))
         if facts.queue:
-            out.append(("queue", 1, (f"queue {facts.queue}", theme.TEXT, theme.SEGMENT, False)))
+            out.append(("queue", 1, plain(f"queue {facts.queue}")))
     else:
         out = [
             ("flightdeck", 0, ("flightdeck", theme.WHITE, theme.BLUE, True)),
@@ -420,7 +429,7 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = F
         out.append(("held", 0, (HELD, theme.INK, theme.YELLOW, True)))
     dollars = f"${fmt.dollars(facts.dollars)}" + ("+" if facts.unpriced else "") + (LATER if facts.later else "")  # as lane_dollars
     if compact or simple:
-        out.append(("dollars", 0, (dollars, theme.TEXT, theme.SEGMENT, False)))
+        out.append(("dollars", 0, plain(dollars) if simple and not compact else (dollars, theme.TEXT, theme.SEGMENT, False)))
         return out
     out += [
         ("tokens", 4, (f"tok {fmt.tokens(facts.tokens)}", theme.TEXT, theme.SEGMENT, False)),
