@@ -25,12 +25,13 @@ A wave has landed: the header has the queue because it is not empty, and the lis
 the challenges that wait and the ones solved. The selected lane's alert has numbered answers, so
 the key line leads with `1-9 answer` and `x dismiss`.
 
-![A lane full screen in the simple layout: the strip of two other lanes that need you; the calm transcript, 6 tool calls and the last of them, the alert's name and turn, 12 tool calls and the last of them; the needs-you card with two numbered answers; the files the lane changed with a diff; and a key line of answer, esc lanes, commands, /help and ctrl+o details](screenshots/simple-lane.png)
+![A lane full screen in the simple layout: the strip of two other lanes that need you; the calm transcript, 6 tool calls and the last of them, the alert's name and turn, 12 tool calls and the last of them; the needs-you card in two rows, the alert with its reason and its two numbered answers; the files the lane changed with a diff; and a key line of answer, esc lanes, commands, /help and ctrl+o details](screenshots/simple-lane.png)
 
 `enter` opens a lane. In the simple layout the view shows a part only when it has something in
 it: the strip on top while another lane needs you, the card while this one does, the files pane
 once the lane has changed a file. Its transcript is calm, a row for each thing the lane did and
-two for a run of tool calls; `ctrl+o` shows every line, as the deck layout's lane does below.
+two for a run of tool calls, and so is its card: what the lane asks, and the numbered answers.
+`ctrl+o` shows every line and the full card, as the deck layout's lane does below.
 
 ## The fleet (the deck layout)
 

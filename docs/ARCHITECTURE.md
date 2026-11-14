@@ -182,6 +182,18 @@ the rows are mounted again while the player reads back. What is mounted is a win
 go, and while the player reads back the rows before and after the window are counted in a
 first and a last row, where `pgup` and `pgdn` move it 300 rows.
 
+**The lane's card** (P54). `views.now_card()` draws what the lane needs from the player. Its
+full form is a Rich panel: the approval's rows first, then every open alert with its
+suggestions as commands. With `calm=True` (details off, and never in the compact layout) it
+returns the rows of `views.calm_card()` as Text: the question, its numbered answers in the
+order of `views.quick_answers()`, and what else is open (`ALSO_WORDS`). `calm_card` takes the
+width a row has and shortens the quotes of the answers row to it, so the edge cuts no numbered
+answer away. `FocusScreen._show_card()` puts the card in a Static (`#now`), which for the calm
+card has a border in `views.card_border()`'s colour, the title "needs you now" and rows that
+never wrap; the Static is inside `CardScroll` (`#now-scroll`), which carries the card's share
+of the pane and scrolls a card taller than that. The box tells the view when its width changes
+(`card_resized()`), and the calm card is drawn again for it.
+
 **Themes** (P52). `themes.py` is pure (no rich, no textual), so the config can load a palette
 without a console: `Palette` (17 colours by role, `dark`, the diff view's `syntax` style),
 `BUILTIN`, `parse()` and `load()` for a theme file, and `weak_pairs()`, the rows of `CONTRAST`

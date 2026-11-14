@@ -102,9 +102,10 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   at once, so a long lane redraws as fast as a short one: read back while the lane goes on, or
   far back, and the last row says how many later entries there are, and `pgdn` there shows 300
   more.
-- **Details** (`ctrl+o`, or `/details`): the view's one switch. On, the transcript is as above:
-  every line the lane's log keeps. Off, it is calm: one row for each entry, cut at the edge of
-  the pane with `…` and never wrapped.
+- **Details** (`ctrl+o`, or `/details`): the view's one switch, for the transcript and the
+  needs-you card together. On, the transcript is as above: every line the lane's log keeps.
+  Off, it is calm: one row for each entry, cut at the edge of the pane with `…` and never
+  wrapped. The card with details off is under Needs you now, below.
 
   | Entry | Drawn as, with details off |
   |---|---|
@@ -125,9 +126,30 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   `simple` (Layouts, below), follows the layout on a `/layout`, and stays as you set it once you
   have set it by hand in that view; reading back, the entry you were on stays in view when it
   turns.
-- **Needs you now**: the lane's open alerts with their reasons and the suggested answers as commands
-  (`/dismiss` under the alert it would take down).
-  It takes at most half the pane, so the transcript keeps its rows on a small terminal.
+- **Needs you now**: with details on, the full card. First the approval the lane waits for,
+  with `1 /approve` and `0 /decline` (and `then:` for each approval after it); then the lane's
+  open alerts, the most urgent first, with their reasons and the suggested answers as commands
+  (`/dismiss` under the alert it would take down); then the messages it has not read yet.
+  It takes at most half the pane, so the transcript keeps its rows on a small terminal. A card
+  taller than that scrolls in its half (the mouse wheel), from its first rows: the approval and
+  its two answers are the ones in view.
+
+  With details off the card is calm: three rows at most, each cut at the card's edge with `…`,
+  and never a list of commands. Not in the compact layout, whose card keeps its own form.
+
+  | Row | Drawn as, with details off |
+  |---|---|
+  | 1, the question | the approval the lane waits for: `◆ waiting for you: raise the cap by 50% (now 424k of 400k tokens)`. With none, its most urgent alert that wants an answer, and the reason: `▲ Loop: The same command ran 6 times in the last 6 turns: …` |
+  | 2, its answers | `  1 more budget   0 stop the lane` for an approval (a flag: `  1 submit it   0 do not submit`). For an alert, `  1 hint "You are repeating python3 solve.py: it gives the…"   2 kill and re-queue fresh   /dismiss not a problem`: the numbers a digit answers, each with its label; an answer that sends its text at once (a hint, a new plan, a fork's approach) quotes the first 48 characters of it; three answers, then `+2 more`; `/dismiss not a problem` for an alert about the lane's course |
+  | 3, only when something else is open | `  also: looping · past its effort budget · stalled   ctrl+o shows all`: each other alert in a word or two (`looping`, `past its effort budget`, `ignores the hint`, `wrong direction`, `stalled`, `near its cap`, `a flag to check`, `teammate`), then `1 more approval after this one` and `2 messages it has not read yet`. The alert an approval is about (its budget, its flag) is not named beside it |
+
+  In a card too narrow for row 2, the quotes shorten together until the row fits, down to 12
+  characters, and then there are none: the edge never cuts a numbered answer away to keep a
+  quote. With no question (no approval, no alert that wants an answer) the card is the message
+  the lane has not read yet (`› sent, not read yet: TEXT`), or how many (`› 2 messages sent,
+  not read yet   ctrl+o shows all`), under the row of an alert that needs no answer. The
+  border and its title are as on the full card: the colour of the most urgent alert that wants
+  an answer, else the approval's. A suggestion with no key (advice only) is on the full card.
 - **Files changed**: the files the lane wrote or edited, with the diff of the selected one.
 - **Chat box**: plain text is a message the lane reads on its next turn; `/` runs a command. Typing
   reaches it from any pane. An unsent message stays with its lane when you switch lanes.
@@ -199,8 +221,9 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
 - **Focus view.** A part shows only when it has something in it: the files pane once the lane
   has changed a file, the strip of other lanes while one of them needs the player, the
   needs-you card while this lane does. The title is the same as in `deck` (the lane, its
-  challenge, model, state, turns, tokens, cost and idle time). The transcript is calm: details
-  start off (Focus view, above), and `ctrl+o` shows every line. Key line: `esc lanes  / commands
+  challenge, model, state, turns, tokens, cost and idle time). The transcript and the
+  needs-you card are calm: details start off (Focus view, above), and `ctrl+o` shows every line
+  and the full card. Key line: `esc lanes  / commands
   /help all keys  ctrl+o details`, with `1-9 answer` first while the lane has numbered answers
   (67 columns with the answers; narrower, the edge cuts `ctrl+o details` first, and `/help`
   still lists it). The empty chat box names the lane a message goes to (`message L01 · /
@@ -278,7 +301,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 | `1`-`9` | | Quick answers: the numbers in the why line and the needs-you card; one key, no enter (focus view: only while the chat box is empty) |
 | `c` | `/claim [challenge]` | Team mode: claim or release a challenge |
 | enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back` returns) |
-| `ctrl+o` (focus) | `/details` | In a lane's focus view: details on or off. On: every line of the transcript; off: one row for each entry, a run of tool calls on two. Typed in the fleet, `/details` says it is that view's |
+| `ctrl+o` (focus) | `/details` | In a lane's focus view: details on or off. On: every line of the transcript, and the full needs-you card; off: one row for each entry, a run of tool calls on two, and the card in three rows at most. Typed in the fleet, `/details` says it is that view's |
 |  | `/diff [file]` | Show the files the lane changed |
 |  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` | Alone: a dialog with this run's settings (lanes at once, what happens to a flag); Enter applies, esc cancels. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run. |
 |  | `/layout [simple\|deck]` | The console's layout for the rest of this run: `simple` (one list of lanes, what needs you, the keys that apply now) or `deck` (the board and every column); alone, the other one. The status line says the config line that keeps it (`layout = "deck"` under `[console]`), and that the compact layout shows when the terminal is narrow. Any other word is refused: `/layout takes simple or deck`. |
@@ -443,10 +466,11 @@ matters there: what needs you and why, the one-key answers, and each lane's stat
 - **Key lines.** Fleet: `a yes  d no  1-9 answer  / cmd  ? help  q quit`. Focus: `esc fleet
   1-9 0 answer  / cmd  ctrl+n next`. Every other key still works (`?` lists them): only the line
   is shorter.
-- **Focus view.** One pane: the needs-you card on top (six tenths of the pane at most), the
-  transcript under it; the title has the lane, its state and its cost first, then the challenge.
-  On the card the reasons wrap and each answer is one row, its number first and its command cut
-  at the edge. The files pane is hidden, and `/diff` says so (widen the terminal to read a diff). The strip of other
+- **Focus view.** One pane: the needs-you card on top (six tenths of the pane at most; a taller
+  card scrolls there), the transcript under it; the title has the lane, its state and its cost
+  first, then the challenge.
+  On the card the approval and its two answers come first, the reasons wrap, and each answer is
+  one row, its number first and its command cut at the edge. The files pane is hidden, and `/diff` says so (widen the terminal to read a diff). The strip of other
   lanes needing you is `N more need you (ctrl+n):` and their chips. Details start on, in
   `simple` too; `ctrl+o` gives the calm transcript, and the card keeps this form.
 - Panels lose their side margin and padding, and the gaps under the header and over the why
