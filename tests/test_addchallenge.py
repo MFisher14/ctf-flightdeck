@@ -1225,6 +1225,84 @@ def test_new_and_attach_copy_in_a_thread_and_say_so_while_the_console_goes_on(tm
     in_console(tmp_path, body, busy_lanes())
 
 
+def slow_create(monkeypatch, *, refuse: str = ""):
+    """addchallenge.create takes its time (until `go` is set), as a disk image's copy would;
+    with `refuse`, it then refuses with that. Returns (go, the threads it ran in)."""
+    import threading
+
+    go, threads, create = threading.Event(), [], addchallenge.create
+
+    def slow(*args):
+        threads.append(threading.current_thread())
+        go.wait(5)
+        if refuse:
+            raise AddError(refuse)
+        return create(*args)
+
+    monkeypatch.setattr(addchallenge, "create", slow)
+    return go, threads
+
+
+def test_while_it_is_being_added_the_files_cannot_change_and_the_dropped_copy_stays_for_the_adder(tmp_path, monkeypatch):
+    handout, more = tmp_path / "shot.bin", tmp_path / "more.bin"  # not images: an image's lane reads it first, after the form closed
+    handout.write_bytes(b"bin")
+    more.write_bytes(b"more")
+    go, threads = slow_create(monkeypatch)
+
+    async def body(run, app, pilot):
+        try:
+            await pilot.press(*"/new Shot", "enter")
+            await pilot.pause()
+            form = app.screen
+            await app.on_event(events.Paste(f"{handout} "))
+            await until(pilot, lambda: form.files == [copy_of(run, "shot.bin")])
+            await pilot.press("ctrl+s")
+            await until(pilot, lambda: len(threads) == 1)
+            await pilot.press("ctrl+r")  # the adder is reading the copy now
+            await pilot.pause()
+            assert "still adding it" in said(form) and form.files == [copy_of(run, "shot.bin")]
+            assert copy_of(run, "shot.bin").is_file()  # not taken from under the adder
+            await app.on_event(events.Paste(f"{more} "))  # a drop now would not be added: refused, and not text in the box
+            await pilot.pause()
+            assert "still adding it" in said(form) and form.files == [copy_of(run, "shot.bin")]
+            assert form.query_one("#new-text").text == "" and not (run.dir / "dropped" / "2").exists()
+            go.set()
+            await until(pilot, lambda: app._status is not None and "added shot: 1 file" in app._status[0])
+            assert (run.options.board / "shot" / "shot.bin").read_bytes() == b"bin"
+            # the simple layout opens the run's first lane: the test ends once its view is up
+            await until(pilot, lambda: type(app.screen).__name__ == "FocusScreen" and getattr(app.focused, "id", None) == "bar-input")
+        finally:
+            go.set()
+
+    in_console(tmp_path, body, busy_lanes())
+
+
+def test_a_dropped_copy_is_removed_when_the_form_was_closed_and_the_add_is_refused(tmp_path, monkeypatch):
+    handout = tmp_path / "shot.bin"
+    handout.write_bytes(b"bin")
+    go, threads = slow_create(monkeypatch, refuse="the board's folder cannot be written")
+
+    async def body(run, app, pilot):
+        try:
+            await pilot.press(*"/new Shot", "enter")
+            await pilot.pause()
+            form = app.screen
+            await app.on_event(events.Paste(f"{handout} "))
+            await until(pilot, lambda: form.files == [copy_of(run, "shot.bin")])
+            await pilot.press("ctrl+s")
+            await until(pilot, lambda: len(threads) == 1)
+            await pilot.press("escape")  # closed while it is added: the copy stays for the adder
+            await pilot.pause()
+            assert app.screen is not form and copy_of(run, "shot.bin").is_file()
+            go.set()
+            await until(pilot, lambda: "cannot be written" in app._status[0])
+            await until(pilot, lambda: not copy_of(run, "shot.bin").parent.exists())  # nothing will attach it now
+        finally:
+            go.set()
+
+    in_console(tmp_path, body, busy_lanes())
+
+
 def test_a_challenge_added_with_nothing_says_so_and_its_lane_is_told_to_stop_not_wait(tmp_path):
     from fake_model import text_reply
 
