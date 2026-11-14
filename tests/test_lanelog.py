@@ -12,7 +12,7 @@ from ctf_flightdeck.agent import tools
 from ctf_flightdeck.console import focus, room, theme, views
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.fleet import FleetScreen
-from ctf_flightdeck.console.lanelog import MOUNTED, LaneLog, RowText
+from ctf_flightdeck.console.lanelog import MOUNTED, WINDOW, LaneLog, RowText
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
@@ -615,20 +615,127 @@ def test_a_long_transcript_mounts_its_newest_entries_and_page_up_at_the_top_moun
         app.refresh_view()
         await pilot.pause()
         assert drawn(app)[1] == f"⏺ words {100 - log.region.height}" and log.texts()[-1] == "⏺ and another"
-        for i in range(2 * MOUNTED):  # reading back, every entry that comes stays mounted: nothing moves under the player
-            says(deck, f"later words {i}")
-        app.refresh_view()
-        await pilot.pause()
-        assert log.earlier == 0 and len(log.texts()) == len(lane.actions) and drawn(app)[1] == f"⏺ words {100 - log.region.height}"
         log.scroll_end(animate=False)  # at the end again, the log lets the oldest go once it holds twice what it mounts
         await pilot.pause()
         await press(pilot, "pagedown")
-        assert log.scroll_y == log.max_scroll_y
+        assert log.scroll_y == log.max_scroll_y and drawn(app)[-1] == "⏺ and another"
+        for i in range(WINDOW - len(lane.actions)):
+            says(deck, f"later words {i}")
+        app.refresh_view()
+        await pilot.pause()
+        assert log.earlier == 0 and len(log.query(RowText)) == len(lane.actions) == WINDOW == 2 * MOUNTED
         says(deck, "the last words")
         app.refresh_view()
         await pilot.pause()
         assert log.earlier == len(lane.actions) - MOUNTED and len(log.query(RowText)) == MOUNTED + 1
         assert log.scroll_y == log.max_scroll_y and drawn(app)[-1] == "⏺ the last words"
+
+    drive(app, script, (100, 24))
+
+
+def test_reading_back_while_the_lane_goes_on_keeps_a_window_mounted_and_page_down_at_its_end_shows_more():
+    deck, app, lane = one_lane("simple")
+    for i in range(100):
+        says(deck, f"words {i}")
+
+    def rows(log: LaneLog) -> int:
+        return len(log.query(RowText))
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        log = log_of(app)
+        await press(pilot, "pageup")  # one page back, and the lane goes on
+        at, top = log.scroll_y, drawn(app)[0]
+        assert at < log.max_scroll_y
+        for i in range(2 * WINDOW):
+            says(deck, f"later words {i}")
+            if i % MOUNTED == 0:
+                app.refresh_view()
+                await pilot.pause()
+                assert rows(log) <= WINDOW + 1
+        app.refresh_view()
+        await pilot.pause()
+        left = len(lane.actions) - WINDOW
+        assert WINDOW == 600 and left == 700 and rows(log) == WINDOW + 1  # the window's entries, and a row for the rest
+        assert log.texts()[0] == "⏺ words 0" and log.texts()[-2:] == ["⏺ later words 499", "· 700 later entries: pgdn here shows them"]
+        assert log.scroll_y == at and drawn(app)[0] == top  # nothing moved under the player
+        says(deck, "one more")
+        app.refresh_view()
+        await pilot.pause()
+        assert log.texts()[-2:] == ["⏺ later words 499", "· 701 later entries: pgdn here shows them"] and rows(log) == WINDOW + 1
+        log.scroll_end(animate=False)  # the end of what is mounted is not the lane's end: the view does not follow from here
+        await pilot.pause()
+        assert drawn(app)[-2:] == ["⏺ later words 499", "· 701 later entries: pgdn here shows them"]
+        says(deck, "and another")
+        app.refresh_view()
+        await pilot.pause()
+        assert drawn(app)[-2:] == ["⏺ later words 499", "· 702 later entries: pgdn here shows them"]
+        first = drawn(app)[0]
+        await press(pilot, "pagedown")  # MOUNTED more under what is mounted, as many fewer above; the player's row stays
+        assert log.texts()[:2] == ["· 300 earlier entries: pgup here shows them", "⏺ later words 200"]
+        assert log.texts()[-2:] == ["⏺ later words 799", "· 402 later entries: pgdn here shows them"] and rows(log) == WINDOW + 2
+        assert drawn(app)[0] == first and drawn(app)[-2:] == ["⏺ later words 499", "⏺ later words 500"]
+        await press(pilot, "pagedown")  # and the next page down is a page
+        assert drawn(app)[0] == "⏺ later words 501"
+        log.scroll_end(animate=False)
+        await pilot.pause()
+        first = drawn(app)[0]
+        log.page(1)
+        log.page(1)  # a held key: the second comes before the rows are laid out, and moves the window no further
+        await pilot.pause()
+        assert log.later == 102 and rows(log) == WINDOW + 2 and drawn(app)[0] == first
+        log.scroll_end(animate=False)
+        await pilot.pause()
+        await press(pilot, "pagedown")  # on to the last of them: nothing later is left out
+        assert log.texts()[-1] == "⏺ and another" and rows(log) == WINDOW + 1 and log.earlier == len(lane.actions) - WINDOW
+        assert log.scroll_y < log.max_scroll_y
+        says(deck, "while still reading back")
+        app.refresh_view()
+        await pilot.pause()
+        assert log.scroll_y < log.max_scroll_y and log.texts()[-1] == "· 1 later entry: pgdn here shows it"
+        for _ in range(2):  # to the end of what is mounted, a page down for the one entry more, and to the lane's end
+            log.scroll_end(animate=False)
+            await pilot.pause()
+            await press(pilot, "pagedown")
+        assert log.later == 0 and log.scroll_y == log.max_scroll_y and drawn(app)[-1] == "⏺ while still reading back"
+        says(deck, "the last words")
+        app.refresh_view()
+        await pilot.pause()
+        assert log.scroll_y == log.max_scroll_y and drawn(app)[-1] == "⏺ the last words"
+        assert log.earlier == len(lane.actions) - MOUNTED and rows(log) == MOUNTED + 1
+
+    drive(app, script, (100, 24))
+
+
+def test_paging_back_through_a_long_lane_and_switching_details_there_keep_a_window_mounted():
+    deck, app, lane = one_lane("simple")
+    for i in range(6 * MOUNTED):
+        says(deck, f"words {i}")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        log = log_of(app)
+        for start in (4 * MOUNTED, 3 * MOUNTED, 2 * MOUNTED):
+            log.scroll_home(animate=False)
+            await pilot.pause()
+            assert drawn(app)[:2] == [f"· {start + MOUNTED} earlier entries: pgup here shows them", f"⏺ words {start + MOUNTED}"]
+            if start == 2 * MOUNTED:  # a held key: the second comes before the rows are laid out, and moves the window no further
+                log.page(-1)
+                log.page(-1)
+                await pilot.pause()
+            else:
+                await press(pilot, "pageup")  # MOUNTED more above what is mounted; past the window, as many fewer under it
+            assert log.earlier == start and len(log.query(RowText)) <= WINDOW + 2
+            assert drawn(app)[:2] == [f"⏺ words {start + MOUNTED - 1}", f"⏺ words {start + MOUNTED}"]  # the player's row stays
+        assert log.texts()[:2] == ["· 600 earlier entries: pgup here shows them", "⏺ words 600"]
+        assert log.texts()[-2:] == ["⏺ words 1199", "· 600 later entries: pgdn here shows them"] and len(log.query(RowText)) == WINDOW + 2
+        await press(pilot, "ctrl+o")  # details there: a window from the player's row on, not every entry to the lane's end
+        assert drawn(app)[0] == "⏺ says: words 899" and log.earlier == 899
+        assert log.texts()[-2:] == ["⏺ says: words 1498", "· 301 later entries: pgdn here shows them"] and len(log.query(RowText)) == WINDOW + 2
+        says(deck, "more words")
+        app.refresh_view()
+        await pilot.pause()
+        assert drawn(app)[0] == "⏺ says: words 899" and log.texts()[-1] == "· 302 later entries: pgdn here shows them"
 
     drive(app, script, (100, 24))
 
