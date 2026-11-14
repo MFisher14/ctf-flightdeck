@@ -13,7 +13,9 @@ client translates both ways and calls the API through the official `anthropic` S
   tool_use blocks. An assistant message with no blocks at all is left out.
 - Consecutive "tool" messages become one user message of tool_result blocks, and a user
   note after them joins that message as a text block: consecutive messages of one role are
-  merged, so the request alternates user and assistant.
+  merged, so the request alternates user and assistant. A tool message that carries an image
+  (agent/client.py IMAGE_KEY: the lane tool view_image) becomes a tool_result whose content
+  is its text and an image block, so the image is the tool's result, data like the rest.
 - Tools: an OpenAI function schema becomes name, description and input_schema.
 
 The reply comes back in ModelClient's terms: the assistant message for the history (its
@@ -81,6 +83,7 @@ from .client import (
     _count,
     _finite,
     _phrase,
+    image_of,
     retry_delay,
 )
 from .fastmode import FAST_BETA, FAST_MODES, fast_problem
@@ -240,6 +243,12 @@ class AnthropicClient:
     async def aclose(self) -> None:
         self._closed = True
         await self._sdk.close()
+
+    def image_problem(self, model: str, session_id: str) -> str | None:
+        """None: the Messages API takes an image inside a tool result, and Claude's current
+        models all read images. An image the API refuses all the same (damaged, too many
+        pixels) fails its request, and the driver gives the lane that as the tool's result."""
+        return None
 
     async def chat(
         self,
@@ -479,7 +488,15 @@ def to_anthropic(messages: Sequence[dict]) -> list[dict]:
             call_id = message.get("tool_call_id")
             if not isinstance(call_id, str) or not call_id:
                 raise ValueError(f"{where}: a tool result without a tool_call_id")
-            result = {"type": "tool_result", "tool_use_id": call_id, "content": _text_of(message.get("content"), where)}
+            text = _text_of(message.get("content"), where)
+            image = image_of(message, where)
+            if image is not None:  # view_image: the image is the tool's result, after its text
+                media, data = image
+                picture = {"type": "image", "source": {"type": "base64", "media_type": media, "data": data}}
+                content: str | list[dict] = [{"type": "text", "text": text}, picture] if text else [picture]
+            else:
+                content = text
+            result = {"type": "tool_result", "tool_use_id": call_id, "content": content}
             _add(turns, "user", [result])
         elif role == "user":
             blocks = _user_blocks(message.get("content"), where)

@@ -768,6 +768,24 @@ flightdeck's lanes read text, so when a challenge has images the run asks your l
 once for each image's text and puts it in the description; the image is in the handout too. A
 model that takes no images is said, and the challenge is added without that text.
 
+A lane can also look at a picture itself. flightdeck's own lanes have a `view_image` tool: it
+shows the model a PNG, JPEG, GIF or WebP file from the lane's workspace, one that came with the
+challenge or one the lane made (a frame it cut out, a plot it drew), and you see it in the lane
+as `view pic.png`, a step like any other. The file is sent as it is. One over 4.5 MB is refused,
+not scaled down, and so is a path outside the workspace and a file that is no image by its first
+bytes, whatever it is called. The picture stays in the lane's conversation, so each later call
+pays for its tokens until the conversation is refreshed, and one conversation carries at most 20
+pictures and 18 MB of them: after that the tool says there is no room. When your model's API will
+not take a picture (a model that reads no images, a damaged file, one with too many pixels), the
+lane is told why in place of the picture and carries on with its shell, and a note on the lane
+tells you the same; the lane does not end. The same happens to every picture of a conversation
+that moves to your `[fallback]` API when the model there takes none. An API that is overloaded
+or rate-limited while a picture is on its way is not the picture's doing, and is handled like
+any other failed call; after a plain server error (500 or 501) the lane is told that the
+picture may not be what failed. A server that accepts a picture and ignores it cannot
+be told from one that looked: with a local model that reads no images, expect what the lane says
+about a picture to be made up. Coding-agent lanes (`--agent`) use their CLI's own tools instead.
+
 A challenge added with no file and no target says so, and its lane is told to say what is
 missing and stop instead of waiting. To add a file afterwards: type `/attach`, a space, the
 challenge's name, and drag the file onto the command bar. Its lane starts afresh with the file.
