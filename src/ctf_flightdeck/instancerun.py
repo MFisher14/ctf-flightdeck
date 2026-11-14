@@ -23,7 +23,14 @@ else. A stop takes the address away and makes the challenge wait again.
 Only what this run started is ever stopped. Before a start the plugin is asked for the
 challenge's status: an instance that is already up (a teammate's, or one from an earlier
 run) is adopted and used, and left running when this run is done with it. In a team the
-slots are shared, and stopping a teammate's instance would cut their lane off.
+slots are shared, and stopping a teammate's instance would cut their lane off. That order
+(status, then start) also means a start is never sent for a challenge whose instance the
+plugin says is up, whatever that plugin's start would do to it.
+
+A plugin that keeps one container per account (ctfd-owl: InstancesConfig.single) has a
+`max_running` of 1, so the queue's on-demand challenges take turns. A teammate's container
+of another challenge is not seen by a status; the start is then refused in the plugin's
+words, which read as the cap being reached.
 
 When the platform says no:
 - "full" (the team's cap is reached, by teammates' instances this run cannot see): nothing

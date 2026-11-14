@@ -287,3 +287,50 @@ def test_a_run_whose_instance_policy_is_not_auto_starts_none_and_says_why(tmp_pa
         finally:
             run.close()
     assert not any(r.path.startswith("/containers/api/") for r in fake.requests)
+
+
+@pytest.mark.parametrize(("plugin", "kind", "table", "first", "second"), [
+    ("ctfd_owl", "dynamic_check_docker", "", "http://198.51.100.7:28001", "tcp://198.51.100.7:28002 (nc 198.51.100.7 28002)"),
+    ("chall_manager", "dynamic_iac", "max_running = 1\n", "http://cm.example.test:30001", "tcp://cm.example.test:30002 (nc cm.example.test 30002)"),
+])
+def test_a_run_plays_a_board_through_the_owl_and_chall_manager_plugins(tmp_path, monkeypatch, plugin, kind, table, first, second):
+    """The whole path against the fakes of the two plugins (tests/fake_instance_plugins.py):
+    the profile's plugin name, a start, the address in the lane's brief, the stop on the solve
+    and the next start. ctfd-owl's own clock runs here: two changes within a second are
+    refused, so a refusal in this run would mean the client did not space them."""
+    from ctf_flightdeck.core.model import LaneState
+    from ctf_flightdeck.run import RunOptions, prepare_run
+
+    from fake_ctfd import TOKEN, FakeChallenge, FakeCTFd
+    from fake_model import FakeModelServer
+    from test_event_run import TOKEN_VAR, Model, config, event, play, submit, wait_for
+
+    monkeypatch.setenv(TOKEN_VAR, TOKEN)
+    board = [FakeChallenge(1, "Boxed", category="Web", value=50, flag="test{boxed}", type=kind),
+             FakeChallenge(2, "Second Box", category="Pwn", value=60, flag="test{second}", type=kind),
+             FakeChallenge(3, "Plain", category="Misc", value=10, flag="test{plain}")]
+    model = Model({"Boxed": [submit("test{boxed}")], "Second Box": [submit("test{second}")]})
+    said: list[str] = []
+    with FakeCTFd(board) as fake, FakeModelServer(responder=model) as server:
+        profile = event(tmp_path, url=fake.base_url, submit="auto")
+        profile.write_text(profile.read_text() + f'\n[instances]\nplugin = "{plugin}"\ntypes = ["{kind}"]\n{table}')
+        run = prepare_run(RunOptions(board=tmp_path / "board", event=profile, config=config(tmp_path, server.base_url, max_lanes=3)))
+        run.instances.every = 0.05
+        assert run.instances.max_running == 1  # the owl shape's own; the table's for chall-manager
+
+        async def body(run):
+            await wait_for(lambda: all(lane.state is LaneState.SOLVED for lane in run.deck.lanes.values()
+                                       if lane.challenge_id in ("boxed", "second-box")) and len(run.deck.lanes) == 3
+                           and run.deck.challenges["second-box"].closed, "both boxed challenges solved, one after the other")
+            await wait_for(lambda: fake.owl.container is None and fake.chall_manager.instances == {}, "the last instance stopped after its solve")
+            said.extend(e.text for e in run.deck.events if e.data.get("source") == "instances")
+
+        play(run, body)
+    briefs = {re_name(r): r["json"]["messages"][1]["content"] for r in server.chats()}
+    assert f"\nLive instance: {first}\n" in briefs["Boxed"]
+    assert f"\nLive instance: {second}\n" in briefs["Second Box"]
+    assert "\nLive instance: none\n" in briefs["Plain"]
+    assert len(said) == 2 and all("started: " in text for text in said), said  # two starts, and no refusal or failure said
+    changes = [(r.method, r.path.rsplit("=", 1)[-1] if "=" in r.path else str(r.json["challengeId"]))
+               for r in fake.requests if "/plugins/" in r.path and r.method != "GET"]
+    assert changes == [("POST", "1"), ("DELETE", "1"), ("POST", "2"), ("DELETE", "2")]  # each sent once, the slot freed first

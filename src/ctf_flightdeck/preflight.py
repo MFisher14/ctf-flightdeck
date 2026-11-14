@@ -900,7 +900,7 @@ live_targets = "confirm"            # "allowed", "confirm" or "off": may lanes t
 # one before a lane works its challenge, keeps at most max_running going, and stops it when the
 # challenge is solved or nobody works it. See BOARDS.md for a plugin that is not listed.
 # [instances]
-# plugin = "docker_per_team"        # the site's container plugin: docker_per_team, or ctfd_docker (unconfirmed)
+# plugin = "docker_per_team"        # the site's container plugin: docker_per_team, ctfd_owl or chall_manager (BOARDS.md)
 # types = ["container"]             # CTFd challenge types that have such an instance (a pull records each challenge's type)
 # max_running = 3                   # the most kept running at once: the site's cap for a team, or less
 """

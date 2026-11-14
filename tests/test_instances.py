@@ -1,18 +1,23 @@
 """A challenge's own container through a CTFd container plugin: the [instances] table, and the
-client against tests/fake_ctfd.py's docker_per_team routes on 127.0.0.1. Nothing real is asked."""
+client against tests/fake_ctfd.py's docker_per_team routes on 127.0.0.1. Nothing real is asked.
+The ctfd-owl and ctfd-chall-manager shapes are tests/test_instance_plugins.py's."""
 
 from __future__ import annotations
 
 import pytest
 
 from ctf_flightdeck.platform.instances import (
-    Instance, InstanceClient, InstanceError, InstanceRefused, Routes, _address, parse_config,
+    HOST_KEYS, PORT_KEYS, REMAINING_KEYS, STATUS_GAP, STATUS_TRIES, Answers, Instance, InstanceClient, InstanceError,
+    InstanceRefused, Routes, _address, _ends, _within, parse_config,
 )
 
 from fake_ctfd import TOKEN, FakeChallenge, FakeCTFd, Reply
 
 PLUGIN = {"plugin": "docker_per_team", "types": ["container"]}
 REQUEST = "/containers/api/request"
+STATUS = "/containers/api/view_info"
+OWN = {"start": ["POST", "/x/start?c={id}"], "stop": ["DELETE", "/x/stop?c={id}"], "renew": ["PATCH", "/x/renew?c={id}"],
+       "status": ["GET", "/x?c={id}"]}  # a plugin flightdeck has no name for, as a profile gives its routes
 
 
 def board() -> list[FakeChallenge]:
@@ -20,8 +25,11 @@ def board() -> list[FakeChallenge]:
             FakeChallenge(3, "Plain", category="Misc")]
 
 
-def client(fake: FakeCTFd, ids=None, **config) -> InstanceClient:
-    return InstanceClient(fake.base_url, TOKEN, ids or {"boxed": 1, "second": 2, "plain": 3}, parse_config({**PLUGIN, **config}), timeout=5)
+def client(fake: FakeCTFd, ids=None, naps=None, **config) -> InstanceClient:
+    """`naps` collects the seconds the client would have slept: no test waits them."""
+    table = config if "start" in config else {**PLUGIN, **config}
+    return InstanceClient(fake.base_url, TOKEN, ids or {"boxed": 1, "second": 2, "plain": 3}, parse_config(table), timeout=5,
+                          sleep=(naps if naps is not None else []).append)
 
 
 # ---------------------------------------------------------------- the [instances] table
@@ -43,9 +51,40 @@ def test_routes_can_be_given_one_by_one_and_override_a_plugins():
     assert mixed.routes.status == ("POST", "/containers/api/info") and mixed.routes.start == ("POST", "/containers/api/request")
 
 
+def test_the_answers_keys_are_the_lists_as_they_were_unless_the_table_names_them():
+    assert parse_config(OWN).answers == Answers(HOST_KEYS, PORT_KEYS, REMAINING_KEYS) == parse_config(PLUGIN).answers
+    assert HOST_KEYS == ("hostname", "host", "ip", "connect", "url", "address") and PORT_KEYS == ("port",)
+    assert REMAINING_KEYS == ("remaining_time", "remaining", "expires", "timeout")
+    named = parse_config({**OWN, "address_key": "where", "port_key": ["tcp_port", "port"], "expires_key": "ends"})
+    assert named.answers == Answers(("where",), ("tcp_port", "port"), ("ends",))
+    assert parse_config({**OWN, "port_key": []}).answers.port == ()  # the address carries its own port
+    over = parse_config({"plugin": "docker_per_team", "expires_key": "until"})  # a named plugin's keys can be named too
+    assert over.answers == Answers(HOST_KEYS, PORT_KEYS, ("until",)) and over.routes.body_key == "chal_id"
+
+
+def test_a_plugin_with_one_container_per_account_keeps_one_running():
+    owl = parse_config({"plugin": "ctfd_owl"})
+    assert owl.single and owl.max_running == 1 and owl.gap == 1.0
+    assert parse_config({"plugin": "ctfd_owl", "max_running": 1}).max_running == 1
+    with pytest.raises(ValueError, match="instances.max_running must be 1 with plugin ctfd_owl: it runs one container per account"):
+        parse_config({"plugin": "ctfd_owl", "max_running": 3})
+    others = [parse_config(table) for table in ({"plugin": "docker_per_team"}, {"plugin": "chall_manager"}, OWN)]
+    assert [(c.single, c.max_running, c.gap) for c in others] == [(False, 3, 0.0)] * 3
+
+
 @pytest.mark.parametrize(("table", "message"), [
     ({}, "needs plugin .* or all four routes; missing: start, stop, renew, status"),
-    ({"plugin": "whale"}, "is not a plugin flightdeck knows"),
+    ({"plugin": "whale"}, "is not a plugin flightdeck knows \\(known: docker_per_team, ctfd_owl, chall_manager\\)"),
+    ({"plugin": ["ctfd_owl"]}, "is not a plugin flightdeck knows .*; give the four routes instead"),
+    ({"plugin": "ctfd_whale"}, "instances.plugin ctfd_whale is not a plugin flightdeck knows .*; ctfd-whale has no shape yet: its start "
+                               "removes whatever container the account runs.* Start its instances on the site yourself"),
+    ({"plugin": "ctfd_docker"}, "instances.plugin ctfd_docker is no longer a plugin flightdeck knows: its routes were a guess .* "
+                                "CTFd-Docker-Plugin and its forks are docker_per_team; for any other plugin give the four routes"),
+    ({**OWN, "address_key": "data.where"}, "instances.address_key must be a JSON key name"),
+    ({**OWN, "address_key": []}, "instances.address_key must name at least one key"),
+    ({**OWN, "port_key": 80}, "instances.port_key must be a JSON key name"),
+    ({**OWN, "expires_key": ["until", "until"]}, "instances.expires_key must be a JSON key name .* distinct"),
+    ({**OWN, "error_key": "msg"}, "instances.error_key is not a key"),
     ({"plugin": "docker_per_team", "tpyes": []}, "instances.tpyes is not a key"),
     ({"plugin": "docker_per_team", "start": "/containers/api/request"}, "instances.start must be \\[METHOD, PATH\\]"),
     ({"plugin": "docker_per_team", "start": ["FETCH", "/x"]}, "the method must be one of"),
@@ -118,19 +157,83 @@ def test_a_challenge_with_no_container_is_refused_and_not_called_full():
 
 
 @pytest.mark.parametrize(("reply", "message"), [
-    (Reply(200, {"status": "created"}), "names no address"),
+    (Reply(200, {"status": "created"}), "neither its answer nor its status names an address"),
     (Reply(200, {"hostname": "bad host name", "port": 1}), "names no usable address"),
     (Reply(200, {"hostname": "h.example.test", "port": 70000}), "names no usable address"),
     (Reply(200, {"hostname": "h.example.test"}), "names no usable address"),
     (Reply(200, "<html>log in</html>"), "is not JSON"),
     (Reply(500, {"message": "boom"}), "the platform refused instance start for challenge 1: boom"),
     (Reply(200, {"success": False, "error": "disabled"}), "refused instance start for challenge 1: disabled"),
+    (Reply(200, {"success": False, "msg": "not now"}), "refused instance start for challenge 1: not now"),  # not "HTTP 200"
+    (Reply(200, {"success": False}), "refused instance start for challenge 1: HTTP 200"),
 ])
 def test_an_answer_that_is_no_instance_is_an_error_never_an_instance(reply, message):
     with FakeCTFd(board()) as fake:
         fake.script("POST", REQUEST, reply)
         with pytest.raises(InstanceError, match=message):
             client(fake).start("boxed")
+
+
+def test_a_start_that_answers_no_address_asks_the_status_and_is_sent_once():
+    with FakeCTFd(board()) as fake:
+        fake.script("POST", REQUEST, Reply(200, {"success": True}))
+        waiting = Reply(200, {"status": "Challenge not started"})
+        fake.script("POST", STATUS, waiting, waiting, Reply(200, {"hostname": "late.example.test", "port": 4000, "expires": 900}))
+        naps: list[float] = []
+        got = client(fake, naps=naps).start("boxed")
+        assert (got.host, got.port) == ("late.example.test", 4000) and got.expires_at is not None
+        assert len(fake.to(REQUEST)) == 1 and len(fake.to(STATUS)) == 3 == STATUS_TRIES  # the start is never sent again
+        assert naps == [STATUS_GAP, STATUS_GAP]  # the first status is asked at once
+
+
+def test_a_start_whose_status_never_names_an_address_gives_up_with_the_plugins_words():
+    with FakeCTFd(board()) as fake:
+        fake.script("POST", REQUEST, Reply(200, {"success": True, "msg": "queued \x1b[31mbehind 40 others"}))
+        naps: list[float] = []
+        with pytest.raises(InstanceError, match=r"took the start for boxed, but neither its answer nor its status names an "
+                                                r"address \(queued .*behind 40 others\); is \[instances\] right") as caught:
+            client(fake, naps=naps).start("boxed")
+        assert not isinstance(caught.value, InstanceRefused) and "\x1b" not in str(caught.value)
+        assert len(fake.to(REQUEST)) == 1 and len(fake.to(STATUS)) == STATUS_TRIES and naps == [STATUS_GAP] * (STATUS_TRIES - 1)
+
+
+def test_a_status_that_refuses_after_a_start_is_the_error():
+    with FakeCTFd(board()) as fake:
+        fake.script("POST", REQUEST, Reply(200, {"success": True}))
+        fake.script("POST", STATUS, Reply(403, {"message": "Container already started but not from this challenge"}))
+        with pytest.raises(InstanceRefused, match="refused instance status for challenge 1: Container already started"):
+            client(fake).start("boxed")
+        assert len(fake.to(STATUS)) == 1
+
+
+def test_named_keys_are_the_only_ones_read():
+    with FakeCTFd(board()) as fake:
+        answer = {"success": True, "data": {"where": "named.example.test", "tcp_port": "4100", "ends": 120, "hostname": "wrong.example.test",
+                                            "port": 1, "expires": 5}}
+        fake.script("POST", "/api/v1/x/start", Reply(200, answer))
+        fake.script("GET", "/api/v1/x", Reply(200, {"hostname": "wrong.example.test", "port": 1}), Reply(200, answer))
+        ours = client(fake, **OWN, api=True, address_key="where", port_key="tcp_port", expires_key="ends")
+        before = ours._clock()
+        got = ours.start("boxed")
+        assert (got.host, got.port) == ("named.example.test", 4100) and before + 119 < got.expires_at < before + 125
+        assert ours.status("boxed") is None  # `hostname` is not the key this table names
+        seen = ours.status("boxed")
+        assert seen is not None and seen.host == "named.example.test"
+        sent = fake.to("/api/v1/x/start")[0]
+        assert sent.path == "/api/v1/x/start?c=1" and sent.body == b""  # the path carries the number: no body
+
+
+def test_a_path_with_the_number_carries_no_body_and_one_without_it_the_body_key():
+    with FakeCTFd(board()) as fake:
+        routes = {**OWN, "start": ["POST", "/x/start"], "body_key": "challenge"}
+        fake.script("POST", "/x/start", Reply(200, {"host": "h.example.test", "port": 9}))
+        fake.script("GET", "/x", Reply(200, {"host": "h.example.test", "port": 9}))
+        ours = client(fake, **routes)
+        ours.start("second")
+        ours.status("second")
+        assert fake.to("/x/start")[0].json == {"challenge": 2}
+        asked = fake.to("/x")[0]
+        assert (asked.method, asked.path, asked.body) == ("GET", "/x?c=2", b"")
 
 
 def test_the_token_is_never_in_a_message_and_what_the_plugin_says_is_made_safe():
@@ -167,6 +270,35 @@ def test_no_answer_in_time_says_so_and_that_it_may_have_been_done():
 ])
 def test_an_address_is_read_out_of_a_url_a_host_and_port_or_an_nc_line(text, parts):
     assert _address(text) == parts
+
+
+@pytest.mark.parametrize(("text", "parts"), [
+    ("curl -v http://box.example.test:8080/health", ("http", "box.example.test", 8080)),
+    ('<a target="_blank" href="https://box.example.test/">Link to the Challenge</a>', ("https", "box.example.test", None)),
+    ("Connect with: nc box.example.test 31337 (TCP)", (None, "box.example.test", 31337)),
+    ("socat - tcp:box.example.test:31337", (None, "box.example.test", 31337)),
+    ("the service listens on 10.0.0.5:9000.", (None, "10.0.0.5", 9000)),
+    ("ssh ctf@box.example.test -p 2222", (None, None, None)),  # no form flightdeck reads: an error, never a guess
+    ("ask an admin", (None, None, None)),
+    ("http://bad_host$(id):80", (None, None, None)),
+])
+def test_an_address_is_found_in_a_line_a_person_wrote(text, parts):
+    assert _within(text) == parts
+
+
+@pytest.mark.parametrize(("said", "ends"), [
+    (600, 1600.0),  # a small number: seconds left
+    (600.5, 1600.5),
+    ("600", 1600.0),
+    (1_800_000_000, 1_800_000_000.0),  # a large one: the moment itself
+    ("2026-11-14T12:00:00Z", 1794657600.0),
+    ("2026-11-14T12:00:00.123456789Z", 1794657600.123456),  # nanoseconds, as an RFC 3339 writer may send
+    ("2026-11-14T13:00:00+01:00", 1794657600.0),
+    ("2026-11-14 12:00:00", 1794657600.0),  # no zone: read as UTC
+    (0, None), (-5, None), (True, None), (float("inf"), None), (None, None), ("soon", None), ("", None), ([600], None),
+])
+def test_an_end_is_seconds_left_a_moment_or_a_timestamp(said, ends):
+    assert _ends(said, 1000.0) == ends
 
 
 def test_the_plugins_own_scheme_wins_over_the_category():
@@ -217,6 +349,24 @@ def test_a_bad_instances_table_in_a_profile_names_the_file_and_the_key(tmp_path)
     path.write_text(PROFILE + '\n[instances]\nplugin = "whale"\n')
     with pytest.raises(preflight.ProfileError, match="event.toml: instances.plugin whale is not a plugin flightdeck knows"):
         preflight.load_profile(path)
+    path.write_text(PROFILE + '\n[instances]\nplugin = "ctfd_docker"\n')  # a profile written for an earlier flightdeck
+    with pytest.raises(preflight.ProfileError, match="event.toml: instances.plugin ctfd_docker is no longer a plugin flightdeck knows"):
+        preflight.load_profile(path)
+
+
+@pytest.mark.parametrize(("table", "expected"), [
+    ('plugin = "ctfd_owl"\ntypes = ["dynamic_check_docker"]', ("ctfd_owl", ("dynamic_check_docker",), 1)),
+    ('plugin = "chall_manager"\ntypes = ["dynamic_iac"]\nmax_running = 4', ("chall_manager", ("dynamic_iac",), 4)),
+    ('start = ["POST", "/p/c?id={id}"]\nstop = ["DELETE", "/p/c?id={id}"]\nrenew = ["PATCH", "/p/c?id={id}"]\n'
+     'status = ["GET", "/p/c?id={id}"]\naddress_key = ["ip", "domain"]\nexpires_key = "until"', (None, (), 3)),
+])
+def test_an_event_profile_takes_the_new_plugins_and_the_named_keys(tmp_path, table, expected):
+    from ctf_flightdeck import preflight
+
+    path = tmp_path / "event.toml"
+    path.write_text(PROFILE + "\n[instances]\n" + table + "\n")
+    config = preflight.load_profile(path)[0].instances
+    assert config is not None and (config.plugin, config.types, config.max_running) == expected
 
 
 def test_the_example_profile_still_loads_and_shows_the_table_commented(tmp_path):
