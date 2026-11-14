@@ -1685,7 +1685,8 @@ def test_every_scenario_opens_and_runs_30_ticks_in_the_console(name):
         assert sorted(lane_rows(app)) == sorted(lane.id for lane in active)
         assert (FINISHED_ROW in row_keys(app)) == any(lane.finished for lane in deck.lanes.values())
         header = region_text(app, "#header")
-        assert f"lanes {len(active)}/{deck.config.max_lanes} · queue {len(deck.queue)}" in header
+        slotted = deck.slotted_lanes()  # a lane waiting for a live-box answer holds no slot (P83)
+        assert f"lanes {len(slotted)}/{deck.config.max_lanes} · queue {len(deck.queue)}" in header
 
     drive(app, script)
 
@@ -2921,6 +2922,19 @@ def test_a_lane_waiting_for_a_slot_after_its_live_box_answer_says_so_in_its_row_
         assert cell(app, "lanes", alpha.id, "state") == "queued"
 
     drive(app, script)
+
+
+def test_the_header_and_the_lanes_title_count_slots_not_a_lane_that_gave_its_slot_up():
+    deck = platform_run(("alpha", "bravo", "charlie"), max_lanes=1)
+    (alpha,) = deck.lanes_on("alpha")
+    deck.report(alpha.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "reach the instance")))
+    assert deck.lanes_on("bravo") and len(deck.active_lanes()) == 2  # bravo took alpha's slot
+    assert views.header_facts(deck).lanes == 1
+    assert "lanes 1/1 · queue 1" in views.header(deck, width=400).plain
+    assert "1/1 · q1" in views.header(deck, width=400, compact=True).plain  # the simple header has no lane count
+    for compact, simple in ((False, False), (False, True), (True, False)):
+        title = views.lanes_title(deck, SortMode.ATTENTION, "", compact=compact, simple=simple).plain
+        assert "2/1" not in title and "1/1" in title, title
 
 
 def test_the_quit_prompt_names_five_flags_on_their_way_and_counts_the_rest():

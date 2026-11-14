@@ -333,7 +333,7 @@ class HeaderFacts:
     event: str
     team: bool
     containerized: bool
-    lanes: int  # active lanes
+    lanes: int  # lanes holding one of the max_lanes slots (Deck.slotted_lanes, P83)
     max_lanes: int
     queue: int
     need: int  # lanes that need the player
@@ -351,7 +351,7 @@ def header_facts(deck: Deck, mock: str = "") -> HeaderFacts:
     cfg = deck.config
     tokens, dollars, unpriced = deck.totals()
     return HeaderFacts(
-        cfg.event, cfg.team, cfg.containerized, len(deck.active_lanes()), cfg.max_lanes, len(deck.queue),
+        cfg.event, cfg.team, cfg.containerized, len(deck.slotted_lanes()), cfg.max_lanes, len(deck.queue),
         len(deck.needing()), deck.held, tokens, dollars, unpriced, deck.now, mock,
         later=any(lane.dollars_later for lane in deck.lanes.values()),
         autopilot=deck.autopilot is not None and bool(deck.autopilot.engaged),
@@ -948,7 +948,7 @@ def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = 
     ones solved, each only when there are any, and the sort only when it is not by attention."""
     if simple and not compact:
         text = Text("lanes ", "bold")
-        text.append(f"{len(deck.active_lanes())}/{lanes_text(deck.config.max_lanes)}")
+        text.append(f"{len(deck.slotted_lanes())}/{lanes_text(deck.config.max_lanes)}")
         if deck.queue:
             text.append(f" · {len(deck.queue)} waiting", theme.MUTED)
         solved = sum(ch.status is ChallengeStatus.SOLVED for ch in deck.challenges.values())
@@ -958,7 +958,7 @@ def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = 
             text.append(f" · sort {sort.value}", theme.MUTED)
     else:
         text = Text("fleet ", "bold")
-        text.append(f"{len(deck.active_lanes())}/{lanes_text(deck.config.max_lanes)}")
+        text.append(f"{len(deck.slotted_lanes())}/{lanes_text(deck.config.max_lanes)}")
         text.append(f" · sort {sort.value}", theme.MUTED)
         if board_hidden and not compact:  # the compact layout never has the board, and no room to say so
             text.append(" · board hidden: narrow terminal", theme.MUTED)
