@@ -91,6 +91,13 @@ def test_the_brief_names_a_tcp_service_with_the_nc_command_that_reaches_it():
     )
 
 
+def test_the_brief_names_a_tls_endpoint_with_the_commands_that_speak_tls_to_it():
+    text = brief(Challenge("c", "Echo", "pwn", 100), [], ["tls://5eed0001.trp.example.test:1443"])
+    line = next(x for x in text.splitlines() if x.startswith("Live instance:"))
+    assert line == ("Live instance: tls://5eed0001.trp.example.test:1443 (TLS, not plain TCP: nc will not do; Python's ssl "
+                    'module, or pwntools remote("5eed0001.trp.example.test", 1443, ssl=True))')
+
+
 def test_a_handout_with_many_files_lists_the_first_ones_and_says_how_many_more():
     files = [f"vendor/lib{i}.py" for i in range(500)]
     text = brief(Challenge("c", "Big", "rev", 100), files, [])

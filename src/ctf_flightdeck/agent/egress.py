@@ -84,8 +84,10 @@ class Host:
 
 def hosts(urls: Sequence[str]) -> tuple[Host, ...]:
     """The hosts, and the ports of each, that `urls` name (http://, https:// and tcp://, as the
-    board loader writes them), in the order first named. FenceError for a URL that is not one
-    of those, or a host that no name on a Docker network can stand for."""
+    board loader writes them, and tls://, a TLS endpoint an instance plugin names), in the
+    order first named. FenceError for a URL that is not one of those, or a host that no name
+    on a Docker network can stand for. A proxy carries bytes, so a TLS endpoint is fenced as
+    a TCP service is: its port, nothing else."""
     found: dict[str, tuple[str, str, list[int]]] = {}
     for url in urls:
         try:
@@ -94,8 +96,8 @@ def hosts(urls: Sequence[str]) -> tuple[Host, ...]:
         except ValueError:
             raise FenceError(f"{url!r} is not an instance address") from None
         port = port if port is not None else _DEFAULT_PORT.get(parts.scheme)
-        if parts.scheme not in ("http", "https", "tcp") or not parts.hostname or not port:
-            raise FenceError(f"{url!r} is not an http, https or tcp instance address with a host and a port")
+        if parts.scheme not in ("http", "https", "tcp", "tls") or not parts.hostname or not port:
+            raise FenceError(f"{url!r} is not an http, https, tcp or tls instance address with a host and a port")
         name, upstream, written = _named(parts.hostname)
         ports = found.setdefault(name, (upstream, written, []))[2]
         if port not in ports:
