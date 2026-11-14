@@ -972,7 +972,7 @@ def describe(
         lines.append(f"token     ${profile.token_env} ({state}), given only to the {plugin} plugin, for {_shown_url(profile)}")
     if profile.platform == "http" and profile.http is not None:
         # every request the table can make, and where the token goes: read before anything runs, as `plugin add` shows a plugin
-        lines += [f"http      {line}" for line in http_platform.plan(profile.http)]
+        lines += [f"http      {line}" for line in http_platform.plan(profile.http, profile.instances)]
     if profile.board is not None:
         lines.append(f"board     {_show(profile.board)}")
     if profile.start is not None or profile.end is not None:

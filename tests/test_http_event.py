@@ -83,6 +83,11 @@ def test_an_http_profile_needs_no_leave_from_the_players_config_and_its_plan_is_
         "http      solved    GET /api/v1/users/me, with the session token (Authorization: Bearer)",
     ]
     assert f"pull      auto     {HTTP_BOARD['auto']}" in lines
+    boxed, chosen = load_profile(event_file(tmp_path, http='preset = "rctf2"', extra='\n[instances]\nplugin = "rctf"\n'))
+    route = "/api/v2/integrations/challs/{id}/instance, with the session token (Authorization: Bearer): only for an on-demand challenge"
+    assert [line for line in describe(boxed, chosen, environ={}) if line.startswith("http      instance")] == [
+        f"http      instance  {action} {method} {route} of the board"
+        for action, method in (("status", "GET"), ("start", "PUT"), ("renew", "PATCH"), ("stop", "DELETE"))]
     manual, chosen = load_profile(event_file(tmp_path, pull="manual"))
     assert f"pull      manual   {HTTP_BOARD['manual']} (the rules allow auto)" in describe(manual, chosen, environ={})
     assert "it plays the board `flightdeck http pull` wrote" in HTTP_BOARD["manual"]
@@ -524,7 +529,8 @@ def test_a_run_on_rctf_v2_starts_a_challenges_instance_with_the_sign_ins_session
 
         async def body(run):
             await wait_for(lambda: run.deck.challenges["boxed"].status is ChallengeStatus.SOLVED, "the boxed challenge solved")
-            await wait_for(lambda: fake.tasks["box-7f3a"].instancer.status == "stopped" and fake.of("instance")[-1].method == "DELETE",
+            # the run's own word that it is stopped (the stop's answer read), not only the fake's: the run ends after this
+            await wait_for(lambda: fake.tasks["box-7f3a"].instancer.status == "stopped" and "boxed" not in run.instances.running,
                            "its instance stopped after the solve")
 
         play(run, body)

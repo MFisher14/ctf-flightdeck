@@ -79,7 +79,7 @@ from .. import __version__
 from ..plugins.call import MAX_CHALLENGES, MAX_SHOWN, TOKEN_MARK, VERDICTS, CallFailed, PullReply, Verdict, valid_ref
 from ..text import untrusted
 from .ctfd import CONNECT_TIMEOUT, MAX_FILE_BYTES, MAX_REDIRECTS, _message, _retry_after
-from .instances import ON_DEMAND, InstanceError
+from .instances import ON_DEMAND, InstanceError, InstancesConfig
 
 NAME = "http"  # event.platform, and the name on the board's record (plugin.json): no plugin can take it (config.RESERVED_PLATFORMS)
 LABEL = "the http adapter"  # how messages name it, where a plugin's say "the NAME plugin"
@@ -650,10 +650,11 @@ def _solved(table: Mapping) -> Solved:
 # ---------------------------------------------------------------------- what a run will send
 
 
-def plan(config: HttpConfig) -> list[str]:
+def plan(config: HttpConfig, instances: InstancesConfig | None = None) -> list[str]:
     """What the table makes flightdeck send, a line for each request: the method, the route
     under event.url, and where the token goes. Shown before anything runs (pre-flight), so a
-    table from someone else is read first. Every string here passed parse_config's checks."""
+    table from someone else is read first. Every string here passed parse_config's checks.
+    `instances`: the profile's [instances] table, whose routes are asked the same way."""
     auth = config.auth
     if auth.kind == "exchange":
         carried = f"with the session token (Authorization: {auth.scheme})"
@@ -692,6 +693,10 @@ def plan(config: HttpConfig) -> list[str]:
     else:
         lines.append("submit    no route: flightdeck sends no flag (the submit policy must be manual or off)")
     lines.append(f"solved    {config.solved.request}, {carried}")
+    if instances is not None:  # the [instances] table's routes go the same way, with the same token
+        for action in ("status", "start", "renew", "stop"):
+            method, path = getattr(instances.routes, action)
+            lines.append(f"instance  {action} {method} {path}, {carried}: only for an on-demand challenge of the board")
     return lines
 
 
