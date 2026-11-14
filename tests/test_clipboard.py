@@ -208,6 +208,338 @@ def test_a_tool_that_stays_behind_to_serve_the_clipboard_does_not_hold_the_copy_
     assert used == "xclip" and taken.read_text(encoding="utf-8") == "naïve\nline 2"
 
 
+# ---------------------------------------------------------------------- the mouse
+
+
+def test_a_drag_over_a_transcript_entry_copies_exactly_the_dragged_text_both_ways_and_says_how_much():
+    deck, app, lane, clip = console()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        written = terminal(app)
+        note = row(app, "· tokens are at 96%")
+        await drag(pilot, note, (2, 0), (7, 0))
+        assert clip.texts == ["tokens"]  # the operating system's clipboard
+        assert osc52(written) == ["tokens"]  # and the terminal's
+        assert status_line(app).strip() == "● copied 6 characters"
+        await drag(pilot, note, (2, 0), (2, 0))  # a press and release where it was: a click
+        await pilot.click(note, offset=(9, 0))
+        await pilot.pause()
+        assert clip.texts == ["tokens"] and osc52(written) == ["tokens"]  # a click copies nothing
+        assert not app.screen.selections  # and takes the selection down
+        # over two entries: the end of one row, the start of the next, a newline between them
+        log = log_of(app)
+        first, second = row(app, "▲ Loop alert"), row(app, "▲ Effort vs value alert")
+        assert second.region.y == first.region.y + 1
+        await drag(pilot, log, (first.region.x - log.region.x + 2, first.region.y - log.region.y),
+                   (second.region.x - log.region.x + 7, second.region.y - log.region.y))
+        end, start = clip.texts[-1].split("\n")
+        assert end == "Loop alert · turn 13" and start.startswith("▲ Effo") and "▲ Effort vs value alert · turn 13".startswith(start)
+        assert status_line(app).strip() == f"● copied {len(clip.texts[-1])} characters"
+
+    drive(app, script, BIG)
+
+
+def test_a_double_click_copies_the_whole_entry_with_what_the_edge_hides_and_a_triple_click_the_transcript():
+    deck, app, lane, clip = console()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        intake = row(app, "· L1 intake: unsure")
+        whole = views.entry_text(deck, lane, views.entries(lane.actions)[1]).plain
+        assert len(whole) > intake.size.width and "…" in region_text(app, "#transcript").splitlines()[1]  # the edge cuts it
+        await pilot.click(intake, offset=(5, 0))
+        await pilot.pause()
+        assert clip.texts == []  # a click copies nothing
+        await pilot.double_click(intake, offset=(5, 0))
+        await pilot.pause()
+        assert clip.texts == [whole] and whole.endswith("frida_trace …+14 lines")  # also what the edge hides
+        assert status_line(app).strip() == f"● copied {len(whole)} characters"
+        run = row(app, "⏺ 10 tool calls")  # an entry of two rows is copied as its two lines
+        await pilot.double_click(run, offset=(5, 1))
+        await pilot.pause()
+        assert clip.texts[-1] == views.entry_text(deck, lane, views.entries(lane.actions)[2]).plain and clip.texts[-1].count("\n") == 1
+        await pilot.triple_click(run, offset=(5, 1))
+        await pilot.pause()
+        assert clip.texts[-1] == "\n".join(log_of(app).texts())  # every entry that is mounted, in order
+
+    drive(app, script, BIG)
+
+
+def test_a_double_click_as_a_terminal_reports_it_copies_the_entry_once():
+    """A terminal sends the button down and up, twice; the console makes the clicks of them
+    itself, and hears that the button came up only after the second click has selected the
+    entry. Both the button and the click would copy it: it is copied once."""
+    deck, app, lane, clip = console()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        note = row(app, "· tokens are at 96%")
+        x, y = note.region.x + 5, note.region.y
+        for _ in range(2):
+            for kind in (events.MouseDown, events.MouseUp):
+                app.post_message(kind(None, x, y, 0, 0, 1, False, False, False, screen_x=x, screen_y=y))
+        await pilot.pause()
+        await pilot.pause()
+        assert clip.texts == ["· tokens are at 96% of this lane's cap"]
+        assert status_line(app).strip() == "● copied 38 characters"
+
+    drive(app, script, BIG)
+
+
+def test_a_details_row_wrapped_over_three_rows_copies_as_one_line():
+    deck, app, lane, clip = console("deck")
+    words = "I think main compares against a table built at run time. " * 4
+    says(deck, words.strip())
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        said = row(app, "⏺ says: I think main compares")
+        line = str(said.render())
+        assert said.region.height >= 3 and "\n" not in line  # one line of the log, on three rows of the view or more
+        await drag(pilot, said, (2, 0), (20, 2))
+        copied = clip.texts[-1]
+        assert "\n" not in copied and copied.startswith("says: I think main") and copied in line
+        assert len(copied) > 2 * said.size.width  # it runs from the first row into the third
+        await pilot.double_click(said, offset=(4, 1))
+        await pilot.pause()
+        assert clip.texts[-1] == line == f"⏺ says: {words.strip()}"
+
+    drive(app, script, NARROW)
+
+
+def test_a_drag_over_the_calm_card_the_header_or_the_status_line_copies_its_text():
+    deck, app, lane, clip = console()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        card = app.screen.query_one("#now", Static)
+        await drag(pilot, card, (4, 1), (18, 1))  # inside its border and padding: the question's row
+        assert clip.texts == ["waiting for you"]
+        await drag(pilot, card, (4, 2), (16, 3))  # the answers' row into the row of what else is open
+        assert clip.texts[-1] == "1 more budget   0 stop the lane\n  also: looping"
+        await drag(pilot, app.screen.query_one("#header"), (1, 0), (10, 0))
+        assert clip.texts[-1] == "flightdeck"
+        app.say("the status line is text too")
+        await pilot.pause()
+        await drag(pilot, app.screen.query_one("#status"), (2, 0), (11, 0))
+        assert clip.texts[-1] == "the status" and status_line(app).strip() == "● copied 10 characters"
+
+    drive(app, script, BIG)
+
+
+def test_the_full_card_and_the_lane_list_do_not_select_and_a_copy_is_never_claimed():
+    deck, app, lane, clip = console("deck")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await drag(pilot, app.screen.query_one("#now", Static), (4, 1), (30, 2))  # the full card is a panel, not text
+        assert clip.texts == [] and "copied" not in status_line(app)
+        await press(pilot, "escape")
+        assert isinstance(app.screen, FleetScreen)
+        await drag(pilot, app.screen.query_one("#lanes"), (4, 1), (30, 1))  # a table of rows to pick, not text
+        assert clip.texts == [] and "copied" not in status_line(app)
+        await drag(pilot, app.screen.query_one("#header"), (1, 0), (10, 0))  # the lane list's header selects as the lane's does
+        assert clip.texts == ["flightdeck"] and status_line(app).strip() == "● copied 10 characters"
+
+    drive(app, script, NARROW)
+
+
+def test_a_selection_already_copied_is_not_copied_again_by_a_drag_of_the_scroll_bar():
+    deck, app, lane, clip = console("deck")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        log = log_of(app)
+        assert log.max_scroll_y > 0
+        note = row(app, "· flightdeck  tokens are at 96%")
+        await drag(pilot, note, (2, 0), (11, 0))
+        assert clip.texts == ["flightdeck"]
+        app.say("something else since")
+        await pilot.pause()
+        await drag(pilot, log, (log.size.width - 1, 3), (log.size.width - 1, 1))  # the scroll bar, dragged up
+        assert app.screen.get_selected_text() == "flightdeck"  # the selection stays while the player scrolls
+        assert clip.texts == ["flightdeck"] and "copied" not in status_line(app)  # and is not copied a second time
+        await press(pilot, "ctrl+c")  # asked for, it is
+        assert clip.texts == ["flightdeck", "flightdeck"] and status_line(app).strip() == "● copied 10 characters"
+
+    drive(app, script, NARROW)
+
+
+# ---------------------------------------------------------------------- no tool, and over SSH
+
+
+def test_with_no_clipboard_tool_the_copy_warns_what_to_do_instead_of_claiming_it():
+    deck, app, lane = busy_lane("simple")
+    run = Runner()
+    app.copier = partial(clipboard.put, platform="linux", which=has(), run=run, environ={})
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        written = terminal(app)
+        await drag(pilot, row(app, "· tokens are at 96%"), (2, 0), (7, 0))
+        assert osc52(written) == ["tokens"] and run.calls == []  # all that could be done was done
+        assert_warning(app, UNPROVEN)
+        assert "copied" not in status_line(app)
+
+    drive(app, script, BIG)
+
+
+def test_over_ssh_the_copy_goes_to_the_terminal_only_and_says_so():
+    deck, app, lane = busy_lane("simple")
+    run = Runner()
+    app.copier = partial(clipboard.put, platform="linux", which=has("wl-copy", "xclip", "xsel"), run=run, environ={"SSH_TTY": "/dev/pts/3"})
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        written = terminal(app)
+        await drag(pilot, row(app, "· tokens are at 96%"), (2, 0), (7, 0))
+        assert run.calls == []  # no tool on the far machine
+        assert osc52(written) == ["tokens"]  # the terminal carries it to the machine the player sits at
+        assert_warning(app, "sent to the terminal's clipboard (OSC 52). If paste is empty, this terminal does not take it: hold fn")
+        assert "install" not in status_line(app) and "copied" not in status_line(app)
+
+    drive(app, script, BIG)
+
+
+# ---------------------------------------------------------------------- ctrl+c and esc
+
+
+def test_ctrl_c_copies_the_selection_with_no_quit_hint_and_with_none_the_hint_shows_as_before():
+    deck, app, lane, clip = console()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await press(pilot, "ctrl+c")
+        assert clip.texts == [] and QUIT_HINT in screen_text(app)  # nothing selected: Textual's hint that ctrl+q quits
+        app.clear_notifications()
+        await pilot.pause()
+        await drag(pilot, row(app, "· tokens are at 96%"), (2, 0), (7, 0))
+        app.say("something else since")
+        await press(pilot, "ctrl+c")
+        assert clip.texts == ["tokens", "tokens"] and status_line(app).strip() == "● copied 6 characters"
+        assert QUIT_HINT not in screen_text(app)
+        # the lane list: the same key
+        await press(pilot, "escape", "escape")
+        assert isinstance(app.screen, FleetScreen)
+        await drag(pilot, app.screen.query_one("#header"), (1, 0), (10, 0))
+        app.say("something else since")
+        await press(pilot, "ctrl+c")
+        assert clip.texts[-2:] == ["flightdeck", "flightdeck"] and status_line(app).strip() == "● copied 10 characters"
+        assert QUIT_HINT not in screen_text(app)
+        await press(pilot, "escape")  # the selection goes
+        await press(pilot, "ctrl+c")
+        assert len(clip.texts) == 4 and QUIT_HINT in screen_text(app)
+
+    async def main():  # with Textual's toasts, which a test's console leaves out otherwise: the hint is one
+        async with app.run_test(size=BIG, notifications=True) as pilot:
+            await pilot.pause()
+            await script(pilot)
+
+    asyncio.run(main())
+
+
+def test_ctrl_c_in_the_chat_box_copies_what_is_selected_there():
+    deck, app, lane, clip = console()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await pilot.press(*"try the table", "shift+left", "shift+left", "shift+left", "shift+left", "shift+left")
+        await press(pilot, "ctrl+c")
+        assert clip.texts == ["table"] and status_line(app).strip() == "● copied 5 characters"
+        assert bar(app).field.value == "try the table"
+
+    drive(app, script, BIG)
+
+
+def test_esc_with_a_selection_takes_it_down_and_the_view_stays_and_the_next_esc_goes_back():
+    deck, app, lane, clip = console()
+
+    async def script(pilot):
+        focus = await open_focus(pilot, app, "L01")
+        await drag(pilot, row(app, "· tokens are at 96%"), (2, 0), (7, 0))
+        assert app.screen.get_selected_text() == "tokens"
+        await press(pilot, "escape")
+        assert app.screen is focus and not focus.selections  # still in the lane, nothing selected
+        await press(pilot, "escape")
+        assert isinstance(app.screen, FleetScreen)
+        # the lane list: esc takes a selection down before it clears the filter
+        await press(pilot, "/")
+        await send(pilot, app, "filter crack")
+        fleet = app.screen
+        assert fleet.filter_text == "crack"
+        await drag(pilot, fleet.query_one("#header"), (1, 0), (10, 0))
+        assert fleet.get_selected_text() == "flightdeck"
+        await press(pilot, "escape")
+        assert not fleet.selections and fleet.filter_text == "crack"
+        await press(pilot, "escape")
+        assert fleet.filter_text == ""
+
+    drive(app, script, BIG)
+
+
+def test_the_chat_box_keeps_the_focus_through_a_drag_and_a_key_typed_next_lands_in_it():
+    deck, app, lane, clip = console()
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await pilot.press(*"look at ")
+        await drag(pilot, row(app, "· tokens are at 96%"), (2, 0), (7, 0))
+        assert bar(app).field.has_focus and bar(app).field.value == "look at " and clip.texts == ["tokens"]
+        await press(pilot, "x")
+        assert bar(app).field.value == "look at x"
+        assert not app.screen.selections  # typing takes the selection down
+        await drag(pilot, app.screen.query_one("#now", Static), (4, 1), (18, 1))  # the card's box takes no focus either
+        assert bar(app).field.has_focus
+        await press(pilot, "y")
+        assert bar(app).field.value == "look at xy" and lane.hints == []  # typed, not sent
+
+    drive(app, script, BIG)
+
+
+def test_help_says_how_to_select_and_copy():
+    keys = dict(KEY_HELP)
+    assert keys["mouse drag"] == "Select text: copied as you let go (double-click: a whole entry; triple-click: all)"
+    assert keys["ctrl+c"] == "Copy the selected text again; esc takes the selection down. /copy copies with no mouse"
+    deck, app, lane, clip = console("deck")
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        text = " ".join(screen_text(app).split())
+        assert "mouse drag Select text: copied as you let go" in text and "ctrl+c Copy the selected text again" in text
+
+    drive(app, script, (160, 60))
+
+
+# ---------------------------------------------------------------------- the highlight
+
+
+@pytest.mark.parametrize("name", sorted(themes.BUILTIN))
+def test_selected_text_is_on_the_themes_selected_colour_and_keeps_its_own(name):
+    """The highlight is the palette's colour for a selected row, which every theme must give
+    a contrast with its text (themes.CONTRAST); the text keeps the colour it had."""
+    palette = themes.BUILTIN[name]
+    deck, _, lane = busy_lane("simple")
+    app = FlightdeckApp(deck, refresh_seconds=None, layout="simple", palette=palette, copier=Clip())
+    assert themes.contrast(palette.text, palette.selected_focus) >= themes.MIN_CONTRAST
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        said = row(app, "⏺ I have the table now")
+        selected = Color.parse(palette.selected_focus)
+        before = color_of(app, "I have the table now", said.region.y)
+        assert selected not in backgrounds(said)
+        await drag(pilot, said, (2, 0), (21, 0))
+        assert app.screen.get_selected_text() == "I have the table now"
+        behind = backgrounds(said)
+        assert set(behind[2:22]) == {selected} and selected not in behind[:2] + behind[22:]  # behind the selected text, and only there
+        assert color_of(app, "I have the table now", said.region.y) == before == palette.text.lower()
+        await press(pilot, "escape")
+        assert selected not in backgrounds(said)
+
+    drive(app, script, BIG)
+
+
 # ---------------------------------------------------------------------- /copy
 
 

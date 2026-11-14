@@ -23,6 +23,12 @@ The card is in a box that scrolls (#now-scroll) and takes half the pane at most:
 taller than that keeps its first rows, the approval's, in view, and the mouse wheel shows the
 rest.
 
+Text in the view selects with the mouse (the transcript's rows, the calm card, the header,
+the status line: each is text in a widget of its own) and is copied when the button comes up
+(FlightdeckApp.on_text_selected). `ctrl+c` copies the selection again, and `esc` takes a
+selection down before it goes back. The transcript and the card's box take no focus, so the
+chat box keeps the keys through a drag.
+
 At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: one pane, with
 what the lane needs from you above its transcript, and no files pane.
 
@@ -40,6 +46,7 @@ from typing import TYPE_CHECKING
 from rich.cells import cell_len
 from rich.text import Text
 from textual import events, on
+from textual.actions import SkipAction
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -150,6 +157,7 @@ class FocusScreen(Screen, inherit_bindings=False):
         Binding("pageup", "scroll(-1)", "scroll", show=False),
         Binding("pagedown", "scroll(1)", "scroll", show=False),
         Binding("ctrl+o", "details", "details", show=False),
+        Binding("ctrl+c,super+c", "copy", "copy the selection", show=False),
     ]
 
     def __init__(self, lane_id: str, file: str | None = None) -> None:
@@ -421,7 +429,23 @@ class FocusScreen(Screen, inherit_bindings=False):
         return self.fd.answer(self.lane, number)
 
     def action_back(self) -> None:
-        self.fd.show_fleet(select=self.lane_id)
+        """esc: back to the lanes. With text selected it only takes the selection down, and the
+        view stays: the next esc goes back."""
+        selected = self.get_selected_text()
+        self.clear_selection()
+        if not selected:
+            self.fd.show_fleet(select=self.lane_id)
+
+    def key_escape(self) -> None:
+        """esc reaches a screen as a key before its binding runs, and Textual's own screen takes
+        the selection down there. This one leaves it to the binding (action_back), which then knows
+        there was one."""
+
+    def action_copy(self) -> None:
+        """ctrl+c: copy the selected text. With none selected the key goes on, to Textual's
+        own hint that ctrl+q quits."""
+        if not self.fd.copy_selection():
+            raise SkipAction()
 
     def action_next_needing(self) -> None:
         """The next lane that needs you, in attention order; after the last, the first again."""

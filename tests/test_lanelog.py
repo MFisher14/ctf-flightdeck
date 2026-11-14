@@ -762,6 +762,7 @@ def test_another_lane_opens_at_its_own_end_in_its_own_rows():
 
 def test_a_mouse_button_held_in_the_transcript_stops_it_following_until_it_is_up():
     deck, app, lane = one_lane("simple")
+    app.copier = lambda text: ""  # the button comes up over other text: a selection, which is copied (test_clipboard.py)
     for i in range(60):
         says(deck, f"words {i}")
 

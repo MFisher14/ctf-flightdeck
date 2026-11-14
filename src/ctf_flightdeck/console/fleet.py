@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 from rich.style import Style
 from rich.text import Text
 from textual import events, on
+from textual.actions import SkipAction
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -145,6 +146,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         Binding("shift+tab", "app.focus_previous", "focus back", show=False),
         Binding("q", "app.quit", "quit"),
         Binding("escape", "escape", "back", show=False),
+        Binding("ctrl+c,super+c", "copy", "copy the selection", show=False),
         Binding("space", "app.toggle_clock", "freeze clock", show=False),
         Binding("full_stop", "app.step_clock", "step clock", show=False),
         *(Binding(str(n), f"quick('{n}')", f"answer {n}", show=False) for n in range(10)),
@@ -636,12 +638,27 @@ class FleetScreen(Screen, inherit_bindings=False):
         self.query_one(table, DataTable).focus()
 
     def action_escape(self) -> None:
+        selected = self.get_selected_text()
+        self.clear_selection()
+        if selected:  # text selected with the mouse: esc takes the selection down, and no more
+            return
         bar = self.query_one("#bar", CommandBar)
         if bar.field.has_focus or bar.field.value:
             bar.clear()
             self._leave_bar()
         elif self.filter_text:
             self.set_filter("")
+
+    def key_escape(self) -> None:
+        """esc reaches a screen as a key before its binding runs, and Textual's own screen takes
+        the selection down there. This one leaves it to the binding (action_escape), which then knows
+        there was one."""
+
+    def action_copy(self) -> None:
+        """ctrl+c: copy the selected text. With none selected the key goes on, to Textual's
+        own hint that ctrl+q quits."""
+        if not self.fd.copy_selection():
+            raise SkipAction()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action == "claim":

@@ -12,6 +12,11 @@ emits an event, whether or not a mock clock is ticking.
 In a real run, a hang-up (the terminal window closed) or a SIGTERM stops the run the way
 quitting does: every lane stops and every workspace closes before the console exits, and
 `stopped_by` names the signal (terminal.py has why a dead terminal cannot stop that).
+
+Text on the screen selects with the mouse, and what is selected is copied when the button comes
+up (a drag, a double-click for a whole entry, a triple-click for everything in its box), or
+with ctrl+c; /copy copies from a lane with no mouse. Every copy goes two ways (copy): to the
+terminal's clipboard (OSC 52) and to the operating system's, by its tool (clipboard.py).
 """
 
 from __future__ import annotations
@@ -63,6 +68,7 @@ class FlightdeckApp(App[None]):
     DataTable > .datatable--header { background: transparent; color: $fd-muted; text-style: bold; }
     DataTable > .datatable--cursor { background: $fd-selected; text-style: bold; }
     DataTable:focus > .datatable--cursor { background: $fd-selected-focus; }
+    Screen > .screen--selection { background: $fd-selected-focus; }
     """
 
     def __init__(
@@ -103,6 +109,7 @@ class FlightdeckApp(App[None]):
         # goes to the fresh one (follow_restart); None: nothing to follow
         self._follow: tuple[str, str, frozenset[str]] | None = None
         self.copier = copier or clipboard.put
+        self._copied: object = None  # the selection last copied (a screen's `selections`): a button that comes up again copies it once
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
         self._use_textual_theme()
@@ -307,9 +314,29 @@ class FlightdeckApp(App[None]):
             self.say(said)
 
     def copy_to_clipboard(self, text: str) -> None:
-        """Textual's copy (ctrl+c in a text field, a prompt's own ctrl+c): both ways, as every
-        copy (copy)."""
+        """Textual's copy (ctrl+c in a text field, a prompt's own ctrl+c) and the console's
+        copy of a selection: both ways, as every copy (copy)."""
         self.copy(text, f"copied {len(text)} character{'' if len(text) == 1 else 's'}")
+
+    def copy_selection(self) -> bool:
+        """Copy the text selected on the screen in front. False when none is."""
+        text = self.screen.get_selected_text()
+        if not text:
+            return False
+        self._copied = self.screen.selections
+        self.copy_to_clipboard(text)
+        return True
+
+    def on_text_selected(self, event: events.TextSelected) -> None:
+        """A mouse button came up (Textual says so after every one, selection or not): what
+        the drag selected is copied. A selection already copied is not copied again by a
+        button that comes up over something else (a scroll bar dragged, a key clicked)."""
+        self._copy_once()
+
+    def _copy_once(self) -> None:
+        """Copy the selection the mouse made, unless it is the one last copied."""
+        if self.screen.selections is not self._copied:
+            self.copy_selection()
 
     def copy_from(self, lane: Lane, what: str) -> None:
         """/copy [output|command|flag|all]: a text of the lane's to the clipboard, with no
@@ -324,6 +351,13 @@ class FlightdeckApp(App[None]):
             self.warn(str(exc))
             return
         self.copy(text, f"copied {name}")
+
+    def on_click(self, event: events.Click) -> None:
+        """A double-click selects the whole entry under it and a triple-click everything in
+        its box (Textual's own), both after the button came up: copied here. Once: the news
+        that the button came up can get here after the selection is made, and has copied it then."""
+        if event.chain >= 2:
+            self._copy_once()
 
     async def on_event(self, event: events.Event) -> None:
         """Files dropped on the terminal arrive as pasted paths. Wherever the focus is, they
