@@ -773,7 +773,7 @@ class Run:
                 return True, what + f"; {ended} restarted as {', '.join(fresh)}{later}"
             if queued:
                 return True, what + f"; {ended} ended, a fresh lane starts when one is free"
-            return True, what + f"; {ended} ended and no fresh lane started: {killed}"  # the deck could not start one, and said why
+            return True, what + f"; no fresh lane started: {killed}"  # the deck could not start one: its own words for why
         if active:
             return True, what + f"; its lane was not restarted: {refused}"
         if not self.deck.queued(challenge_id):

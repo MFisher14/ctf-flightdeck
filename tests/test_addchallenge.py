@@ -1003,6 +1003,54 @@ def test_attach_names_the_fresh_lane_of_each_lane_it_restarts_and_says_when_none
     asyncio.run(main())
 
 
+def test_attach_says_so_when_only_some_fresh_lanes_started_and_when_none_could(tmp_path):
+    from ctf_flightdeck.core import interventions as iv
+
+    files = [tmp_path / name for name in ("one.bin", "two.bin")]
+    for file in files:
+        file.write_bytes(b"x")
+
+    async def main():
+        with busy_lanes() as server:
+            run = prepare_run(options(tmp_path, server))
+            run.release()
+            await run.add_challenge(NewChallenge(name="Doll", description="d"))
+            for _ in range(500):
+                if run.deck.lanes:
+                    break
+                await asyncio.sleep(0.01)
+            deck = run.deck
+            assert deck.apply(iv.Fork("L01", approach="the other way")).ok and len(deck.lanes_on("doll")) == 2
+            apply = deck.apply
+
+            def held_after_the_first(what, **kw):  # the queue is held once the first lane has restarted
+                outcome = apply(what, **kw)
+                deck.hold_queue("the model API refuses the key")
+                return outcome
+
+            deck.apply = held_after_the_first
+            ok, told = await run.attach_files("doll", files[:1])
+            deck.apply = apply
+            assert ok and told == "attached one.bin to doll; L01, L02 restarted as L03, and 1 more starts when a lane is free"
+            assert [lane.id for lane in deck.lanes_on("doll")] == ["L03"] and deck.queued("doll")
+            assert deck.release_hold().ok and [lane.id for lane in deck.lanes_on("doll")] == ["L03", "L04"]
+            assert deck.apply(iv.Kill("L04", requeue=False)).ok  # one lane left, and the next one cannot start
+
+            def no_room(lane, challenge):
+                raise RuntimeError("no room for a workspace")
+
+            start, run.driver.start = run.driver.start, no_room
+            ok, told = await run.attach_files("doll", files[1:])
+            run.driver.start = start
+            await run.shutdown()
+            run.close()
+            assert ok and told == ("attached two.bin to doll; no fresh lane started: "
+                                   "Killed L03; a fresh lane could not start on Doll: no room for a workspace")
+            assert not deck.lanes_on("doll") and not deck.queued("doll") and "a lane starts" not in told
+
+    asyncio.run(main())
+
+
 # ---------------------------------------------------------------------- a drop anywhere, and the file window
 
 
