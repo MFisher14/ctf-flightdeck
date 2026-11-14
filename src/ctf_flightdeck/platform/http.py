@@ -202,7 +202,11 @@ def parse_path(where: str, value: object) -> JsonPath:
         elif match["index"] is not None:
             steps.append(int(match["index"]))
         else:
-            steps.append(next(part for part in (match["name"], match["single"], match["double"]) if part is not None))
+            name = next(part for part in (match["name"], match["single"], match["double"]) if part is not None)
+            if untrusted(name, one_line=True) != name:  # the pre-flight and `http check` show the path as it is written
+                raise ValueError(f"{where}: a quoted name holds a control or invisible character (bidi, zero-width, C1): "
+                                 "a path may hold only characters that show as themselves")
+            steps.append(name)
         at = match.end()
     if len(steps) > MAX_STEPS:
         raise ValueError(f"{where} has more than {MAX_STEPS} steps")

@@ -103,6 +103,17 @@ def test_a_path_outside_the_subset_is_refused_by_name(path):
         parse_path("http.list.ref", path)
 
 
+@pytest.mark.parametrize("path", ["$['tok‮neg']", '$["a\u009b2J"]', "$['a​b']", "$['a\x7f']", "$['a⁦b']"])
+def test_a_quoted_name_that_does_not_show_as_itself_is_refused(path):
+    """The pre-flight and `http check` print a path as the table writes it: a bidi override,
+    a C1 control (\\x9b starts a terminal's control sequence) or a zero-width character would
+    make that line read as something it is not."""
+    with pytest.raises(ValueError, match=r"^http\.auth\.token_path: a quoted name holds a control or invisible character") as caught:
+        parse_path("http.auth.token_path", path)
+    assert path[3:-2] not in str(caught.value)
+    assert parse_path("p", "$['café key']").find({"café key": 1}) == [1]  # a name that shows as itself is fine
+
+
 def test_a_missing_list_is_told_from_an_empty_one():
     """A key that is not there is the wrong answer; a list that is there and empty is an answer."""
     path = parse_path("p", "$.data[*].id")

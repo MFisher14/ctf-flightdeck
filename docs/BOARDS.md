@@ -323,7 +323,8 @@ an rCTF instance (start it on the site), and counts no tries there: rCTF has non
 
 For another platform, write the routes yourself: its browser's network tab shows them.
 `flightdeck http example --routes` prints rCTF's table to edit. A request is `[METHOD, PATH]`;
-a path into an answer is `$` followed by `.name`, `['name']`, `[n]`, `[*]` or `.*`.
+a path into an answer is `$` followed by `.name`, `['name']`, `[n]`, `[*]` or `.*`. A quoted name
+may not hold a control or invisible character (the pre-flight shows the path as it is written).
 
 ```toml
 [http]
