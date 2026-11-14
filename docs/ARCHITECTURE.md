@@ -229,6 +229,17 @@ take the palette before Textual reads their styles and register it as their Text
 `FlightdeckApp.set_palette()` (`/theme`) repaints what is on screen: the focus view empties its
 transcript log and writes it again.
 
+**Choosing a look** (P67). `/theme` and `/layout` alone open `screens.Picker`, one dialog for
+both: rows of `Choice` (a name, a few words, and why it cannot be chosen), a `preview` it calls
+with the row the cursor reaches, and an answer of `(name, save)` or `None`. The app does the
+rest (`theme_picker`, `layout_picker`): `preview` is `set_palette` or `set_layout`, `None` puts
+back the palette or layout there was, and `keep_look` says what happened, after
+`config_edit.save_console` when the answer saves. `themes_listed()` loads every theme the list
+names when it opens, which is the one place a theme file is read without being asked for by
+name. `/config`'s dialog (`screens.ConfigPrompt`, which answers a `Settings`) carries the
+layout, the theme and whether to save them; `config_dialog` checks all of it before it changes
+anything.
+
 **Title and bell** (P61). `console/terminal.py`'s `Beacon` is what the console says outside its
 window: `title_text(need, held)` makes the terminal's title from a count and fixed words (no
 text from a challenge can be in it), `show()` writes it only when the text changes and writes
@@ -1115,13 +1126,13 @@ start) is no solve during the run.
 
 | Piece | Where | Job |
 |---|---|---|
-| Config | `config.py` | The config file, the keys file, and what `flightdeck init` writes. [More](#config). |
+| Config | `config.py`, `config_edit.py` | The config file, the keys file, what `flightdeck init` writes, and the one place a config is changed in afterwards. [More](#config). |
 | Credentials | `credentials.py`, `transcript.py` | The second redaction layer: the value of anything shaped like a credential is taken out of what flightdeck keeps and shows. [More](#credentials). |
 | Flag formats | `flagformat.py` | The one check for a flag format, at every loader (a board's `board.json`, an event profile, `--flag-format`) and again in `DeckConfig`: one line, no control, invisible or bidirectional character, at most 200 characters, a Python regular expression that compiles. An error names where the format came from and the rule, and shows the format escaped and cut short. |
 
 ### Config
 
-Where: `config.py`.
+Where: `config.py`, `config_edit.py`.
 
 `~/.config/ctf-flightdeck/config.toml`: the API (`provider` openai or anthropic, base URL, the name
 of the key's environment variable, never the key; with anthropic, `fast`: the ladder models called
@@ -1142,6 +1153,16 @@ Its `title` and `bell` (default true) are whether the console writes the termina
 rings its bell ([Layouts and themes](#layouts-and-themes), "Title and bell").
 `[plugins.NAME]` tables, each with a `path`, name the plugins the player added
 ([Plugins](#plugins)): only the names and the paths are checked here.
+
+**Changing the file** (P67). After `flightdeck init` has written a config, flightdeck changes it
+only through `config_edit.rewrite()`: read the file byte for byte, write the change in place
+(a config that is a link stays one), have the caller load the file again, and write the old
+text back when it does not load or does not hold the change. Three callers: `pack.write_config`
+(`[l1] pack`), `plugins.manifest.enable` (a `[plugins.NAME]` table at the end) and
+`save_console()` (the console's `theme` and `layout`). `set_keys()` edits a table by lines, so
+comments stay; `save_console()` also checks, before it writes, that the new text parses to the
+old settings with those keys changed and nothing else. Every failure is an `EditError` that
+names the file, the reason and how the file was left.
 
 Unknown keys fail loudly. Keys are read from the environment, else
 `~/.config/ctf-flightdeck/keys.env` (`keys.py`, chmod 600).

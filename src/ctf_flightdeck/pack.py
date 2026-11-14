@@ -44,7 +44,8 @@ What a pack.toml says is shown through untrusted(): it comes from the network.
 
 The config is edited as text, so its comments stay: only the `pack` and `image` lines of the
 [l1] table change (the table is added when it is missing). The edited file must load; when it
-does not, the file is put back as it was and the error says so.
+does not, the file is put back as it was and the error says so (config_edit.py, where every
+change to a config is made).
 """
 
 from __future__ import annotations
@@ -423,46 +424,18 @@ def image_command(info: PackInfo, lane_image: str, *, docker: str | None = None)
 
 # ---------------------------------------------------------------- the config's [l1] table
 
-_HEADER = re.compile(r"^\s*\[([^\]]+)\]\s*(#.*)?$")
-
 
 def set_l1(text: str, pack: Path, image: str | None, lane_tools: bool | None = None) -> str:
     """`text` (a config file) with `[l1] pack` set to `pack`, and `image` set to `image` (None:
     an image line that is there is commented out). `lane_tools`: True sets it, False comments
     a line that is there out, None leaves it. Everything else stays as it is, comments
-    included; a commented `# pack = ...` line is where the value goes."""
-    lines = text.splitlines()
-    start = next((i for i, line in enumerate(lines) if (m := _HEADER.match(line)) and m.group(1).strip() == "l1"), None)
-    if start is None:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines += ["[l1]"]
-        start = len(lines) - 1
-    end = next((i for i in range(start + 1, len(lines)) if _HEADER.match(lines[i])), len(lines))
-    body = lines[start + 1:end]
-    body = _set_key(body, "pack", f'pack = {_toml(str(pack))}')
-    body = _set_key(body, "image", f"image = {_toml(image)}" if image is not None else None)
+    included; a commented `# pack = ...` line is where the value goes (config_edit.set_keys)."""
+    from .config_edit import set_keys
+
+    lines: dict[str, str | None] = {"pack": f"pack = {_toml(str(pack))}", "image": f"image = {_toml(image)}" if image is not None else None}
     if lane_tools is not None:
-        body = _set_key(body, "lane_tools", "lane_tools = true" if lane_tools else None)
-    out = "\n".join(lines[:start + 1] + body + lines[end:])
-    return out + "\n"
-
-
-def _set_key(body: list[str], key: str, line: str | None) -> list[str]:
-    live = re.compile(rf"^\s*{key}\s*=")
-    dead = re.compile(rf"^\s*#\s*{key}\s*=")
-    at = next((i for i, text in enumerate(body) if live.match(text)), None)
-    if at is not None:
-        if line is None:
-            return body[:at] + ["# " + body[at].lstrip()] + body[at + 1:]
-        return body[:at] + [line] + body[at + 1:]
-    if line is None:
-        return body
-    at = next((i for i, text in enumerate(body) if dead.match(text)), None)
-    if at is not None:
-        return body[:at + 1] + [line] + body[at + 1:]  # under the example line, which stays
-    last = next((i for i in range(len(body) - 1, -1, -1) if body[i].strip()), -1)
-    return body[:last + 1] + [line] + body[last + 1:]
+        lines["lane_tools"] = "lane_tools = true" if lane_tools else None
+    return set_keys(text, "l1", lines)
 
 
 def _toml(value: str) -> str:
@@ -470,26 +443,21 @@ def _toml(value: str) -> str:
 
 
 def write_config(path: Path, pack: Path, image: str | None, lane_tools: bool | None = None) -> None:
-    """Point the config at `path` to the pack. The edited file must load, or it is put back."""
+    """Point the config at `path` to the pack. The edited file must load, or it is put back
+    (config_edit.rewrite, the one place a config is changed in)."""
     from .config import ConfigError, load_config
+    from .config_edit import EditError, rewrite
 
-    try:
-        before = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raise PackError(f"there is no config at {path}: run `flightdeck init` first, then this again") from None
-    except (OSError, UnicodeDecodeError) as exc:
-        raise PackError(f"cannot read the config {path}: {exc}") from None
-    after = set_l1(before, pack, image, lane_tools)
-    if after == before:
-        return
-    path.write_text(after, encoding="utf-8")
-    try:
+    def check() -> None:
         loaded = load_config(path)
         if loaded.l1.pack != pack or loaded.l1.image != image or (lane_tools is not None and loaded.l1.lane_tools != lane_tools):
             raise ConfigError(f"{path}: [l1] did not take the pack")
-    except ConfigError as exc:
-        path.write_text(before, encoding="utf-8")
-        raise PackError(f"the config did not load with the pack in it, so it was put back as it was: {exc}") from None
+
+    try:
+        rewrite(path, lambda text: set_l1(text, pack, image, lane_tools), check, what="the pack",
+                first="run `flightdeck init` first, then this again")
+    except EditError as exc:
+        raise PackError(str(exc)) from None
 
 
 def _show(text: str) -> str:

@@ -542,11 +542,13 @@ Choose one in your config, or switch in a running console:
 layout = "deck"     # "simple" (the default) or "deck"
 ```
 
-`/layout deck` and `/layout simple` switch for the rest of the run, and `/layout` alone goes to
-the other one; the selection, the filter and anything you were typing stay. The status line
-says which line in your config keeps it. At 64 columns or fewer the compact layout (below)
-shows, whichever you chose. `flightdeck mock` opens in your config's layout too, and
-`flightdeck doctor` measures your terminal in it.
+`/layout deck` and `/layout simple` switch for the rest of the run; the selection, the filter
+and anything you were typing stay. `/layout` alone opens a list of the two: the console behind
+it is laid out as the row the cursor is on, Enter keeps that layout for this run, `esc` puts
+back the one you had, and `s` keeps it and saves it in your config
+([Trying and saving a look](#trying-and-saving-a-look)). At 64 columns or fewer the compact
+layout (below) shows, whichever you chose. `flightdeck mock` opens in your config's layout too,
+and `flightdeck doctor` measures your terminal in it.
 
 In both layouts an empty board says what to do in the page itself: `No challenges yet. Type
 /new to hand one over (its text, files, a screenshot).` on a board you fill, or that the
@@ -563,9 +565,12 @@ A theme is the console's colours; the layout, the chips and the marks stay as th
 theme = "nord"      # flightdeck (the default), light, nord, gruvbox, dracula, or your own
 ```
 
-`/theme` in a running console lists the themes and marks the one in use; `/theme nord` repaints
-everything for the rest of the run, and the status line says which line in your config keeps
-it. `flightdeck mock` and the home screen open in your config's theme.
+`/theme nord` in a running console repaints everything for the rest of the run. `/theme` alone
+opens a list of the themes, the built-in ones and your own, with the one in use marked: the
+console behind it is drawn in the theme the cursor is on, Enter keeps it for this run, `esc`
+puts back the one you had, and `s` keeps it and saves it in your config
+([Trying and saving a look](#trying-and-saving-a-look)). `flightdeck mock` and the home screen
+open in your config's theme.
 
 ![The deck layout in the light theme](screenshots/theme-light.png)
 
@@ -627,7 +632,40 @@ used stops the command that loads your config (`play`, `doctor`, `mock`, the hom
 with that error; flightdeck never falls back to the default without telling you. In a running
 console, `/theme NAME` with a broken or unknown theme is a warning, and the theme in use stays.
 `/theme NAME` reads the file again each time, so you can edit a theme and try it without
-leaving the run.
+leaving the run. The list `/theme` opens reads every theme file in the folder when it opens:
+one that cannot be used is listed with its reason under its name, and neither the cursor nor a
+click goes to it.
+
+### Trying and saving a look
+
+`/theme` and `/layout` alone each open a small list at the right edge of the console, which
+stays as bright as it was behind it:
+
+| Key | What it does |
+|---|---|
+| `↑` `↓` | Move to a row. The console is drawn in it at once: every lane, the header, an open lane's transcript. |
+| `enter` | Keep it for this run. Your config file is not touched. |
+| `s` | Keep it, and save it: `theme = "NAME"` or `layout = "NAME"` under `[console]` in your config file, so the next console opens in it. |
+| `esc` | Close the list and put back what you had. |
+
+Saving changes that one line and leaves every other line of your config as it was, comments
+included. Where the line goes: over the `theme` or `layout` line that is there; else under a
+commented example of it (`# theme = "flightdeck"`); else at the end of the `[console]` table;
+and when the file has no `[console]` table, in a new one at its end. Before anything is
+written flightdeck checks that the new text reads as your config with that one setting changed
+and nothing else, and afterwards it loads the file as a console would. When either check
+fails, or the file cannot be written, the status line says why, the file is as it was, and the
+run keeps the look you chose: nothing is lost, you write the line yourself. That happens with
+a config flightdeck cannot edit line by line, such as one that sets `console.theme = "..."`
+outside a `[console]` table.
+
+`/config` shows the layout and the theme beside the run's other settings, and a third list
+under them says whether they last `for this run` or are also `saved in your config file`.
+There the themes are listed by name only; one that cannot be used is refused when you apply,
+with its reason, and nothing is changed.
+
+With no config file there is nothing to save in: `flightdeck mock` before `flightdeck init`
+has none. The list then has no `s` row and says that a choice lasts for the run.
 
 ### The terminal's title and bell
 
@@ -715,7 +753,8 @@ it cannot check: submit the flag on the platform yourself, then press `a` if it 
 `off`, you submit it and answer `a` or `d`).
 
 To turn auto approve on while a run is going, type `/config submit auto` in the console
-(`/config submit confirm` turns it off, and `/config` alone shows the run's settings). To start
+(`/config submit confirm` turns it off, and `/config` alone opens the settings: these two, and
+the console's layout and theme, [which it can save](#trying-and-saving-a-look)). To start
 with it on, pass `--submit auto` or set `submit = "auto"` under `[lanes]` in your config.
 `/config lanes 8` changes how many lanes run at once, and `/config lanes unlimited` lifts the
 limit (`max_lanes = "unlimited"` in the config does the same from the start).
@@ -1389,7 +1428,8 @@ mouse to your terminal: its own text selection; the console is driven by keys) a
 `bell` (`false` turns off the count in the terminal's title, or the bell:
 [The terminal's title and bell](#the-terminals-title-and-bell)); your own
 themes are `NAME.toml` files in a `themes` folder beside the config file, read only when the config or `/theme` names
-one. `[plugins.NAME]` tables, each with the `path` of a plugin's folder, are written by
+one, or when you open the list of themes. The console writes `theme` and `layout` there when you
+save one ([Trying and saving a look](#trying-and-saving-a-look)). `[plugins.NAME]` tables, each with the `path` of a plugin's folder, are written by
 `flightdeck plugin add` ([Plugins](PLUGINS.md)); to stop allowing a plugin, take its table out.
 
 To remove flightdeck: `uv tool uninstall ctf-flightdeck` (or `pipx uninstall ctf-flightdeck`),

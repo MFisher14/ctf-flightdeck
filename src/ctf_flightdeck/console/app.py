@@ -22,6 +22,7 @@ terminal's clipboard (OSC 52) and to the operating system's, by its tool (clipbo
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -1259,19 +1260,70 @@ class FlightdeckApp(App[None]):
 
     def switch_layout(self, arg: str) -> None:
         """/layout simple|deck: the console's layout for the rest of this run (the config file
-        keeps its own); /layout alone: the other one. Any other word is a warning, and the
-        layout stays."""
+        keeps its own); /layout alone: the picker (layout_picker). Any other word is a warning,
+        and the layout stays."""
         word = arg.strip().lower()
         if not word:
-            word = next(name for name in LAYOUTS if name != self.layout)
-        elif word not in LAYOUTS:  # not shown: it is not a layout
+            self.layout_picker()
+            return
+        if word not in LAYOUTS:  # not shown: it is not a layout
             self.warn(f"/layout takes {' or '.join(LAYOUTS)}")
             return
         self.set_layout(word)
-        keep = (f'. To keep it: layout = "{word}" under [console] in {self.config_path}' if self.config_path
-                else " (this console has no config file)")
-        narrow = "; this terminal is narrow, so the compact layout shows" if views.compact(self.size.width) else ""
-        self.say(f"layout {word} for this run{keep}{narrow}")
+        self.keep_look(layout=word)
+
+    def layout_picker(self) -> None:
+        """/layout alone: the two layouts in a list (screens.Picker). The console is drawn in
+        the one the cursor is on; Enter keeps it for this run, s keeps and saves it, and esc
+        puts back the layout there was."""
+        from .commands import LAYOUT_HELP
+        from .screens import Choice, Picker
+
+        before = self.layout
+
+        def show(name: str) -> None:
+            if name != self.layout:  # the same layout: nothing to lay out again
+                self.set_layout(name)
+
+        def done(answer: tuple[str, bool] | None) -> None:
+            if answer is None:
+                show(before)
+                return
+            name, save = answer
+            show(name)
+            self.keep_look(save=save, layout=name)
+
+        narrow = "This terminal is narrow, so the compact layout shows in both." if views.compact(self.size.width) else ""
+        self.push_screen(Picker("layout", [Choice(name, LAYOUT_HELP[name]) for name in LAYOUTS], in_use=before, preview=show,
+                                save_to=self.config_path, note=narrow), done)
+
+    def keep_look(self, *, save: bool = False, theme: str | None = None, layout: str | None = None) -> None:
+        """Say that the console is in the theme or the layout just chosen, and for how long
+        (look_said)."""
+        text, ok = self.look_said(save=save, theme=theme, layout=layout)
+        self.say(text, "information" if ok else "warning")
+
+    def look_said(self, *, save: bool = False, hint: bool = True, theme: str | None = None, layout: str | None = None) -> tuple[str, bool]:
+        """What to say once the console is in the theme or the layout just chosen (or both),
+        and whether it went well. `save`: write it under [console] in the player's config
+        first (config_edit.save_console, which leaves the file as it was when it cannot); the
+        run keeps the look whether that worked or not, and a save that failed is said with the
+        reason and is not well. `hint`: say how to keep a look that was not saved."""
+        from ..config_edit import CONSOLE_KEYS, EditError, save_console
+
+        chosen = {"theme": theme, "layout": layout}
+        said = " and ".join(f"{key} {chosen[key]}" for key in CONSOLE_KEYS if chosen[key] is not None)
+        narrow = "; this terminal is narrow, so the compact layout shows" if layout is not None and views.compact(self.size.width) else ""
+        if not self.config_path:
+            return f"{said} for this run (this console has no config file){narrow}", True
+        if not save:
+            command = " or ".join(f"/{key}" for key in CONSOLE_KEYS if chosen[key] is not None)
+            return f"{said} for this run{f'. To keep it: {command}, then s' if hint else ''}{narrow}", True
+        try:
+            save_console(Path(self.config_path), theme=theme, layout=layout)
+        except EditError as exc:
+            return f"{said} for this run; it was not saved: {exc}", False
+        return f"{said}, saved in your config file: {self.config_path}{narrow}", True
 
     def switch_details(self) -> None:
         """/details: the lane view's details switch, as ctrl+o there (FocusScreen.action_details).
@@ -1283,14 +1335,12 @@ class FlightdeckApp(App[None]):
         focus.action_details()
 
     def set_theme(self, arg: str) -> None:
-        """/theme: the themes there are; /theme NAME: the console's colours for the rest of
-        this run (the config file keeps its own). A name that is no theme, or a theme file
-        that cannot be used, is a warning, and the theme in use stays."""
+        """/theme alone: the picker (theme_picker); /theme NAME: the console's colours for the
+        rest of this run (the config file keeps its own). A name that is no theme, or a theme
+        file that cannot be used, is a warning, and the theme in use stays."""
         name = arg.strip()
         if not name:
-            built_in, own = themes.names(self.themes_folder)
-            in_use = theme.active().name
-            self.say("themes: " + ", ".join(f"{one} (in use)" if one == in_use else one for one in built_in + own))
+            self.theme_picker()
             return
         if themes.NAME.fullmatch(name) is None:  # not shown: it is not a name
             self.warn("/theme takes a theme's name (lower-case letters, digits, - and _); /theme alone lists them")
@@ -1304,44 +1354,114 @@ class FlightdeckApp(App[None]):
             self.warn(str(exc))
             return
         self.set_palette(palette)
-        keep = (f'. To keep it: theme = "{name}" under [console] in {self.config_path}' if self.config_path
-                else " (this console has no config file)")
-        self.say(f"theme {name} for this run{keep}")
+        self.keep_look(theme=name)
+
+    def themes_listed(self) -> tuple[dict[str, themes.Palette], dict[str, str], list[tuple[str, str]]]:
+        """The themes a list offers, each read now: (the palettes that load by name, why each
+        of the others cannot be used, every (name, "built in" or "yours") in the list's
+        order). This reads every theme file of the player's folder whose name is a theme's
+        (themes.names), which only a list the player asked for does: /theme alone and /config."""
+        palettes: dict[str, themes.Palette] = {}
+        problems: dict[str, str] = {}
+        built_in, own = themes.names(self.themes_folder)
+        listed = [(name, kind) for kind, names in (("built in", built_in), ("yours", own)) for name in names]
+        for name, _ in listed:
+            try:
+                palettes[name] = themes.load(name, self.themes_folder)
+            except themes.ThemeError as exc:  # its text names the theme file and shows no value from it
+                problems[name] = str(exc).removeprefix(f"{self.themes_folder}{os.sep}")  # the file's name: the folder is said once
+        return palettes, problems, listed
+
+    def theme_picker(self) -> None:
+        """/theme alone: the themes in a list (screens.Picker), the built-in ones and the
+        player's own. The console is drawn in the one the cursor is on, a transcript's lines
+        included; Enter keeps it for this run, s keeps and saves it, and esc puts back the
+        palette there was. A theme file that cannot be used is listed with its reason and
+        cannot be chosen."""
+        from .screens import Choice, Picker
+
+        before = theme.active()
+        palettes, problems, listed = self.themes_listed()
+
+        def show(palette: themes.Palette) -> None:
+            if palette != theme.active():  # the same colours: nothing to draw again
+                self.set_palette(palette)
+
+        def done(answer: tuple[str, bool] | None) -> None:
+            if answer is None:
+                show(before)
+                return
+            name, save = answer
+            show(palettes[name])
+            self.keep_look(save=save, theme=name)
+
+        choices = [Choice(name, kind, problems.get(name, "")) for name, kind in listed]
+        own = f"Your own themes are NAME.toml files in {self.themes_folder}" if self.themes_folder is not None else ""
+        self.push_screen(Picker("theme", choices, in_use=before.name, preview=lambda name: show(palettes[name]),
+                                save_to=self.config_path, note=own), done)
 
     def config_dialog(self) -> None:
-        """/config alone: the settings dialog (ConfigPrompt). What it changes goes through the
-        same deck calls as /config lanes and /config submit, so the event's rules hold."""
-        from .screens import ConfigPrompt
+        """/config alone: the settings dialog (ConfigPrompt). What it changes for the run goes
+        through the same deck calls as /config lanes and /config submit, so the event's rules
+        hold, and through set_layout and set_palette as /layout and /theme; asked to, it
+        saves the layout and the theme as the list's s does (look_said). Everything asked for
+        is checked before anything changes: lanes that are no number, or a theme that cannot
+        be used, is a warning and nothing was changed."""
+        from .screens import ConfigPrompt, Settings
 
         deck, cfg = self.deck, self.deck.config
-        before = ("unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes), cfg.submit)
+        before = Settings("unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes), cfg.submit, self.layout, theme.active().name)
 
-        def done(answer: tuple[str, str] | None) -> None:
+        def done(answer: Settings | None) -> None:
             if answer is None or answer == before:
                 return
-            lanes, submit = answer
-            said, ok = [], True
-            if lanes.lower() != before[0]:
-                value = lanes.lower()
-                if value in ("unlimited", "max", "∞"):
-                    outcome = deck.set_max_lanes(UNLIMITED_LANES)
-                elif value.isascii() and value.isdigit():
-                    outcome = deck.set_max_lanes(int(value))
-                else:
-                    self.warn("Lanes at once takes a whole number, 1 or more, or 'unlimited'; nothing was changed")
+            lanes, palette = answer.lanes.lower(), None
+            if lanes == before.lanes:
+                most = None
+            elif lanes in ("unlimited", "max", "∞"):
+                most = UNLIMITED_LANES
+            elif lanes.isascii() and lanes.isdigit():
+                most = int(lanes)
+            else:
+                self.warn("Lanes at once takes a whole number, 1 or more, or 'unlimited'; nothing was changed")
+                return
+            if answer.theme != before.theme:
+                try:
+                    palette = themes.load(answer.theme, self.themes_folder)
+                except themes.ThemeError as exc:  # its text names the theme file, or says the name is no theme
+                    why = f"theme {answer.theme} {exc}" if isinstance(exc, themes.NoSuchTheme) else str(exc)
+                    self.warn(f"{why}; nothing was changed")
                     return
+            said, ok = [], True
+            if most is not None:
+                outcome = deck.set_max_lanes(most)
                 said.append(outcome.message)
                 ok = ok and outcome.ok
-            if submit != before[1]:
-                outcome = deck.set_submit(submit)
+            if answer.submit != before.submit:
+                outcome = deck.set_submit(answer.submit)
                 said.append(outcome.message)
                 ok = ok and outcome.ok
-            self.say(" ".join(said), "information" if ok else "warning")
+            if palette is not None:
+                self.set_palette(palette)
+            if answer.layout != before.layout:
+                self.set_layout(answer.layout)
+            if answer.save:  # both, as the dialog shows them: what the console is in is what the config then says
+                look = {"layout": answer.layout, "theme": answer.theme}
+            else:
+                look = {key: getattr(answer, key) for key in ("layout", "theme") if getattr(answer, key) != getattr(before, key)}
+            if look:
+                text, fine = self.look_said(save=answer.save, hint=False, **look)
+                said.append(text[0].upper() + text[1:])
+                ok = ok and fine
+            if said:  # (lanes typed another way, "04" for 4, change nothing and say so; "UNLIMITED" for unlimited says nothing)
+                self.say(". ".join(said), "information" if ok else "warning")
             self.refresh_view()
 
         lanes_note = f"the event's rules allow {cfg.lanes_ceiling} at most" if cfg.lanes_ceiling is not None else ""
         submit_note = "the event's rules do not let flightdeck submit, so auto is refused" if cfg.submit_ceiling != "auto" else ""
-        self.push_screen(ConfigPrompt(*before, lanes_note=lanes_note, submit_note=submit_note, config_path=self.config_path), done)
+        built_in, own = themes.names(self.themes_folder)
+        self.push_screen(ConfigPrompt(before, themes=(*built_in, *own), lanes_note=lanes_note, submit_note=submit_note,
+                                      config_path=self.config_path), done)
 
     def unhold(self) -> None:
         """/unhold: lift the hold on the queue (Deck.release_hold), so queued lanes start again."""

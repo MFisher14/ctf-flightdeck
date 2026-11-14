@@ -16,6 +16,16 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   layouts and on a phone, and the lanes panel's bottom border says `space peek`.
 - In `flightdeck mock`, `,` freezes the clock, since `space` is the peek now; `.` still steps
   it.
+- `/theme` and `/layout` alone open a list you try before you choose. The console behind the
+  list is drawn in the row the cursor is on; Enter keeps it for this run, `esc` puts back what
+  you had, and `s` keeps it and saves it in your config (`theme = "nord"` or `layout = "deck"`
+  under `[console]`, every other line of the file as it was). A theme file that cannot be used
+  is listed with its reason and cannot be chosen. `/config` has the layout and the theme too,
+  with a choice to save them. A save that cannot be done says why, leaves the file as it was,
+  and the run keeps the look. `/layout` alone no longer switches to the other layout by
+  itself: `/layout deck` and `/layout simple` still do, at once. With no config file (the mock
+  before `flightdeck init`) a choice lasts for the run, and the list says so
+  ([the guide](docs/GUIDE.md#layouts)).
 - The `/` menu forgives. It finds a command from the second word of its name (`/over` lists
   `/takeover`) and from an alias (`/q` and `/exit` for `/quit`, `/settings` for `/config`,
   `/lanes` for `/back`, each shown beside the name). After a command's name it lists what the

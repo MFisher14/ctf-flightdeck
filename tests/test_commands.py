@@ -169,7 +169,7 @@ def test_theme_takes_a_name_or_nothing_and_acts_on_no_lane():
     assert (parse("/theme l7").lane, parse("/theme l7").arg) == (None, "l7")  # a theme file may be named like a lane
     assert [c.text for c in complete("/th")] == ["/theme "]
     labels = {c.label: c.help for c in complete("/")}
-    assert labels["/theme [name]"] == "the console's colours for this run; alone: the themes you have"
+    assert labels["/theme [name]"] == "the console's colours; alone: try the themes you have, and save one"
     names = [c.name for c in COMMANDS]
     assert names.index("theme") == names.index("config") + 1  # beside the run's other settings
 

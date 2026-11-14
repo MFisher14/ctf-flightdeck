@@ -49,7 +49,8 @@ leaves the terminal's title alone, or never rings its bell: console/terminal.py)
 built-in palette or the name of a theme file in the `themes` folder beside the config
 (themes.py). The palette is loaded here, so a theme that cannot be used stops the command that
 loads the config; the default is never used in its place. load_console() reads this table
-alone, for the mock, which needs no config.
+alone, for the mock, which needs no config. A running console writes `theme` and `layout` here
+when the player saves one (config_edit.save_console).
 
 [plugins.NAME] tables name the plugins the player added (`flightdeck plugin add`): NAME is the
 platform an event profile may then select, `path` the plugin's folder. Only the names and the
@@ -661,12 +662,14 @@ dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log an
 # [console]
 # How the console looks. layout: "simple" (the default) shows one list of lanes, a short header and
 # only the keys that apply now; "deck" is the whole dashboard, with the board and every column.
-# In the console, /layout changes it for the rest of the run.
+# In the console, /layout deck changes it for the rest of the run; /layout alone lists both, and
+# s there saves the one you chose in this file.
 # layout = "simple"
 # theme: the console's colours. Built in: "flightdeck" (the default), "light", "nord", "gruvbox"
 # and "dracula". Your own: NAME for the file themes/NAME.toml in this file's folder (docs/GUIDE.md,
 # "Themes", gives its keys). A theme that cannot be used is an error, never the default in its
-# place. In the console, /theme NAME tries one for the rest of the run.
+# place. In the console, /theme NAME tries one for the rest of the run; /theme alone lists them,
+# and s there saves the one you chose in this file.
 # theme = "flightdeck"
 # mouse: false leaves the mouse to your terminal, so you select and copy text the terminal's own
 # way; clicks and the wheel then do nothing in the console, and every key works as before.
