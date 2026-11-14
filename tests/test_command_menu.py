@@ -260,6 +260,37 @@ def test_a_challenges_name_is_drawn_as_untrusted_text_in_the_menu():
     drive(app, script, SIZE)
 
 
+HOSTILE_ID = "od\x1b]0;T\x07d"  # ESC ] 0 ; ... BEL: the sequence that sets a terminal's title
+SAFE_ID = "od^[]0;T^Gd"  # the same id as text.untrusted() shows it
+
+
+def test_a_challenges_id_is_drawn_as_untrusted_text_in_the_menus_row():
+    deck, app = console(by_hand=True)
+    deck.release([Challenge(HOSTILE_ID, "Odd one", "misc", 100)], [])  # the id is the platform's text, like the name
+
+    async def script(pilot):
+        await press(pilot, "slash", *"queue", "space")
+        assert listed(app) == [f"/queue {HOSTILE_ID}"]  # the row is this challenge's
+        assert rows(app) == [f"/queue {SAFE_ID} Odd one · new"]  # each control character as a marker, none dropped
+        assert "\x1b" not in menu_text(app) and "\x07" not in menu_text(app)
+
+    drive(app, script, SIZE)
+
+
+def test_a_row_put_into_the_bar_is_untrusted_text_too():
+    deck, app = console(by_hand=True)
+    deck.release([Challenge(HOSTILE_ID, "Odd one", "misc", 100)], [])
+
+    async def script(pilot):
+        await press(pilot, "slash", *"queue", "space", "tab")
+        assert bar(app).field.value == f"/queue {SAFE_ID}"  # tab: the bar draws what it holds
+        await press(pilot, "escape", "slash", *"queue", "space", "down", "enter")
+        assert bar(app).field.value == f"/queue {SAFE_ID}"  # enter on a chosen row: the same way in
+        assert deck.challenges[HOSTILE_ID].status is ChallengeStatus.NEW  # filled, not run
+
+    drive(app, script, SIZE)
+
+
 def test_a_suggestion_that_arrives_while_the_menu_is_open_leads_it_unless_the_arrow_keys_chose_a_row():
     deck, app = console(by_hand=True)
     release(deck, "alpha")
