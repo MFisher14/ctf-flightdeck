@@ -294,13 +294,14 @@ def test_a_console_told_to_leave_the_title_and_the_bell_writes_neither(written):
     assert ours(written) == []
 
 
-@pytest.mark.parametrize("table, title_on, bell_on", [
-    ("", True, True),
-    ("[console]\ntitle = false\n", False, True),
-    ("[console]\nbell = false\n", True, False),
-    ("[console]\ntitle = false\nbell = false\n", False, False),
+@pytest.mark.parametrize("table, title_on, mock_bell, run_bell", [
+    ("", True, False, True),  # bell left out: a run rings, the mock does not (P70)
+    ("[console]\ntitle = false\n", False, False, True),
+    ("[console]\nbell = true\n", True, True, True),  # written: the mock rings too
+    ("[console]\nbell = false\n", True, False, False),
+    ("[console]\ntitle = false\nbell = false\n", False, False, False),
 ])
-def test_the_mock_and_a_run_take_the_title_and_the_bell_from_the_config(tmp_path, monkeypatch, table, title_on, bell_on):
+def test_the_mock_and_a_run_take_the_title_and_the_bell_from_the_config(tmp_path, monkeypatch, table, title_on, mock_bell, run_bell):
     from types import SimpleNamespace
 
     from typer.testing import CliRunner
@@ -316,13 +317,27 @@ def test_the_mock_and_a_run_take_the_title_and_the_bell_from_the_config(tmp_path
     monkeypatch.setattr(FlightdeckApp, "run", lambda self, **kw: opened.append((self._beacon.title, self._beacon.bell)))
     result = CliRunner().invoke(cli.app, ["mock"])
     assert result.exit_code == 0, result.output
-    assert opened == [(title_on, bell_on)]
+    assert opened == [(title_on, mock_bell)]
 
     # what Run.app reads of a run: its console is made by the code a real run's is
     of_a_run = SimpleNamespace(config=load_config(config), deck=FakeWorld(scenarios.get("sstv")).deck, dir=tmp_path, by_hand=False,
                                release=None, shutdown=None)
     beacon = Run.app(of_a_run)._beacon
-    assert (beacon.title, beacon.bell) == (title_on, bell_on)
+    assert (beacon.title, beacon.bell) == (title_on, run_bell)
+
+
+def test_the_mock_with_no_config_file_rings_no_bell(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from ctf_flightdeck import cli
+
+    monkeypatch.delenv("FLIGHTDECK_CONFIG", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))  # no config where one is looked for
+    opened = []
+    monkeypatch.setattr(FlightdeckApp, "run", lambda self, **kw: opened.append((self._beacon.title, self._beacon.bell)))
+    result = CliRunner().invoke(cli.app, ["mock"])
+    assert result.exit_code == 0, result.output
+    assert opened == [(True, False)]  # the title still counts; only the bell waits to be asked for
 
 
 # ---------------------------------------------------------------------- a real terminal
@@ -330,10 +345,13 @@ def test_the_mock_and_a_run_take_the_title_and_the_bell_from_the_config(tmp_path
 
 def test_on_a_terminal_the_mock_sets_the_title_rings_and_puts_the_title_back_when_it_quits(tmp_path):
     """The real command on a pty, through the driver a terminal window gets: what the terminal
-    is sent while the mock runs, and after `ctrl+q`."""
+    is sent while the mock runs, and after `ctrl+q`. The mock rings only when the config says
+    `bell = true` (P70), so this one does."""
     from test_play_signals import Terminal, env_for, wait_for
 
-    term = Terminal(["mock", "--speed", "20"], env_for(tmp_path), tmp_path)
+    config = tmp_path / "config.toml"
+    config.write_text("[console]\nbell = true\n")
+    term = Terminal(["mock", "--speed", "20"], env_for(tmp_path, FLIGHTDECK_CONFIG=str(config)), tmp_path)
     try:
         first = wait_for(lambda: re.search(r"\x1b\[22;0t\x1b\]0;([^\x07]*)\x07(.)", term.text(), re.DOTALL),
                          "the title saved, then flightdeck's", term)

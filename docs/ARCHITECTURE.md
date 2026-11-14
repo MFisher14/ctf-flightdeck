@@ -269,7 +269,9 @@ and Textual's `app_suspend_signal` and `app_resume_signal` close and open it rou
 take-over. The bytes go through `FlightdeckApp._to_terminal()`, the driver's `write`, so a
 headless console's driver gets them too (`App.bell()` skips a headless driver), which is how
 `tests/test_terminal_title.py` reads them; one test there runs `flightdeck mock` on a pty.
-`Run.app()` and `flightdeck mock` pass `[console] title` and `bell`.
+`Run.app()` and `flightdeck mock` pass `[console] title`, and whether to ring from
+`ConsoleConfig.rings_bell()`: `bell` as written, and when it is left out yes in a run and no in
+the mock (P70), whose `test_on_a_terminal_…` writes `bell = true` to hear one.
 
 **The command menu** (P62). Two rules in `console/commands.py`, kept apart. `complete()` is
 loose: while the name is typed it lists a command whose name, alias (`Command.aliases`) or
@@ -1193,8 +1195,8 @@ makes false for a server on this machine when unset and true for any other), and
 ([Layouts and themes](#layouts-and-themes)): the theme's palette is loaded with the config
 (`ConsoleConfig.palette`), from a built-in or from `themes/NAME.toml` beside the config file.
 Its `mouse` (default true) is whether the console's driver asks the terminal to report the mouse.
-Its `title` and `bell` (default true) are whether the console writes the terminal's title and
-rings its bell ([Layouts and themes](#layouts-and-themes), "Title and bell").
+Its `title` (default true) and `bell` are whether the console writes the terminal's title and
+rings its bell (`bell` left out is `None`: `rings_bell(mock=)` rings in a run, not in the mock) ([Layouts and themes](#layouts-and-themes), "Title and bell").
 `[plugins.NAME]` tables, each with a `path`, name the plugins the player added
 ([Plugins](#plugins)): only the names and the paths are checked here.
 

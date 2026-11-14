@@ -45,7 +45,8 @@ itself), and `on` lists which of NOTIFY_KINDS are sent (all of them when it is l
 
 The optional [console] table says how the console looks: `layout` (LAYOUTS), `mouse` (false:
 the console never asks the terminal for the mouse), `title` and `bell` (false: the console
-leaves the terminal's title alone, or never rings its bell: console/terminal.py) and `theme`, a
+leaves the terminal's title alone, or never rings its bell: console/terminal.py; a `bell` left
+out rings in a run and not in the mock: ConsoleConfig.rings_bell) and `theme`, a
 built-in palette or the name of a theme file in the `themes` folder beside the config
 (themes.py). The palette is loaded here, so a theme that cannot be used stops the command that
 loads the config; the default is never used in its place. load_console() reads this table
@@ -244,7 +245,14 @@ class ConsoleConfig:
     palette: themes.Palette = themes.DEFAULT  # that theme's colours
     mouse: bool = True  # false: the terminal keeps the mouse (its own text selection; every key still works)
     title: bool = True  # false: the terminal's title is left alone (true: it says how many lanes need the player)
-    bell: bool = True  # false: the terminal's bell never rings (true: once each time more lanes need the player)
+    bell: bool | None = None  # rings_bell(): None (not written) rings in a run and not in the mock
+
+    def rings_bell(self, *, mock: bool) -> bool:
+        """Whether the console rings the terminal's bell, once each time more lanes need the
+        player. `bell = false` never, `bell = true` always. Not written: a run rings and the
+        mock does not, since the mock's lanes are scripted and need no one: a player trying it
+        out, or watching it in a meeting, is not called by a lane that is not there (P70)."""
+        return self.bell if self.bell is not None else not mock
 
 
 @dataclass(frozen=True)
@@ -678,7 +686,8 @@ dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log an
 # the count in the terminal's title ("▲ 2 need you · flightdeck"; the title you had comes back
 # when the console leaves). bell rings the terminal's bell once each time the count goes up.
 # Inside tmux the bell marks the window with nothing set up; the title reaches the terminal
-# outside only with `set -g set-titles on`. false turns either off.
+# outside only with `set -g set-titles on`. false turns either off. Left out, the bell rings in
+# a run and not in `flightdeck mock`; bell = true rings it in the mock too.
 # title = true
 # bell = true
 
@@ -1426,11 +1435,10 @@ def _governor(path: Path, table: dict) -> GovernorConfig:
 def _console(path: Path, table: dict) -> ConsoleConfig:
     _known(path, ("console",), table, ("bell", "layout", "mouse", "theme", "title"))
     layout = _choice(path, table, ("console", "layout"), ConsoleConfig().layout, LAYOUTS)
-    switches = {}
-    for key in ("mouse", "title", "bell"):
-        switches[key] = table.get(key, getattr(ConsoleConfig(), key))
-        if not isinstance(switches[key], bool):
-            raise _error(path, ("console", key), f"must be true or false{_got(switches[key])}")
+    switches = {key: table[key] for key in ("mouse", "title", "bell") if key in table}  # the rest: the defaults (bell: None, not written)
+    for key, value in switches.items():
+        if not isinstance(value, bool):
+            raise _error(path, ("console", key), f"must be true or false{_got(value)}")
     if "theme" not in table:
         return ConsoleConfig(layout=layout, **switches)  # no theme named: no theme file is looked for
     name = table["theme"]

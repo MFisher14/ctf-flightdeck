@@ -676,6 +676,9 @@ What the console says outside its own window, for a player who is looking at ano
   so does a flightdeck stopped from outside (SIGTSTP, SIGSTOP) for as long as it is stopped.
 - **Switches.** `title = false` and `bell = false` under `[console]`, each by itself. With
   `title` off nothing about the title is written, the save and the take-back included.
+- **The mock.** `flightdeck mock` writes the title as a run does, and rings the bell only when
+  the config says `bell = true`: with `bell` left out, or no config at all, it rings none
+  (P70). A run rings unless `bell = false`.
 - **tmux.** With tmux's defaults a bell marks the window in the status line and is passed on to
   the terminal outside (`monitor-bell` on, `bell-action any`); a title sets the pane's title and
   reaches the terminal outside only with `set-titles on` (off by default). So over SSH on a

@@ -65,7 +65,8 @@ Proposals built and waiting for a release, in the order of their numbers in
   [#38](https://github.com/MFisher14/ctf-flightdeck/issues/38)). The terminal's title says how
   many lanes need the player and whether the queue is held, in a count and fixed words; the
   bell rings once each time the count goes up; the title the terminal had comes back when the
-  console leaves. Both are on, each with a switch under `[console]`. Inside tmux the bell
+  console leaves. Both are on in a run, each with a switch under `[console]`; the mock
+  rings only with `bell = true` (P70). Inside tmux the bell
   marks the window with nothing set up, so it is what reaches a phone over SSH. Tested on a
   pseudo-terminal; not yet looked at in each terminal program or in tmux.
 - **A `/` that forgives** (P62, [#40](https://github.com/MFisher14/ctf-flightdeck/issues/40)).
