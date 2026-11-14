@@ -8,7 +8,7 @@ queue, the lanes, your approvals, the resend of a rate-limited flag, the solved 
 
 Before you write one: if the platform's own web page talks JSON to the site, an `[http]` table
 in the event profile may be all it takes, with no code at all
-([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)); rCTF is a preset there. A
+([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)); rCTF and GZCTF are presets there. A
 plugin is for what a table cannot say: HTML pages, a login with a password, encrypted
 requests, pages of a listing.
 

@@ -276,7 +276,7 @@ platform checks the flags.
 Many platforms have no adapter in flightdeck, but their own web page talks JSON to the site.
 For those, the event profile can say how that API is asked, and flightdeck does the talking
 itself: `platform = "http"` and an `[http]` table. No program of yours runs and there is no
-plugin to trust. rCTF ships as a preset.
+plugin to trust. rCTF and GZCTF ship as presets.
 
 ```sh
 flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset (--routes: every route written out)
@@ -318,6 +318,43 @@ site than `event.url` is refused: its token is that site's. The preset was built
 stand-in that answers in rCTF's shape; nobody has played a real rCTF event through it yet, so
 run `http check` first. flightdeck does not start
 an rCTF instance (start it on the site), and counts no tries there: rCTF has none.
+
+`preset = "gzctf"` covers GZCTF as its own source has it. `flightdeck http example --preset
+gzctf` prints a profile with it:
+
+```toml
+[event]
+platform = "http"
+url = "https://games.example.org"   # the site, without /games/...
+token_env = "GZCTF_TOKEN"           # GZCTF_..., HTTP_TOKEN or HTTP_TOKEN_...
+
+[http]
+preset = "gzctf"
+game = "3"                          # the game's number, as its address shows it: https://games.example.org/games/3
+```
+
+- **Your token is a cookie.** GZCTF gives players no API token, and flightdeck does not sign in
+  with your password or solve a captcha. Sign in on the site, then copy the value of the
+  `GZCTF_Token` cookie from your browser's developer tools (Storage or Application, then
+  Cookies) into the variable, in quotes. `GZCTF_Token=...` as the tools copy it works too. The
+  cookie lasts 7 days from your last visit to the site; when a pull says 401, sign in again and
+  copy it again.
+- **One game per profile.** Every route is under the game's number, so `game` is required.
+- **A flag is judged after it is taken.** GZCTF answers a flag with the submission's number,
+  and flightdeck looks at its status once a second, at most 15 times, until it says
+  `Accepted` (correct) or `WrongAnswer` (incorrect). Anything else comes back to you. A flag for
+  a challenge your team has solved is judged as any other flag, so it is `Accepted` again.
+- **Counted tries.** A challenge's limit is its `max_attempts` (0 is no limit), so under auto
+  submit its flags wait for you unless your config says `submit_limited = "auto"`.
+- **Encrypted flags are not sent.** A GZCTF site can turn on `ApiEncryption`, and then the
+  browser encrypts each flag to the site's key before it goes. flightdeck does not do that.
+  Before each flag it reads the site's public settings (`/api/config`, without your cookie),
+  and when they hold a key the flag comes back to you with the reason, to submit on the site.
+  `http check` and each pull say so too.
+- **Dynamic flags need nothing of yours.** GZCTF can give each team its own flag for a
+  challenge; the lane finds your team's, and flightdeck sends it as any other.
+- flightdeck does not start a GZCTF instance (start it on the site), and the preset has met a
+  stand-in in GZCTF's shape only, never a real GZCTF event: run `http check` first.
 
 ### The `[http]` table
 
@@ -383,6 +420,7 @@ refs = "$.data.solves[*].id"
 | `submit.retry_after_path`, `retry_after_unit` | How long a rate limit asks to wait, in `"s"` or `"ms"`; without it, the `Retry-After` header. |
 | `[http.submit.poll]` | For a platform that judges later: `id_path` (the submission's id in the submit's answer), `request` with `{submission}` in it, `pending` (the words that mean "not yet"), `every` (seconds, default 1) and `at_most` (looks, default 10), and optionally its own `verdict_path`. |
 | `solved.request`, `refs` | Required. `refs` matches the refs of the challenges your account or team has solved. |
+| `[http.refuse]` | Optional, for a platform that can want something of a flag flightdeck cannot give: `request` (a `GET`, sent without the token), `path` and `reason` (one line). Before each flag the request is made, and a value at `path` (anything but null, `false`, or an empty string, list or object) keeps the flag back for you, with the reason. So does an answer that cannot be read. The gzctf preset reads `/api/config`'s `apiPublicKey`. |
 
 `flightdeck http check EVENT.toml` is how a table gets written: it makes the sign-in, the list
 and the solved-list requests, and for the first challenges (`--show N`) prints each path and
@@ -400,7 +438,7 @@ request with where the token goes before anything runs:
   with them.
 - **A token variable named for the platform.** `token_env` must be `HTTP_TOKEN`, a name that
   starts with `HTTP_TOKEN_` (`HTTP_TOKEN_QUALS`) or, with a preset, a name that starts with the
-  preset's (`RCTF_TOKEN`, `RCTF_TOKEN_QUALS`). `HTTP_` alone is not enough: other programs name
+  preset's (`RCTF_TOKEN`, `RCTF_TOKEN_QUALS`, `GZCTF_TOKEN`). `HTTP_` alone is not enough: other programs name
   their own settings that way, and `HTTP_PROXY` holds a proxy's address, often with its
   password. A profile cannot name your CTFd token, a model key, a proxy setting, a variable
   your config names for a secret, or anything else. The profile still names the address, so
@@ -430,7 +468,8 @@ request with where the token goes before anything runs:
 
 Not built, and refused by name when a table asks for them: pages of a listing, a download
 route per challenge, form-encoded bodies, a CSRF header, HTML scraping, passwords and
-captchas, encrypted requests. A [plugin](PLUGINS.md) can do those. flightdeck starts instances
+captchas, encrypted requests (`[http.refuse]` lets a table say when a platform wants one, so no
+flag goes in the clear). A [plugin](PLUGINS.md) can do those. flightdeck starts instances
 only on CTFd.
 
 ## The event profile: `event.toml`

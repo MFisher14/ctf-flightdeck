@@ -41,6 +41,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   routes in the event profile with no code of the player's: `platform = "http"`, an `[http]`
   table, rCTF as its first preset, and `flightdeck http example`, `check` and `pull`
   ([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)).
+- **GZCTF as a preset** (P75). `preset = "gzctf"` with the game's number and the player's
+  `GZCTF_Token` cookie: the board, attachments and counted tries, a flag judged after it is
+  taken, the team's solves, and `[http.refuse]`, which keeps every flag back from a site that
+  wants it encrypted; `flightdeck http example --preset gzctf`.
 - **Two more CTFd container plugins** (P57). `plugin = "ctfd_owl"` and `plugin = "chall_manager"`
   in `[instances]`, the keys of a plugin's answer by name (`address_key`, `port_key`,
   `expires_key`), a start that answers without an address followed by a look at the status,
@@ -118,8 +122,10 @@ Proposals built and waiting for a release, in the order of their numbers in
 
 Known limits, each said where it applies:
 
-- The rctf preset has met a stand-in only: it was written from rCTF's public source and tested
-  against a fake that answers in that shape on 127.0.0.1, never a real rCTF.
+- The rctf and gzctf presets have met stand-ins only: each was written from its platform's
+  public source and tested against a fake that answers in that shape on 127.0.0.1, never a real
+  rCTF or GZCTF. A GZCTF site that encrypts its flags gets none from flightdeck: the player
+  submits them on the site.
 - The http platform does not page a listing, download through a route per challenge, send a
   form-encoded body or a CSRF header, or start an instance; `flightdeck start` and the home
   screen's form do not offer it.

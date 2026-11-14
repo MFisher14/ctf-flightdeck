@@ -679,7 +679,7 @@ coding-agent lane's file changes hold nothing an engine wrote.
 | Game Master | `platform/gamemaster.py`, `platform/gamemaster_run.py` | Pulls a Game Master's started attempts into a folder board, submits answers, and reads its solved list. [More](#game-master). |
 | Instances on demand | `platform/instances.py`, `instancerun.py` | A CTFd container plugin's client (start, status, renew, stop: named plugin shapes (`docker_per_team`, `ctfd_owl`, `chall_manager`) or the profile's own routes and answer keys, scoped to the board's challenges, each request that changes something sent once; a start that names no address asks the status; on a plugin with one container per account a stop asks first), and the run's scheduler: no lane starts on an on-demand challenge before its instance is up (`Deck.wait_for` / `ready`, which `_fill` passes over), `plan()` stops what nobody works and starts what is wanted in the queue's order up to `max_running`, an instance found running is adopted and never stopped (one that turns up within ten minutes of this run's own start that got no clear answer is this run's), a full cap is retried, instances are renewed before their end and stopped at the run's. The address becomes the challenge's `urls` in the maps lanes and L1 read. |
 | Plugins | `plugins/`, `plugin_cli.py`, `platform/plugin_run.py`, `platform/link.py` | A platform flightdeck does not know, through a program of the player's own: one process per call (`pull`, `submit`, `solved`), allowed only by the player's config. [More](#plugins). |
-| http platform | `platform/http.py`, `platform/http_presets/`, `http_cli.py` | A platform with a JSON API, asked by the routes in the event profile's `[http]` table (rCTF is a preset): data, not code, so a profile may carry it. It makes a plugin's three calls in process. [More](#http-platform). |
+| http platform | `platform/http.py`, `platform/http_presets/`, `http_cli.py` | A platform with a JSON API, asked by the routes in the event profile's `[http]` table (rCTF and GZCTF are presets): data, not code, so a profile may carry it. It makes a plugin's three calls in process. [More](#http-platform). |
 | Event runs | `run.py` | `play --event`: the profile's policies, CTFd pulls and waves, submits off the console's loop, the team folder. [More](#event-runs). |
 | Team channel | `team.py` | Claims, live-box holds and solves shared through a synced folder (no server); everything in it is untrusted. |
 
@@ -774,8 +774,8 @@ Nothing of a plugin is imported, and no third-party code is loaded for one.
 
 ### http platform
 
-Where: `platform/http.py`, `platform/http_presets/rctf.toml`, `http_cli.py`, `preflight.py`,
-`run.py` (P56; [BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api) is the player's
+Where: `platform/http.py`, `platform/http_presets/rctf.toml` and `gzctf.toml`, `http_cli.py`,
+`preflight.py`, `run.py` (P56, P75; [BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api) is the player's
 page).
 
 A built-in platform, not a plugin: a plugin is code only the player's config can allow, and a
@@ -818,6 +818,11 @@ runs. It reuses the plugin's run side whole through one protocol.
   poll of the submission while its value is one of `pending`. A failure after the request left
   is a `CallFailed` with `timed_out`, which the link words as "it may have reached the
   platform".
+- **Refuse** (`HttpCaller._refusal`, P75): a table's `[http.refuse]` is a `GET` made without
+  the token before each flag. A value at its path, or an answer that cannot be read, is a
+  `CallFailed` (not `timed_out`: nothing was sent) with the table's reason, so the link gives
+  the flag back. A pull asks too and puts the reason in its `notes`; `check()` prints it and
+  counts it as a problem. The gzctf preset reads `/api/config`'s `apiPublicKey`.
 - **Pre-flight** (`preflight._check_http`, `http_token_env`, `describe`): no leave from the
   config is needed; the token variable must be `HTTP_TOKEN`, start with `HTTP_TOKEN_` or start with
   the preset's name (never `HTTP_PROXY` or another `HTTP_...` setting), and is never one the
@@ -1331,6 +1336,7 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
   plugin are not built, and neither is a plugin's platform in `flightdeck start`.
 - **More of the http platform.** Pages of a listing, a download route per challenge,
   form-encoded bodies and a CSRF header are refused by name ([http platform](#http-platform));
-  instances on an http platform (rCTF v2 has them) are not started; `flightdeck start` and the
-  home screen's form do not offer `http` or `rctf`; and the rctf preset has met a stand-in
-  only, never a real rCTF.
+  instances on an http platform (rCTF v2 and GZCTF have them) are not started; `flightdeck
+  start` and the home screen's form do not offer `http`, `rctf` or `gzctf`; a flag a GZCTF site
+  wants encrypted is not sent; and the rctf and gzctf presets have met stand-ins only, never a
+  real rCTF or GZCTF.
