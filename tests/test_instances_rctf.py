@@ -155,6 +155,27 @@ def test_an_endpoint_that_is_not_a_host_and_a_port_is_never_taken():
     assert got.urls(web=False) == ("http://web.chal.example.test:80",) and len(got.left_out) == 2
 
 
+def test_an_endpoint_whose_kind_or_port_is_malformed_is_left_out_and_never_crashes_the_client():
+    """A kind that is a list or an object is no key of KINDS (it is unhashable), and a port of
+    more digits than int() reads is no port: each is left out, never a TypeError or ValueError."""
+    bad = Instancer(endpoints=[([], "a.chal.example.test", 1), ({"k": 1}, "b.chal.example.test", 2),
+                               ("tcp", "c.chal.example.test", "1" * 5000), ("tcp", "d.chal.example.test", "31337")])
+    with FakeRCTF([RTask("bad", "Bad", instancer=bad)], v2=True) as fake:
+        _, client = connect(fake)
+        got = client.start("bad")
+    assert (got.host, got.port, got.scheme) == ("d.chal.example.test", 31337, "tcp") and len(got.left_out) == 3
+    assert sum("a kind that is not a word" in why for why in got.left_out) == 2
+
+
+def test_an_answer_whose_endpoints_are_all_malformed_is_an_error_that_says_it_may_have_started():
+    bad = Instancer(endpoints=[([], "a.chal.example.test", 1), ("tcp", "c.chal.example.test", "9" * 5000)])
+    with FakeRCTF([RTask("bad", "Bad", instancer=bad)], v2=True) as fake:
+        _, client = connect(fake)
+        with pytest.raises(InstanceError, match="names no address flightdeck can use") as caught:
+            client.start("bad")
+    assert caught.value.up
+
+
 def test_a_start_the_platform_guards_with_a_captcha_is_refused_by_name_for_a_person():
     with FakeRCTF(tasks(), v2=True, captcha=True) as fake:
         _, client = connect(fake)

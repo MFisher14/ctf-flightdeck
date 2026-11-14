@@ -653,9 +653,7 @@ class InstanceClient:
         if host is None and answers.loose:
             scheme, host, port = _within(raw)
         if port is None:
-            given = _dig(doc, answers.port)
-            if isinstance(given, str) and given.isascii() and given.isdigit():
-                given = int(given)
+            given = _number(_dig(doc, answers.port))
             if isinstance(given, int) and not isinstance(given, bool):
                 port = given
         if scheme is None and answers.web is not None and _dig(doc, (answers.web[0],)) == answers.web[1]:
@@ -679,13 +677,14 @@ class InstanceClient:
             if not isinstance(item, dict):
                 left_out.append("an endpoint that is not an object")
                 continue
-            kind, host, port = item.get("kind"), item.get("host"), item.get("port")
-            if isinstance(port, str) and port.isascii() and port.isdigit():
-                port = int(port)
+            kind, host, port = item.get("kind"), item.get("host"), _number(item.get("port"))
             where = f"{host}:{port}" if isinstance(host, str) else "an endpoint with no host"
             if not isinstance(host, str) or not _HOST.fullmatch(host) or isinstance(port, bool) or not isinstance(port, int) \
                     or not 1 <= port <= 65535:
                 left_out.append(self._site.short(f"{where}, which is not a host and a port"))
+                continue
+            if kind is not None and not isinstance(kind, str):  # a list or an object is no kind, and no key of KINDS
+                left_out.append(self._site.short(f"{where} (a kind that is not a word)"))
                 continue
             if kind is not None and kind not in KINDS:
                 left_out.append(self._site.short(f"{where} ({kind}: a kind flightdeck cannot hand a lane yet)"))
@@ -699,6 +698,14 @@ class InstanceClient:
         (scheme, host, port), more = usable[0], tuple(usable[1:])
         said = self._site.short(", ".join(f"{h}:{p}" for _, h, p in usable))
         return Instance(challenge_id, host, port, scheme, self._end(doc), said, more, tuple(left_out))
+
+
+def _number(value: object) -> object:
+    """A port the platform wrote as digits, as a number; anything else as it came. Five
+    digits at most: a longer string is no port, and int() refuses one past 4300 digits."""
+    if isinstance(value, str) and value.isascii() and value.isdigit() and len(value) <= 5:
+        return int(value)
+    return value
 
 
 def _said(doc: object) -> str | None:

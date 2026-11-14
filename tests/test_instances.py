@@ -161,6 +161,7 @@ def test_a_challenge_with_no_container_is_refused_and_not_called_full():
     (Reply(200, {"hostname": "bad host name", "port": 1}), "names no usable address"),
     (Reply(200, {"hostname": "h.example.test", "port": 70000}), "names no usable address"),
     (Reply(200, {"hostname": "h.example.test"}), "names no usable address"),
+    (Reply(200, {"hostname": "h.example.test", "port": "1" * 5000}), "names no usable address"),  # past int()'s digit limit
     (Reply(200, "<html>log in</html>"), "is not JSON"),
     (Reply(500, {"message": "boom"}), "the platform refused instance start for challenge 1: boom"),
     (Reply(200, {"success": False, "error": "disabled"}), "refused instance start for challenge 1: disabled"),
