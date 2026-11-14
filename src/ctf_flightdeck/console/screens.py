@@ -202,7 +202,7 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
         """Attach files the player handed over (a drop, the file window, the clipboard's
         image). One that cannot be attached is not, and the form says why (addchallenge.refusal).
         False when nothing in `files` was taken."""
-        from ..addchallenge import CHALLENGE_FILE, refusal
+        from ..addchallenge import CHALLENGE_FILE, refusal, size_text
 
         taken, known, problems = [], 0, []
         for file in files:
@@ -223,7 +223,8 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
         if problems:
             self._say("not attached: " + "; ".join(problems))
         elif taken:
-            self._say(said or f"attached {', '.join(file.name for file in taken)} (ctrl+r removes the last file)", theme.GREEN)
+            names = ", ".join(f"{file.name} ({size_text(file)})" for file in taken)
+            self._say(said or f"attached {names} · ctrl+r removes the last file", theme.GREEN)
         elif known:
             self._say("already attached", theme.GREEN)
         return bool(taken or known)

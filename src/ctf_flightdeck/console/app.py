@@ -46,6 +46,12 @@ from .terminal import STOP_SIGNALS, TerminalDriver
 
 STATUS_EVENTS = (EventKind.RELEASE, EventKind.TEAMMATE, EventKind.SUBMIT, EventKind.WARNING)
 STATUS_SECONDS = 12.0
+# A terminal that has no bracketed paste sends a dropped file as its path, typed: every character
+# at once. Keys that start like a path and come closer together than nobody types are held until
+# they stop coming (take_keys), and are a drop only when all of them together are paths that exist.
+BURST_GAP = 0.02  # seconds: a key this soon after the last one is part of the same burst (50 a second: no typing is)
+BURST_MIN = 4  # characters: fewer are keys, whatever they spell ("/" alone is a path that exists)
+PATH_STARTS = "/~'\""  # what a dropped path starts with, quoted or not: only such a key starts a burst
 
 
 class FlightdeckApp(App[None]):
@@ -124,6 +130,14 @@ class FlightdeckApp(App[None]):
         self._status: tuple[str, str, float] | None = None  # (text, severity, when)
         self._redraw_queued = False
         self._unsubscribe = deck.subscribe(self._on_deck_event)
+        # Whether typed keys are watched for a dropped path (take_keys). None: with a real terminal, and not
+        # headless, where every key of a script comes at once
+        self.key_drops: bool | None = None
+        self._burst: list[events.Key] = []  # the keys held: a burst that may be a dropped path
+        self._burst_at = 0.0  # when the last of them came
+        self._key_at = 0.0  # when the last key came, held or not
+        self._to_type: list[events.Key] = []  # held keys that were no drop, still to be typed (_type)
+        self._typing: events.Key | None = None  # the one of them that is in the message queue now
 
     def get_default_screen(self) -> Screen:
         return self._fleet
@@ -285,12 +299,118 @@ class FlightdeckApp(App[None]):
         self.say(text, "warning")
 
     async def on_event(self, event: events.Event) -> None:
-        """Files dropped on the terminal arrive as pasted paths. Wherever the focus is, they
-        go where files belong (take_drop) instead of into whatever widget had the focus;
-        any other paste goes on as usual."""
+        """Files dropped on the terminal arrive as pasted paths, or, from a terminal with no
+        bracketed paste, as the same text typed all at once (take_keys). Wherever the focus
+        is, they go where files belong (take_drop) instead of into whatever widget had the
+        focus; any other paste, and any other key, goes on as usual."""
         if isinstance(event, events.Paste) and not event.is_forwarded and self.take_drop(event.text):
             return
+        if isinstance(event, events.Key) and not event.is_forwarded:  # (forwarded: one a widget passed back up)
+            if event is self._typing:  # a key that was held, back to be typed: the next one once this one has acted
+                self._typing = None
+                await super().on_event(event)
+                if self._to_type:
+                    self._settled(self._type_next)
+                return
+            if self.take_keys(event):
+                return
         await super().on_event(event)
+
+    def take_keys(self, event: events.Key) -> bool:
+        """Whether `event` is held as part of a burst of typed text that may be a dropped
+        path. A burst starts at a key a path starts with (PATH_STARTS) that no key came just
+        before (a path in the middle of text that arrives all at once is text), and takes
+        every key of text that comes within BURST_GAP of the one before. When no more come it is a drop
+        only if all of it together is paths of files that exist (addchallenge.dropped) and it
+        is at least BURST_MIN characters; any other burst is typed, in order, as if it had
+        never been held (at most BURST_GAP late). A key that is not text (Enter, an arrow)
+        ends a burst as typing. Nothing a player types is read for paths: no one types a path
+        that exists at 50 keys a second."""
+        from ..addchallenge import MAX_DROP
+
+        if not (self.key_drops if self.key_drops is not None else not self.is_headless):
+            return False
+        now = time.monotonic()
+        quiet, self._key_at = now - self._key_at >= BURST_GAP, now
+        if self._typing is not None or self._to_type:  # held keys are still being typed: this one goes behind them
+            self._to_type.append(event)
+            return True
+        text = event.character if event.is_printable else None
+        if self._burst:
+            if text and len(self._burst) < MAX_DROP:
+                self._burst.append(event)
+                self._burst_at = now
+                return True
+            keys, self._burst = self._burst, []
+            self._type([*keys, event])
+            return True
+        if not text or text not in PATH_STARTS or not quiet:
+            return False
+        self._burst = [event]
+        self._burst_at = now
+        self.set_timer(BURST_GAP, self._burst_due)
+        return True
+
+    def _type(self, keys: list[events.Key]) -> None:
+        """Type keys that were held, in order and one at a time: each goes through the message
+        queue as a key from the terminal does, and the next only when it has acted (a key may
+        move the focus, which the next one must find moved). A key that comes meanwhile goes
+        behind them (take_keys)."""
+        self._to_type.extend(keys)
+        if self._typing is None:
+            self._type_next()
+
+    def _type_next(self) -> None:
+        if self._typing is None and self._to_type:
+            key = self._to_type.pop(0)
+            self._typing = events.Key(key.key, key.character)
+            self.post_message(self._typing)
+
+    def _settled(self, then: Callable[[], None], rounds: int = 3) -> None:
+        """Call `then` once what the last key set off has run. A key acts in steps, each in
+        another part's message queue (the widget with the focus, the screen whose binding it
+        is, the console for the focus it moves), so every queue on the screen is let run dry
+        `rounds` times: a step that queues the next is followed that far."""
+        left = 0
+
+        def done() -> None:
+            nonlocal left
+            left -= 1
+            if left == 0:
+                if rounds > 1:
+                    self._settled(then, rounds - 1)
+                else:
+                    self.call_later(then)
+
+        for node in list(self.screen.walk_children(with_self=True)):
+            if node.call_later(done):
+                left += 1
+        if not left:
+            self.call_later(then)
+
+    def _burst_due(self) -> None:
+        """The timer of a burst. It asks through the message queue, behind every key that is
+        already there: keys that waited while the console was busy are still one burst."""
+        self.call_later(self._end_burst)
+
+    async def _end_burst(self) -> None:
+        """The burst is over (unless a key came since): a drop when it is nothing but paths
+        of files that exist, else the keys it was."""
+        from ..addchallenge import dropped
+
+        if not self._burst:
+            return
+        wait = BURST_GAP - (time.monotonic() - self._burst_at)
+        if wait > 0:  # a key came since the timer was set: wait for the next gap
+            self.set_timer(wait, self._burst_due)
+            return
+        keys, self._burst = self._burst, []
+        text = "".join(key.character or "" for key in keys)
+        if len(text) >= BURST_MIN and dropped(text):
+            if not self.take_drop(text):  # not taken (take_drop said why): text for a field that has the focus, as a paste is
+                await super().on_event(events.Paste(text))
+            return
+        self._type(keys)
 
     def take_drop(self, text: str) -> bool:
         """Whether `text` was files dropped (or pasted) on the console, now taken. Only a
@@ -301,15 +421,20 @@ class FlightdeckApp(App[None]):
         attaches to: the one selected) or already holds an /attach. What the player typed
         there is never replaced: the paste then goes on as text. A file that cannot be
         attached is not taken, and the console says why."""
-        from ..addchallenge import dropped, quote, refusal
+        from textual.widgets import Input, TextArea
+
+        from ..addchallenge import dropped, quote, refusal, size_text
         from .screens import NewChallengePrompt
 
-        if self.adder is None:
-            return False
         files = dropped(text)
         if not files:
             return False
         screen = self.screen
+        if self.adder is None:
+            if not isinstance(screen.focused, (Input, TextArea)):  # in a field it is text; anywhere else it would vanish unsaid
+                self.warn("not attached: files are attached on a board you fill yourself; this board "
+                          + ("comes from the platform" if self._ticker is None else "is the mock's"))
+            return False
         if isinstance(screen, NewChallengePrompt):
             return screen.add_files(files)
         bar = screen.query("#bar-input")
@@ -325,15 +450,16 @@ class FlightdeckApp(App[None]):
         field = bar.first()
         typed = field.value.strip()
         count = f"{len(files)} file{'' if len(files) == 1 else 's'}"
+        got = ", ".join(f"{file.name} ({size_text(file)})" for file in files)  # the drop landed: which files, how big
         quoted = " ".join(quote(file) for file in files)
         if typed.split(maxsplit=1)[:1] == ["/attach"]:
             field.value = f"{typed} {quoted} "
-            self.say(f"{count} added to the /attach in the command bar: Enter attaches")
+            self.say(f"got {got}: added to the /attach in the command bar, Enter attaches")
         elif "/attach".startswith(typed):  # nothing typed, or the start of this very command: nothing is lost
             target = self._selected_challenge(getattr(screen, "lane_id", None) or getattr(screen, "selected_lane", None))
             field.value = f"/attach {target} {quoted} " if target else f"/attach {quoted} "
-            self.say(f"{count} ready: press Enter to attach to {target} (or change the name in the command bar)" if target
-                     else f"{count} ready: type the challenge's name after /attach, then Enter")
+            self.say(f"got {got}: press Enter to attach to {target} (or change the name in the command bar)" if target
+                     else f"got {got}: type the challenge's name after /attach, then Enter")
         else:
             if screen.focused is not field:  # the paste goes to whatever has the focus, which shows nothing: say what to do
                 self.warn(f"{count} not taken: the command bar holds what you typed. Send or clear it, then drop the "
