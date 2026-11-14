@@ -646,6 +646,59 @@ def test_the_simple_layout_is_one_list_of_lanes_with_what_the_board_would_say_in
     drive(app, script, SIZE)
 
 
+def test_a_lane_that_has_done_nothing_yet_says_starting_and_no_cost_in_the_simple_list():
+    deck, app = console(by_hand=True, layout="simple")
+    release(deck, "alpha", "beta")
+
+    async def script(pilot):
+        assert lane_rows(app) == ["L01", "L02"]
+        for lane_id in ("L01", "L02"):
+            assert (cell(app, "lanes", lane_id, "state"), cell(app, "lanes", lane_id, "cost")) == ("starting", ""), lane_id
+        row = next(i for i, line in enumerate(screen_lines(app)) if " L02 " in line)  # not the selected row, whose cursor has its own colours
+        assert color_of(app, "starting", row) == theme.MUTED.lower()
+        deck.report("L01", TurnReport(action="file alpha.bin", tokens=120))  # its first turn, at no cost
+        app.refresh_view()
+        await pilot.pause()
+        assert (cell(app, "lanes", "L01", "state"), cell(app, "lanes", "L01", "cost")) == ("run", "$.00")  # it has begun: $.00 is news now
+        assert (cell(app, "lanes", "L02", "state"), cell(app, "lanes", "L02", "cost")) == ("starting", "")
+        app.run_command("/layout deck", "")
+        await pilot.pause()
+        assert (cell(app, "lanes", "L02", "state"), cell(app, "lanes", "L02", "cost")) == ("run", "$.00")  # the deck layout is as it was
+        app.run_command("/layout simple", "")
+        await pilot.pause()
+        assert cell(app, "lanes", "L02", "state") == "starting"
+
+    drive(app, script, SIZE)
+
+
+def test_only_a_running_lane_that_has_done_and_spent_nothing_is_starting():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=8))
+    release(deck, *(f"c{n}" for n in range(1, 8)))
+
+    def row(lane_id: str, **layout) -> tuple[str, str]:
+        cells = views.lane_cells(deck, deck.lanes[lane_id], **layout)
+        return cells["state"].plain, cells["cost"].plain
+
+    assert all(views.starting(lane) for lane in deck.lanes.values())
+    assert deck.apply(iv.Hint("L01", "try xor")).ok  # the player's message is not the lane doing something
+    assert deck.apply(iv.Pause("L02")).ok
+    deck.report("L03", TurnReport(tokens=40, dollars=0.003, turn=False, light=True))  # a first look's spend, before any step
+    deck.report("L04", TurnReport(action="claude -p", dollars_later=True, turn=False))  # a coding-agent CLI's turn under way
+    deck.report("L05", TurnReport(action="ls", turn=False))  # a step that is not a turn
+    assert deck.apply(iv.Kill("L06", requeue=False)).ok
+    assert row("L01", simple=True) == ("starting", "")
+    assert row("L02", simple=True) == ("paused", "$.00")  # paused is the player's doing: it says so
+    assert row("L03", simple=True) == ("run", "$<.01")  # it has spent: the cost is there
+    assert row("L04", simple=True) == ("run", "$.00…")  # its cost is on its way
+    assert row("L05", simple=True) == ("run", "$.00")
+    assert row("L06", simple=True)[0] == "killed"
+    assert row("L07", simple=True) == ("starting", "")
+    assert row("L07") == ("run", "$.00") and row("L07", compact=True) == ("run", "$.00")
+    assert row("L07", compact=True, simple=True) == ("run", "$.00")  # the compact layout wins: its state column has five cells
+    found = [lane.id for lane in deck.lanes.values() if views.lane_matches(deck, lane, "starting")]
+    assert found == ["L01", "L07"]  # the filter finds what the list says
+
+
 def simple_fit(available: int) -> dict[str, int]:
     return {key: width for key, _, width in views.simple_lane_columns(available, 1)}
 
