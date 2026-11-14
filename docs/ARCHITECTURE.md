@@ -47,7 +47,7 @@ The components, in one line each:
 
 | Component | Job |
 |---|---|
-| Platform adapter | Board, challenge download, submit: `manual` (a folder board) and `ctfd`. |
+| Platform adapter | Board, challenge download, submit: `manual` (a folder board), `ctfd`, a Game Master, and any other platform through a plugin: the player's own program, run out of process. |
 | Order | Fewest points first, then most solves, then by name: rules, not a model. With the light model's `route` job, a lane's opening brief also carries a guess at the challenge's category, where the board names none, and the specialist family it suits; neither changes the order. |
 | L1 runner | Routes a challenge to the player's no-model solvers and collects their `SolverResult`s. Each engine runs in its own copy of the handout, with an allowlisted environment, its own process group and a timeout: in a container when lanes run in Docker, as you on the host. The results go into the lane's opening context. |
 | Lane manager | Starts, queues (`max_lanes`), pauses, forks, kills lanes; Docker or host per `[lanes] runtime`. |
@@ -81,7 +81,8 @@ The console never talks to lanes directly. It reads a `Deck` and sends it interv
 | `LaneDriver` | `core/driver.py` | What does a lane's work. The deck calls `start/pause/resume/hint/redirect/escalate/approved/rejected/stop`; the driver answers each step with `Deck.report(lane_id, TurnReport)`. It starts a turn only while the lane is RUNNING. `TurnReport.dollars_later` marks a coding-agent CLI's step, whose cost comes with the CLI's report at the turn's end (`turn_end`; with `unreported` and no dollars when it never came). A `Submitter` hands a flag to a platform over the network and returns at once. |
 | Attention sort | `core/attention.py` | Needs you (most urgent first), informational, running by idle minute, paused; finished last. |
 | Untrusted text | `text.py` | Everything from a challenge, lane, tool or model is drawn through `untrusted()` and never parsed as markup. |
-| Console | `console/` | The two views of D16: `FleetScreen`, `FocusScreen`, the command bar and slash commands. Redraws on its own timer and on deck events, with or without a mock clock. Credits solves with `runrecord.Credit` over the deck's events, reading each once as the deck grows: the rule every report uses (an L1 engine's flag is `L1·<engine>`). `console/room.py` measures a terminal for `flightdeck doctor` with the console's own layout code (`fit_header`, `fleet.fit_keys`, `FLEET_ROWS`, `focus.key_room`). At 64 columns or fewer (`views.compact`) both views switch to the compact layout of CONSOLE-SPEC, for a phone over SSH. |
+| Console | `console/` | The two views of D16: `FleetScreen`, `FocusScreen`, the command bar and slash commands. Redraws on its own timer and on deck events, with or without a mock clock. Credits solves with `runrecord.Credit` over the deck's events, reading each once as the deck grows: the rule every report uses (an L1 engine's flag is `L1·<engine>`). `console/room.py` measures a terminal for `flightdeck doctor` with the console's own layout code (`fit_header`, `fleet.fit_keys`, `FLEET_ROWS`, `focus.key_room`). At 64 columns or fewer (`views.compact`) both views switch to the compact layout of CONSOLE-SPEC, for a phone over SSH. It draws in one of two layouts, `simple` or `deck` (P51), in the colours of one palette (P52). [More](#layouts-and-themes). |
+| Themes | `themes.py`, `console/theme.py` | The palettes: five built-in, and a player's own theme file. [More](#layouts-and-themes). |
 | Known-wrong flags | `core/deck.py` | A flag the platform rejected, or the player declined, is remembered per challenge: proposed again it raises no approval and is never submitted again, and an escalation's summary lists it. |
 
 ### Deck
@@ -144,6 +145,43 @@ leaves the first `ROTATING_MISSES` wrong answers at such a challenge out of the 
 **What holds a start without holding the queue.** Two things keep `_fill` from starting a lane without `hold_queue` (which needs
 the player and disengages autopilot): `Deck.waits` (a challenge whose instance is not up is passed over, the next in the queue
 starts: P36) and `Deck.start_gate` (the host governor: no new lane at all while a limit binds, unless none is at work: P40).
+
+### Layouts and themes
+
+Where: `console/`, `themes.py`, `config.py` (`[console]`).
+
+**Layouts** (P51). `FlightdeckApp.layout` is `simple` or `deck` (`config.LAYOUTS`). There is no
+layout class: the functions of `console/views.py` that draw differently take `simple=True`
+beside the `compact=True` they already took (`header_pieces`, `fit_header`, `lanes_title`,
+`lane_why`, `now_card`, `others_strip`; `SIMPLE_LANE_COLUMNS`), and each screen draws `simple`
+when the app's layout is `simple` and the terminal is not narrow enough for the compact layout,
+which wins over both. `fleet.context_keys()` gives the simple key line for the selected lane;
+`FocusScreen` hides a part that has nothing in it. `FlightdeckApp.set_layout()` (`/layout`)
+has both screens draw again where they are (`relayout()`); the fleet's tables fit their columns
+again whenever their own width changes (`fleet.FittedTable`). A console built with no layout is
+`deck`; `Run.app()` and `flightdeck mock` pass the config's, which is `simple` unless it says
+otherwise. `FlightdeckApp.open_first_lane()` opens the first lane a `/new` starts, looked at on
+each redraw and when the lane list comes back from under the form. While the board has no
+challenge the fleet shows a page of its own in place of the tables (`fleet.EMPTY_BY_HAND`,
+`EMPTY_PLATFORM`). `console/room.py` measures a terminal in the layout it is given
+(`room(..., layout=)`).
+
+**Themes** (P52). `themes.py` is pure (no rich, no textual), so the config can load a palette
+without a console: `Palette` (17 colours by role, `dark`, the diff view's `syntax` style),
+`BUILTIN`, `parse()` and `load()` for a theme file, and `weak_pairs()`, the rows of `CONTRAST`
+a palette has under `MIN_CONTRAST`. `config._console()` loads the palette `[console] theme`
+names when the config loads, so a theme that cannot be used is a `ConfigError` there;
+`config.load_console()` reads that table alone, for the mock. `console/theme.py` holds the
+palette in use (`use()`, `active()`). The console's modules still read a colour by its old
+name (`theme.GREEN`), which a module `__getattr__` resolves to that role's colour at the moment
+of the read, so a colour must be read when something is drawn and never kept in a module-level
+table (a test imports every console module and checks that none did). `css_variables()` and
+`textual()` give the same palette to the Textual styles (`$fd-page`, `$fd-border`, and
+Textual's own `$surface`, `$accent`, `$warning`): both apps (the console and the home screen)
+take the palette before Textual reads their styles and register it as their Textual theme, so
+`TEXTUAL_THEME` changes nothing.
+`FlightdeckApp.set_palette()` (`/theme`) repaints what is on screen: the focus view empties its
+transcript log and writes it again.
 
 ## 4. Lanes
 
@@ -447,6 +485,7 @@ coding-agent lane's file changes hold nothing an engine wrote.
 | Live instance policy | `agent/driver.py`, `run.py` | `auto`: lanes may reach their challenge's instance. `confirm`: a lane asks first (a live-box approval); until the player allows it, its http tool is off and its container has no network, then the container joins a fenced network that reaches the instance and nothing else ([Lane network](#lane-network)). `off`: never. Pre-flight sets it from the event profile. |
 | Game Master | `platform/gamemaster.py`, `platform/gamemaster_run.py` | Pulls a Game Master's started attempts into a folder board, submits answers, and reads its solved list. [More](#game-master). |
 | Instances on demand | `platform/instances.py`, `instancerun.py` | A CTFd container plugin's client (start, status, renew, stop: named plugin shapes or the profile's own routes, scoped to the board's challenges, each request sent once), and the run's scheduler: no lane starts on an on-demand challenge before its instance is up (`Deck.wait_for` / `ready`, which `_fill` passes over), `plan()` stops what nobody works and starts what is wanted in the queue's order up to `max_running`, an instance found running is adopted and never stopped, a full cap is retried, instances are renewed before their end and stopped at the run's. The address becomes the challenge's `urls` in the maps lanes and L1 read. |
+| Plugins | `plugins/`, `plugin_cli.py`, `platform/plugin_run.py`, `platform/link.py` | A platform flightdeck does not know, through a program of the player's own: one process per call (`pull`, `submit`, `solved`), allowed only by the player's config. [More](#plugins). |
 | Event runs | `run.py` | `play --event`: the profile's policies, CTFd pulls and waves, submits off the console's loop, the team folder. [More](#event-runs). |
 | Team channel | `team.py` | Claims, live-box holds and solves shared through a synced folder (no server); everything in it is untrusted. |
 
@@ -488,6 +527,56 @@ already_solved and the refusals judged nothing, 429 is a rate limit, and any oth
 `answer` group, applies the word through `Deck.platform_verdict`, resends a rate-limited answer as P33 does for CTFd, and tells
 autopilot when an answer was not judged. A second task reads the list every `solves_seconds` and closes what it lists as solved.
 A run starts no attempt and pulls nothing.
+
+### Plugins
+
+Where: `plugins/manifest.py`, `plugins/call.py`, `plugins/board.py`, `plugin_cli.py`,
+`platform/plugin_run.py`, `platform/link.py`, `preflight.py`, `run.py` (P53;
+[PLUGINS.md](PLUGINS.md) is the player's page).
+
+Nothing of a plugin is imported, and no third-party code is loaded for one.
+
+- **Allowed by the config only.** `config._plugins()` reads `[plugins.NAME] path`: the names
+  and the folders, no file of a plugin (`PluginRef`). `EventProfile.platform` may be a name
+  that is not built in (`EventProfile.plugin`); `preflight.check()` refuses it unless the
+  player's config has a `[plugins]` table of that name, never falls through to the folder
+  board's check, and shows the profile's word nowhere until then (a value shaped like a token
+  is refused when the profile loads).
+- **The manifest** (`manifest.read`, `load`): `plugin.toml`, strict, at most 64 KiB; `command`
+  resolved when it is read (`{python}` is `sys.executable`; else a file inside the folder,
+  through no link out of it; else a program on `PATH`). `card()` is what `plugin add` shows,
+  `enable()` appends the table to the config and puts the file back if it does not load,
+  `skeleton()` is what `plugin new` writes. `doctor` has a check per plugin (`doctor_line`).
+- **A call** (`call.Caller`): `asyncio.create_subprocess_exec` in a session of its own, cwd the
+  plugin's folder, one JSON object on stdin; `child_env()` builds the environment from
+  `ENV_KEEP`'s names of the process's own environment plus `FLIGHTDECK_PLUGIN_API` and
+  `FLIGHTDECK_PLUGIN_TOKEN`, never from the mapping the keys file is merged into. One call at
+  a time (a lock). At the timeout (`SECONDS`) or past the answer's size (`MAX_STDOUT`) the
+  process group is killed. Anything but exit 0 and one JSON object of the keys this API knows
+  is a `CallFailed`, never a verdict. `scrub()` cuts the token's value out and makes a string
+  safe; every string of an answer has the token cut out before anything else sees it.
+- **The board** (`board.pull_into`): the plugin downloads into a staging folder beside the
+  board; flightdeck builds each new challenge's folder there (a `challenge.json` of the folder
+  board's own keys, the files moved in: relative, inside the staging folder, regular, through
+  no link), reads it back with `manual.load_challenge`, and renames it into the board. One
+  that fails is left out and named. `plugin.json` (written atomically) maps board ids to the
+  platform's refs and names the plugin and the address; `load_refs` refuses another plugin's
+  or another address's.
+- **In a run** (`plugin_run.PluginLink`, built in `prepare_run` after `_plugin_first` pulled
+  the board or loaded its refs and read the solved list once): the deck's submitter when the
+  submit policy uses the platform. `work()` sends one flag at a time and applies the word
+  through `Deck.platform_verdict` (`correct`, `incorrect`; `already_solved` closes the
+  challenge; anything else, and any `CallFailed`, is no verdict, a warning, and
+  `needs_human`, which is autopilot's `platform()`); a `rate_limited` flag is sent again as P33
+  allows (`resend_after`). `watch()` reads the solved list every `solves_seconds`; `repull()`,
+  only under pull `auto`, calls `pull_into` every 300 seconds and has the run release what it
+  added (`Run.scan_board`, the same scan a board the player fills gets). A read that fails
+  warns once while it lasts and tells autopilot after three in a row.
+- **`PlatformLink`** (`platform/link.py`) is the protocol both `GameMasterLink` and `PluginLink`
+  fit: `tasks()`, `held()`, `apply_solved()`, `unsent()`, `aclose()`. `Run.links` is the one
+  of the event's platform, or none, and the run's start, release, shutdown and close loop over
+  it. `Run.by_hand` (the player fills the board: `/new`, `/attach`, `flightdeck add`) is split
+  from `Run.watches_folder` (folders that appear are released), which a plugin's board also is.
 
 ### Event runs
 
@@ -850,7 +939,11 @@ folder, and an optional `[light]` light model (engine, model, base URL, key vari
 price; the decider's confidence threshold; the openai engine's `thinking`, which `light_thinking()`
 makes false for a server on this machine when unset and true for any other), and an optional
 `[notify]` webhook (the variable that holds its URL, and which kinds are sent:
-[Notifications](#notifications)).
+[Notifications](#notifications)). `[console]` has the console's `layout` and `theme`
+([Layouts and themes](#layouts-and-themes)): the theme's palette is loaded with the config
+(`ConsoleConfig.palette`), from a built-in or from `themes/NAME.toml` beside the config file.
+`[plugins.NAME]` tables, each with a `path`, name the plugins the player added
+([Plugins](#plugins)): only the names and the paths are checked here.
 
 Unknown keys fail loudly. Keys are read from the environment, else
 `~/.config/ctf-flightdeck/keys.env` (`keys.py`, chmod 600).
@@ -960,3 +1053,6 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
 - **Timeline replay in `play`.** `Release` exists (Practice mode, under After a run); `play` does not use it.
 - **An API outage with coding-agent lanes holding the queue**, which is what would disengage
   autopilot there ([Autopilot](#autopilot)).
+- **More from a plugin than a platform.** A plugin pulls, submits and reads the solved list
+  ([Plugins](#plugins)); console commands, detectors, notification sinks and instances from a
+  plugin are not built, and neither is a plugin's platform in `flightdeck start`.
