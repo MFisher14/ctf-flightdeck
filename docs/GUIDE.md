@@ -1105,7 +1105,25 @@ on this machine, the console says so and pastes it as the text it is. The line s
 
 If you drag a file in and nothing at all happens (no text, no line), your terminal kept the
 drop to itself; flightdeck was sent nothing. Use `ctrl+o`, or `/attach <challenge>` and the
-file window. A terminal may hold drops back while a program has the mouse, as the console does
+file window. The `/new` form, and help under "Files, in this terminal", say this in one
+sentence chosen for where flightdeck runs. flightdeck reads `SSH_CONNECTION` and `SSH_TTY`,
+`TMUX` and `TERM_PROGRAM` for it, and nothing else depends on them:
+
+- **Over SSH:** the file you drop stays on your own machine; copy it over first (`scp`), then
+  `/attach` its path.
+- **Inside tmux:** drop the file on the terminal tmux runs in, which hands its path on to
+  flightdeck as a paste. tmux gives every pane its own `TERM_PROGRAM`, so flightdeck cannot
+  tell which terminal that is and names none.
+- **VS Code's terminal:** it types the first file of a drop and no more, and leaves some
+  characters out of its name: drop one file at a time, or use `ctrl+o`.
+- **iTerm2:** drag with no key held. With Option held iTerm2 offers to upload the file or
+  takes nothing, and with Command it types a `cd` line instead of the path.
+- **WezTerm on X11** (`XDG_SESSION_TYPE=x11`): its documentation lists drops on X11 for
+  nightly builds only, so use `ctrl+o`.
+- **Every other terminal** (Terminal.app, Ghostty, kitty, GNOME Terminal, Alacritty, Warp and
+  any not known) gets the general sentence: drag the file onto the window, and if nothing
+  lands, `ctrl+o`. Nothing in those terminals' own documentation or source gives a reason to
+  say more. A terminal may hold drops back while a program has the mouse, as the console does
 by default. `mouse = false` under `[console]` in your config leaves the mouse to the terminal:
 you then select and copy text the terminal's own way, clicks and the wheel do nothing in the
 console, and every key works as before.

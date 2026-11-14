@@ -4,6 +4,10 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- The `/new` form and help ("Files, in this terminal") say how to drop a file in the terminal
+  you are in, and what to press when nothing lands: over SSH, inside tmux, VS Code's terminal,
+  iTerm2 and WezTerm on X11 each have their own sentence, and every other terminal the general
+  one ([the guide](docs/GUIDE.md#events-and-teams)).
 - `space` peeks at the selected lane. A panel opens under the lane list with the lane's last
   six steps, each on one row (a command and the first line of its output, the model's words,
   your messages, an alert, the question it waits on), over the line that says why the lane is

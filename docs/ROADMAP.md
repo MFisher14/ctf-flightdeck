@@ -115,6 +115,11 @@ Proposals built and waiting for a release, in the order of their numbers in
   the command bar still talks to that lane. `space` or `esc` closes it. On a short terminal,
   and beside the `/` menu or a status line of several rows, it gives up its oldest rows first.
   In the mock, `,` freezes the clock.
+- **How a drop works in your terminal** (P77). The `/new` form and help say it in one
+  sentence chosen from `SSH_CONNECTION`/`SSH_TTY`, `TMUX` and `TERM_PROGRAM`: over SSH,
+  inside tmux, VS Code's terminal, iTerm2 and WezTerm on X11 have their own; every other
+  terminal gets the general one. Each sentence is from that terminal's own source or
+  documentation; none was tried in the terminal itself.
 
 Known limits, each said where it applies:
 
