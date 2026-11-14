@@ -877,6 +877,8 @@ def test_new_and_attach_copy_in_a_thread_and_say_so_while_the_console_goes_on(tm
             go.set()
             await until(pilot, lambda: "added doll: 1 file" in app._status[0])
             assert (run.options.board / "doll" / "doll.bin").read_bytes() == b"inside"
+            # the simple layout (a run's default) opens the run's first lane: wait until its chat box has the focus
+            await until(pilot, lambda: type(app.screen).__name__ == "FocusScreen" and app.focused is not None)
             go.clear()
             await pilot.press(*f"/attach doll {more}", "enter")
             await until(pilot, lambda: len(threads) == 2)

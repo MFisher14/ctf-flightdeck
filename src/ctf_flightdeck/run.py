@@ -463,6 +463,7 @@ class Run:
             config_path=str(self.config.source) if self.config.source is not None else "",
             welcome=welcome,
             palette=self.config.console.palette,
+            layout=self.config.console.layout,
             themes_folder=self.config.source.parent / "themes" if self.config.source is not None else None,
             adder=self.add_challenge if self.watches_folder else None,
             paster=self.paste_image if self.watches_folder else None,

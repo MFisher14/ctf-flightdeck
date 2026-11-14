@@ -915,3 +915,45 @@ def test_help_and_the_command_menu_list_layout():
         assert bar(app).field.value == "/layout "
 
     drive(app, script, size=(160, 120))
+
+
+def test_the_mock_opens_in_the_layout_the_config_names_and_in_simple_without_one(tmp_path, monkeypatch):
+    built = {}
+    monkeypatch.setattr(FlightdeckApp, "run", lambda self, **kw: built.update(layout=self.layout))
+    monkeypatch.setenv("HOME", str(tmp_path))  # no config of the player's
+    monkeypatch.delenv("FLIGHTDECK_CONFIG", raising=False)
+    assert CliRunner().invoke(cli.app, ["mock"]).exit_code == 0 and built == {"layout": "simple"}
+    for layout in ("deck", "simple"):
+        path = tmp_path / f"{layout}.toml"
+        path.write_text(f'[console]\nlayout = "{layout}"\n')
+        monkeypatch.setenv("FLIGHTDECK_CONFIG", str(path))
+        assert CliRunner().invoke(cli.app, ["mock"]).exit_code == 0 and built == {"layout": layout}
+    path.write_text('[console]\nlayout = "full"\n')
+    result = CliRunner().invoke(cli.app, ["mock"])
+    assert result.exit_code == 2 and 'console.layout must be "simple" or "deck"' in result.output
+
+
+def test_a_run_opens_its_console_in_the_configs_layout(tmp_path):
+    import asyncio
+
+    from ctf_flightdeck.run import prepare_run
+    from fake_model import FakeModelServer
+    from test_addchallenge import options
+
+    async def main() -> None:
+        with FakeModelServer([]) as server:
+            for layout in (None, "deck"):
+                folder = tmp_path / str(layout)
+                folder.mkdir()
+                opts = options(folder, server)
+                if layout is not None:
+                    path = opts.config
+                    path.write_text(path.read_text() + f'\n[console]\nlayout = "{layout}"\n')
+                run = prepare_run(opts)
+                try:
+                    assert run.app(refresh_seconds=None).layout == (layout or "simple")
+                finally:
+                    await run.shutdown()
+                    run.close()
+
+    asyncio.run(main())

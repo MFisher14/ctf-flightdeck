@@ -911,7 +911,9 @@ def test_the_console_credits_a_flag_an_l1_engine_found_to_that_engine_as_the_sco
     pack = tmp_path / "pack"
     python_engine(pack, "reader", READER, route='keywords = ["note"]')
     with FakeModelServer() as server:
-        run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), pack=pack))
+        path = config(tmp_path, server.base_url)
+        path.write_text(path.read_text() + '[console]\nlayout = "deck"\n')  # the layout with the board: its owner column is read here
+        run = prepare_run(RunOptions(board=board(tmp_path), config=path, pack=pack))
         app = run.app(refresh_seconds=None)
 
         async def main():
