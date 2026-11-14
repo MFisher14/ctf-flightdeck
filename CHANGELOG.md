@@ -4,6 +4,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- A lane that runs the same command again and again shows it at a glance. In a lane's calm
+  view the last row of a run of tool calls starts with how many times in a row the lane made
+  that call (`⎿ ×7 $ nc -z 127.0.0.1 9000 → exit 1`), and in the peek the repeats are one row
+  with the count, so the rows above it still show what the lane did before. Calls fold only
+  when their text is the same (blanks aside). `ctrl+o` still shows every call, and `/copy all`
+  copies every one.
 - `space` peeks at the selected lane. A panel opens under the lane list with the lane's last
   six steps, each on one row (a command and the first line of its output, the model's words,
   your messages, an alert, the question it waits on), over the line that says why the lane is

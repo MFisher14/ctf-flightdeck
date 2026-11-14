@@ -115,6 +115,9 @@ Proposals built and waiting for a release, in the order of their numbers in
   the command bar still talks to that lane. `space` or `esc` closes it. On a short terminal,
   and beside the `/` menu or a status line of several rows, it gives up its oldest rows first.
   In the mock, `,` freezes the clock.
+- **The same call in a row is one row with a count** (P72). A lane's calm view and the peek
+  fold the same tool call made several times in a row into one row, `×7` first, so a lane
+  that loops shows it at a glance; details and `/copy` still have every call.
 
 Known limits, each said where it applies:
 

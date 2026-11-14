@@ -180,7 +180,9 @@ set it there (`ctrl+o`, `/details`), else off in `simple` and on in `deck` and t
 layout. `FocusScreen._rows()` turns the lane's log into rows for `console/lanelog.py`: with
 details on, one row for each action, drawn by `views.transcript_lines` as before; off, one for
 each entry of `views.entries()` (a run of consecutive tool calls is one entry), drawn by
-`views.entry_text()`. A row has a key (the index of its first action), a token that changes
+`views.entry_text()`. A run's last row and the peek's rows fold the same call made several
+times in a row into one, its count first (`views.same_call()`, `views.repeats()`: the call's
+whole text, its blanks read as one; P72). A row has a key (the index of its first action), a token that changes
 when what it draws does, and a function that draws it, called only for a row that is mounted.
 `LaneLog` is a scroll container with one Static for each row: rows that are unchanged stay, the
 last one is drawn again when its run grows, new ones are mounted under it, and anything else
