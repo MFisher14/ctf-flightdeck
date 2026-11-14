@@ -856,7 +856,9 @@ class HttpCaller:
         for name, path in fields.items():
             found = [value for value in path.find(node) if value is not None]
             many = name in ("file_urls", "file_names")
-            if not found:
+            if not found and many:
+                said = "no values"  # a challenge with no files
+            elif not found:
                 said = "matched nothing" + (": REQUIRED" if name in required else " (left out)")
                 problems += name in required
             elif many:

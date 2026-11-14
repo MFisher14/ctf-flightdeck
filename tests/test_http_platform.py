@@ -848,3 +848,10 @@ def test_the_dry_run_says_when_a_path_matches_the_wrong_kind_of_value():
     assert found.problems == 1 and found.lines[2:5] == [
         row("ref", "$.id", "1"), row("name", "$.title", '"One"'), row("points", "$.points", '"many"')]
     assert found.lines[5] == "    a pull would leave it out: list.points ($.points) matched a string, not a number"
+
+
+def test_the_dry_run_shows_a_challenge_with_no_files_as_no_values_not_as_a_path_that_failed():
+    with FakeRCTF(sample()[1:2]) as fake:
+        found = run(rctf(fake).check())
+    assert found.problems == 0
+    assert row("file_urls", "$.files[*].url", "no values") in found.lines and row("file_names", "$.files[*].name", "no values") in found.lines
