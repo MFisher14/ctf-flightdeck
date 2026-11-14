@@ -847,7 +847,8 @@ class Deck:
         lane = getattr(iv, "lane", None)
         challenge = getattr(iv, "challenge", None)
         who: dict[str, object] = {"by": by.value} if by is Actor.AUTOPILOT else {}
-        details = {key: value for key, value in asdict(iv).items() if not (key == "model" and value is None and isinstance(iv, Queue))}
+        details = {key: value for key, value in asdict(iv).items()
+                   if not (key == "model" and value is None and isinstance(iv, Queue)) and not (key == "why" and not value and isinstance(iv, Kill))}
         self._emit(EventKind.INTERVENTION, f"{name} {lane or challenge}", lane, challenge, data={"intervention": name, **details, **who})
         self._by = by
         try:
@@ -920,8 +921,8 @@ class Deck:
                 return self._redirect(lane, text.strip())
             case Fork(approach=approach, model=model):
                 return self._fork(lane, approach.strip(), model)
-            case Kill(requeue=requeue):
-                return self._kill(lane, requeue)
+            case Kill(requeue=requeue, why=why):
+                return self._kill(lane, requeue, why.strip())
             case Escalate():
                 return self._escalate(lane)
             case TakeOver():
@@ -1044,14 +1045,15 @@ class Deck:
         self._note(lane, f"forked to {started.id} ({model})", self._by)
         return Outcome(True, f"Forked {lane.id} → {started.id} on {model}")
 
-    def _kill(self, lane: Lane, requeue: bool) -> Outcome:
+    def _kill(self, lane: Lane, requeue: bool, why: str = "") -> Outcome:
+        """`why`: what a re-queued lane's result says in place of who killed it (Kill.why)."""
         ch = self.challenges[lane.challenge_id]
         if requeue and self._workable(ch):
             entry = QueueEntry(
                 ch.id, lane.model, attempt=lane.attempt + 1, token_cap=lane.token_cap, dollar_cap=lane.dollar_cap
             )
             self.queue.insert(0, entry)
-            self._finish(lane, LaneState.KILLED, f"by {self._who}; re-queued fresh", then=ChallengeStatus.QUEUED)
+            self._finish(lane, LaneState.KILLED, f"{why or 'by ' + self._who}; re-queued fresh", then=ChallengeStatus.QUEUED)
             started = self._started_for(entry)
             error = self._start_errors.pop(id(entry), None)
             if error is not None:

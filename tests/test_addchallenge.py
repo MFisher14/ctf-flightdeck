@@ -919,6 +919,8 @@ def test_a_challenge_added_with_nothing_says_so_and_its_lane_is_told_to_stop_not
 
 
 def test_attach_puts_a_file_in_the_challenge_and_restarts_its_lane_with_it(tmp_path):
+    """Typed in the lane's own view: the lane restarts with the file, the status line names the
+    fresh lane, and the ended lane's result says what it restarted with."""
     from fake_model import text_reply
 
     handout = tmp_path / "doll.bin"
@@ -937,14 +939,17 @@ def test_attach_puts_a_file_in_the_challenge_and_restarts_its_lane_with_it(tmp_p
                         break
                     await pilot.pause(0.01)
                 (first,) = run.deck.lanes
-                await pilot.press(*f"/attach matryoshka {handout}", "enter")
+                app.open_lane(first)
+                await until(pilot, lambda: type(app.screen).__name__ == "FocusScreen" and app.focused is not None)
+                await pilot.press(*f"/attach {handout}", "enter")  # no challenge named: the open lane's
                 for _ in range(500):
                     if len(run.deck.lanes) == 2 and "attached" in app._status[0]:
                         break
                     await pilot.pause(0.01)
-                assert "attached doll.bin to matryoshka" in app._status[0] and f"{first} restarted" in app._status[0]
-                assert (run.options.board / "matryoshka" / "doll.bin").read_bytes() == b"inside"
                 second = [lane for lane in run.deck.lanes.values() if lane.id != first][0]
+                assert app._status[0] == f"attached doll.bin to matryoshka; {first} restarted as {second.id}"
+                assert (run.options.board / "matryoshka" / "doll.bin").read_bytes() == b"inside"
+                assert run.deck.lanes[first].result == "to restart with doll.bin; re-queued fresh"
                 for _ in range(500):
                     if second.id in run.driver.runs and run.driver.runs[second.id].messages:
                         break
@@ -952,6 +957,46 @@ def test_attach_puts_a_file_in_the_challenge_and_restarts_its_lane_with_it(tmp_p
                 assert "doll.bin" in run.driver.runs[second.id].messages[1]["content"]
             await run.shutdown()
             run.close()
+
+    asyncio.run(main())
+
+
+def test_attach_names_the_fresh_lane_of_each_lane_it_restarts_and_says_when_none_has_started_yet(tmp_path):
+    from ctf_flightdeck.core import interventions as iv
+
+    files = [tmp_path / name for name in ("one.bin", "two.bin", "three.bin", "four.bin", "five.bin", "six.bin")]
+    for file in files:
+        file.write_bytes(b"x")
+
+    async def main():
+        with busy_lanes() as server:
+            run = prepare_run(options(tmp_path, server))
+            run.release()
+            await run.add_challenge(NewChallenge(name="Doll", description="d"))
+            for _ in range(500):
+                if run.deck.lanes:
+                    break
+                await asyncio.sleep(0.01)
+            deck = run.deck
+            assert await run.attach_files("doll", files[:1]) == (True, "attached one.bin to doll; L01 restarted as L02")
+            assert deck.apply(iv.Fork("L02", approach="the other way")).ok and [lane.id for lane in deck.lanes_on("doll")] == ["L02", "L03"]
+            assert await run.attach_files("doll", files[1:2]) == (True, "attached two.bin to doll; L02, L03 restarted as L04, L05")
+            assert [lane.id for lane in deck.lanes_on("doll")] == ["L04", "L05"]
+            deck.hold_queue("the model API refuses the key")  # no lane starts: the fresh lanes wait in the queue
+            ok, told = await run.attach_files("doll", files[2:])
+            assert ok and told == ("attached three.bin, four.bin, five.bin, six.bin to doll; "
+                                   "L04, L05 ended, a fresh lane starts when one is free")
+            assert len(deck.lanes) == 5 and deck.queued("doll")
+            results = {lane.id: lane.result for lane in deck.lanes.values()}
+            await run.shutdown()
+            run.close()
+            assert results == {
+                "L01": "to restart with one.bin; re-queued fresh",
+                "L02": "to restart with two.bin; re-queued fresh",
+                "L03": "to restart with two.bin; re-queued fresh",
+                "L04": "to restart with three.bin, four.bin, five.bin and 1 more; re-queued fresh",  # the first three of many
+                "L05": "to restart with three.bin, four.bin, five.bin and 1 more; re-queued fresh",
+            }
 
     asyncio.run(main())
 

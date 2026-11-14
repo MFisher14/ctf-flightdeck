@@ -734,8 +734,9 @@ class Run:
         """The console's /attach: copy files into a challenge's folder on the board (in a
         thread), and start its lanes afresh so each works in a copy that has them (a lane's
         workspace is a copy made when it starts). (whether they were attached, what to tell
-        the player: which lanes restarted, or, when the challenge has none to restart and the
-        deck starts none, why not)."""
+        the player: which lanes restarted and as which fresh lanes, or, when the challenge has
+        none to restart and the deck starts none, why not). A restarted lane's result says what
+        it was restarted with (Kill.why), not who killed it."""
         from .addchallenge import AddError, attach
         from .core import interventions as iv
 
@@ -751,16 +752,28 @@ class Run:
         self.driver.files[challenge_id] = item.challenge.files
         self.deck.challenges[challenge_id].files = item.challenge.files
         what = f"attached {', '.join(names)} to {challenge_id}"
+        before = set(self.deck.lanes)
         active = [lane.id for lane in self.deck.lanes_on(challenge_id) if lane in self.deck.active_lanes()]
-        restarted, refused = [], ""
+        # what each ended lane's result says: the files it was restarted with (the first few of many), not who killed it
+        why = "to restart with " + ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+        restarted, refused, killed = [], "", ""
         for lane_id in active:
-            outcome = self.deck.apply(iv.Kill(lane_id, requeue=True))
+            outcome = self.deck.apply(iv.Kill(lane_id, requeue=True, why=why))
             if outcome.ok:
                 restarted.append(lane_id)
+                killed = outcome.message
             else:
                 refused = outcome.message
         if restarted:
-            return True, what + f"; {', '.join(restarted)} restarted as a fresh lane with it"
+            # the lanes the deck started on it since, by name: the console shows the player the fresh one
+            fresh = [lane.id for lane in self.deck.lanes.values() if lane.id not in before and lane.challenge_id == challenge_id]
+            ended, more, queued = ", ".join(restarted), len(restarted) - len(fresh), self.deck.queued(challenge_id)
+            if fresh:
+                later = f", and {more} more start{'s' if more == 1 else ''} when a lane is free" if more > 0 and queued else ""
+                return True, what + f"; {ended} restarted as {', '.join(fresh)}{later}"
+            if queued:
+                return True, what + f"; {ended} ended, a fresh lane starts when one is free"
+            return True, what + f"; {ended} ended and no fresh lane started: {killed}"  # the deck could not start one, and said why
         if active:
             return True, what + f"; its lane was not restarted: {refused}"
         if not self.deck.queued(challenge_id):
