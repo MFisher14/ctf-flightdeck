@@ -663,6 +663,13 @@ script in one `docker run --rm --pull never --network none` of the image and rai
 non-essential `pack tools` check uses the first for host lanes and the second for Docker lanes, and `flightdeck pack info` prints
 both.
 
+**The flightdeck a pack needs** (`pack.py`; P76). `pack.toml` takes an optional `flightdeck` requirement (`">=0.5, <1"`).
+`pack.needs_flightdeck()` reads it with a small parser of its own (the operators `>=` `>` `<=` `<` `==` `!=` with plain dotted
+versions, joined by commas; anything else is an error) and checks it against `__version__`, a pre-release counting as below
+its release. It is checked in two places, before anything else in the file: `pack.read()` (install, info, doctor's `pack tools`)
+and `l1/manifest.engines_folder()`, which every search for a pack's engines goes through (a run, the `l1` commands, doctor's
+`l1 pack`, `start`). An unmet requirement is a `PackError` or `ManifestError` naming both versions, so the pack is not used.
+
 ### L1 stage
 
 Where: `agent/l1stage.py`.

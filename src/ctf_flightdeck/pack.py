@@ -9,6 +9,7 @@ top:
     description = "..."                  # optional, one line
     engines = "flightdeck"               # optional: the folder searched for *.manifest.toml (default: the whole pack)
     tools = ["tshark", "binwalk"]        # optional: the programs its engines call, by name: doctor says which are missing
+    flightdeck = ">=0.5"                 # optional: the flightdeck versions the pack works with
 
     [setup]                              # optional: what makes the pack ready on this machine
     command = "./setup.sh"               # a file of the pack and its arguments, run in the pack's folder
@@ -22,6 +23,13 @@ top:
     note = "flightdeck/LANE.md"          # what a lane's brief says about it; {pack} is the pack's folder
 
 An unknown key is an error. A pack with no pack.toml needs no setup and runs in the lane image.
+
+`flightdeck` is checked wherever the pack is read: here (install, info, doctor) and wherever
+its engines are found (l1/manifest.py engines_folder: a run, the l1 commands, start). A pack
+whose requirement this flightdeck does not meet is an error that names both versions; nothing
+is guessed and the pack is not used. Only plain specifiers are read (>=, >, <=, <, ==, !=, each
+with a version of numbers and dots, joined by commas): anything else is an error too, so a
+requirement is never half understood.
 
 `tools` is for the player, not for the run: `flightdeck doctor` and `flightdeck pack info` name
 the listed programs that are missing where the engines run (missing_on_host: this machine's
@@ -69,7 +77,7 @@ DEFAULT_NAME = "flightdeck-solvers"
 DATA_ENV = "XDG_DATA_HOME"
 MAX_BYTES = 64 * 1024
 NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
-_TOP = ("name", "version", "description", "engines", "tools", "setup", "image", "lanes")
+_TOP = ("name", "version", "description", "engines", "tools", "flightdeck", "setup", "image", "lanes")
 TOOL = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]{0,63}")  # a program's name: no path, and nothing an option could be
 MAX_TOOLS = 200
 LOOKUP_TIMEOUT = 120.0  # seconds docker has to start a container of the image and answer
@@ -101,6 +109,7 @@ class PackInfo:
     image: Image | None = None
     lane_note: Path | None = None  # the file whose text a lane's brief gets under [l1] lane_tools
     tools: tuple[str, ...] = ()  # the programs its engines call, as pack.toml lists them
+    flightdeck: str = ""  # the flightdeck versions it works with, as needs_flightdeck() writes them; "" for any
 
 
 def packs_folder() -> Path:
@@ -256,6 +265,12 @@ def read(root: Path) -> PackInfo:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise PackError(f"{path} is not valid TOML: {_show(str(exc))}") from None
+    wanted = ""
+    if "flightdeck" in data:  # first: a pack for a newer flightdeck may use keys this one does not know
+        try:
+            wanted = needs_flightdeck(data["flightdeck"])
+        except PackError as exc:
+            raise PackError(f"{path}: {exc}") from None
     _known(path, "", data, _TOP)
     name = data.get("name")
     if not isinstance(name, str) or not NAME.fullmatch(name):
@@ -305,7 +320,87 @@ def read(root: Path) -> PackInfo:
         if not isinstance(rel, str) or not rel:
             raise PackError(f"{path}: lanes.note is required: a text file's path inside the pack")
         note = _inside(path, "lanes.note", root, rel, file=True)
-    return PackInfo(root, name, version, description, setup, image, note, tools)
+    return PackInfo(root, name, version, description, setup, image, note, tools, wanted)
+
+
+# ---------------------------------------------------------------- the flightdeck a pack needs
+
+
+_CLAUSE = re.compile(r"(>=|<=|==|!=|>|<)\s*([0-9]{1,6}(?:\.[0-9]{1,6}){0,3})")
+_RELEASE = re.compile(r"([0-9]+(?:\.[0-9]+)*)(.*)", re.DOTALL)
+_PRE = re.compile(r"(a|b|c|rc|alpha|beta|pre|preview|dev)[._-]?[0-9]*([._-]?dev[._-]?[0-9]*)?")
+_POST = re.compile(r"(post|rev|r)[._-]?[0-9]*")
+_WIDTH = 6  # a release is padded with zeros to this many numbers: 0.5 is 0.5.0
+MAX_REQUIREMENT = 200
+_FORM = ('a version requirement such as ">=0.5" or ">=0.5, <1": the operators >= > <= < == !=, '
+         "each with a version of numbers and dots, joined by commas")
+
+
+def needs_flightdeck(value: object, have: str | None = None) -> str:
+    """pack.toml's `flightdeck` key, checked against this flightdeck (`have`: by default its
+    installed version). Returns the requirement as flightdeck writes it (">=0.5, <1"), or
+    raises PackError: when it is not a requirement this reads, when this flightdeck does not
+    meet it, or when this flightdeck's own version cannot be compared with it."""
+    clauses = _requirement(value)
+    shown = ", ".join(f"{op}{'.'.join(map(str, numbers))}" for op, numbers in clauses)
+    if have is None:
+        from . import __version__ as have
+    key = _version_key(have)
+    if key is None:
+        raise PackError(f"this pack needs flightdeck {shown}, and this flightdeck's version ({_show(have)}) cannot be "
+                        "compared with that: install flightdeck as a package (in a checkout, `uv sync`)")
+    unmet = [(op, numbers) for op, numbers in clauses if not _meets(key, op, numbers)]
+    if not unmet:
+        return shown
+    older = any(op in (">=", ">") or (op == "==" and key < (_padded(numbers), 1)) for op, numbers in unmet)
+    how = ("upgrade flightdeck: `uv tool upgrade ctf-flightdeck` (or `pipx upgrade ctf-flightdeck`)" if older
+           else "use a version of the pack made for this flightdeck")
+    raise PackError(f"this pack needs flightdeck {shown}, you have {_show(have)}: {how}")
+
+
+def _requirement(value: object) -> list[tuple[str, tuple[int, ...]]]:
+    if not isinstance(value, str) or not value.strip() or len(value) > MAX_REQUIREMENT:
+        shown = _show(value) if isinstance(value, str) else type(value).__name__
+        raise PackError(f"flightdeck ({shown}) must be {_FORM}")
+    clauses = []
+    for part in value.split(","):
+        match = _CLAUSE.fullmatch(part.strip())
+        if match is None:
+            what = _show(part.strip()) if part.strip() else "an empty part"
+            raise PackError(f"flightdeck: {what} is not a requirement flightdeck reads; it must be {_FORM}")
+        clauses.append((match[1], tuple(int(n) for n in match[2].split("."))))
+    return clauses
+
+
+def _padded(numbers: tuple[int, ...]) -> tuple[int, ...]:
+    return (numbers + (0,) * _WIDTH)[:_WIDTH]
+
+
+def _version_key(have: str) -> tuple[tuple[int, ...], int] | None:
+    """(the release numbers, padded, and 0 for a pre-release or dev build of that release, 1
+    for the release, 2 for a post-release), or None for a version that cannot be compared (it
+    does not start with numbers, has more than _WIDTH of them, or ends in something else). A
+    local part (+...) is left out. Enough to compare with a requirement's plain versions:
+    0.5.0rc1 and 0.5.0.dev2 are below 0.5, 0.5.0+abc is 0.5."""
+    match = _RELEASE.fullmatch(have.strip().lower().split("+", 1)[0])
+    if match is None or len(match[1].split(".")) > _WIDTH:
+        return None
+    rest = match[2].lstrip("._-")
+    if not rest:
+        rank = 1
+    elif _PRE.fullmatch(rest):
+        rank = 0
+    elif _POST.fullmatch(rest):
+        rank = 2
+    else:
+        return None
+    return _padded(tuple(int(n) for n in match[1].split("."))), rank
+
+
+def _meets(key: tuple[tuple[int, ...], int], op: str, numbers: tuple[int, ...]) -> bool:
+    want = (_padded(numbers), 1)
+    return {">=": key >= want, ">": key > want, "<=": key <= want, "<": key < want,
+            "==": key == want, "!=": key != want}[op]
 
 
 def _tools(path: Path, value: object) -> tuple[str, ...]:

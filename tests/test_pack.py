@@ -124,6 +124,142 @@ def test_engines_names_the_folder_searched_for_manifests_and_the_rest_is_not_sea
         discover(root)
 
 
+# ---------------------------------------------------------------- the flightdeck a pack needs
+
+
+@pytest.mark.parametrize(("wanted", "have"), [
+    (">=0.5", "0.5.0"), (">=0.5", "0.10.1"), (">0.4", "0.4.1"), ("==0.5", "0.5.0"), ("==0.5.0", "0.5"),
+    (">=0.5, <1", "0.9.9"), ("  >= 0.5 ,<= 0.6 ", "0.6.0"), ("!=0.5.1", "0.5.2"), (">=0.5", "0.5.0+local.3"),
+    (">=0.5", "0.5.0.post1"), ("<0.5", "0.5.0rc1"), ("<0.5", "0.5.0.dev2"),
+])
+def test_a_requirement_this_flightdeck_meets_is_written_back_plainly(wanted, have):
+    shown = packs.needs_flightdeck(wanted, have)
+    assert shown == plain(wanted)
+
+
+def plain(wanted: str) -> str:
+    """A requirement as flightdeck writes it back: no blanks in a part, ", " between parts."""
+    return ", ".join(part.replace(" ", "") for part in wanted.split(","))
+
+
+@pytest.mark.parametrize(("wanted", "have", "hint"), [
+    (">=0.6", "0.5.0", "upgrade flightdeck"),
+    (">0.5", "0.5.0", "upgrade flightdeck"),
+    (">=0.5", "0.5.0rc1", "upgrade flightdeck"),  # a release candidate is below the release
+    ("==0.6", "0.5.0", "upgrade flightdeck"),
+    (">=0.4, <0.5", "0.5.0", "a version of the pack made for this flightdeck"),
+    ("==0.4", "0.5.0", "a version of the pack made for this flightdeck"),
+    ("!=0.5", "0.5.0", "a version of the pack made for this flightdeck"),
+])
+def test_a_requirement_this_flightdeck_does_not_meet_names_both_versions_and_what_to_do(wanted, have, hint):
+    with pytest.raises(packs.PackError) as caught:
+        packs.needs_flightdeck(wanted, have)
+    message = str(caught.value)
+    assert message.startswith(f"this pack needs flightdeck {plain(wanted)}, you have {have}: ")
+    assert hint in message
+
+
+@pytest.mark.parametrize("wanted", [
+    "0.5", "~=0.5", ">=0.5.*", "===0.5", ">=0.5,", ">=0.5; <1", ">= v0.5", "", "   ", ">=0.5rc1", ">=1.2.3.4.5",
+    ">=" + "9" * 7, 5, [">=0.5"], ">=0.5, " * 40,
+])
+def test_a_requirement_flightdeck_does_not_read_is_an_error_whatever_its_version(wanted):
+    with pytest.raises(packs.PackError, match="must be a version requirement such as"):
+        packs.needs_flightdeck(wanted, "0.5.0")
+
+
+@pytest.mark.parametrize("have", ["unknown (not installed)", "0.5.0-weird", "1.2.3.4.5.6.7"])
+def test_a_flightdeck_whose_own_version_cannot_be_compared_refuses_a_pack_that_names_one(have):
+    with pytest.raises(packs.PackError, match=r"needs flightdeck >=0\.5, and this flightdeck's version .* cannot be compared"):
+        packs.needs_flightdeck(">=0.5", have)
+
+
+def test_the_running_flightdecks_version_is_the_one_checked(monkeypatch):
+    import ctf_flightdeck
+
+    monkeypatch.setattr(ctf_flightdeck, "__version__", "0.5.0")
+    assert packs.needs_flightdeck(">=0.5") == ">=0.5"
+    monkeypatch.setattr(ctf_flightdeck, "__version__", "0.4.9")
+    with pytest.raises(packs.PackError, match="you have 0.4.9"):
+        packs.needs_flightdeck(">=0.5")
+
+
+def test_a_requirements_text_in_an_error_is_made_safe():
+    with pytest.raises(packs.PackError) as caught:
+        packs.needs_flightdeck(">=0.5, \x1b[31mred\x1b[0m", "0.5.0")
+    assert "\x1b" not in str(caught.value)
+
+
+def test_a_pack_for_a_newer_flightdeck_is_refused_when_read_and_when_its_engines_are_found(tmp_path, monkeypatch):
+    import ctf_flightdeck
+
+    monkeypatch.setattr(ctf_flightdeck, "__version__", "0.5.0")
+    root = make_pack(tmp_path / "p", toml='name = "p"\nflightdeck = ">=0.5"\n')
+    assert packs.read(root).flightdeck == ">=0.5"
+    assert [m.id for m in discover(root)] == ["e"]
+    # a newer pack, with a key this flightdeck does not know: the version is what is said, not the key
+    (root / "pack.toml").write_text('name = "p"\nflightdeck = ">=0.6"\nnewer_key = 1\n')
+    with pytest.raises(packs.PackError, match=r"pack\.toml: this pack needs flightdeck >=0\.6, you have 0\.5\.0"):
+        packs.read(root)
+    with pytest.raises(ManifestError, match=r"this pack needs flightdeck >=0\.6, you have 0\.5\.0"):
+        discover(root)
+    (root / "pack.toml").write_text('name = "p"\nflightdeck = "0.6"\n')
+    with pytest.raises(packs.PackError, match="must be a version requirement"):
+        packs.read(root)
+    with pytest.raises(ManifestError, match="must be a version requirement"):
+        discover(root)
+
+
+def test_a_run_and_doctor_refuse_a_pack_for_a_newer_flightdeck(tmp_path, monkeypatch):
+    import ctf_flightdeck
+    from ctf_flightdeck.run import RunError, _l1_manifests
+    from ctf_flightdeck.setup import _l1_check
+
+    monkeypatch.setattr(ctf_flightdeck, "__version__", "0.5.0")
+    root = make_pack(tmp_path / "p", toml='name = "p"\nflightdeck = ">=0.6"\n')
+    with pytest.raises(RunError, match=r"the L1 pack cannot be used: .*needs flightdeck >=0\.6, you have 0\.5\.0"):
+        _l1_manifests(root)
+    check = _l1_check(root)
+    assert not check.ok and "needs flightdeck >=0.6, you have 0.5.0" in check.detail
+    monkeypatch.setattr(ctf_flightdeck, "__version__", "0.6.0")
+    assert [m.id for m in _l1_manifests(root)] == ["e"] and _l1_check(root).ok
+
+
+def test_a_pack_without_the_key_works_with_any_flightdeck(tmp_path, monkeypatch):
+    import ctf_flightdeck
+
+    monkeypatch.setattr(ctf_flightdeck, "__version__", "unknown (not installed)")
+    root = make_pack(tmp_path / "p")
+    assert packs.read(root).flightdeck == ""
+    assert [m.id for m in discover(root)] == ["e"]
+
+
+def test_install_refuses_a_pack_for_a_newer_flightdeck_before_it_runs_anything(tmp_path, config, monkeypatch):
+    import ctf_flightdeck
+
+    monkeypatch.setattr(ctf_flightdeck, "__version__", "0.5.0")
+    marker = tmp_path / "ran"
+    root = make_pack(tmp_path / "p", toml='name = "p"\nflightdeck = ">=0.6"\n[setup]\ncommand = "./setup.sh"\n',
+                     setup=f"touch {marker}\n")
+    before = config.read_text()
+    result = invoke("install", root, "--yes", "--config", config)
+    assert result.exit_code != 0
+    assert "this pack needs flightdeck >=0.6, you have 0.5.0: upgrade flightdeck" in result.output
+    assert not marker.exists() and config.read_text() == before
+
+
+def test_pack_info_says_which_flightdeck_the_pack_needs(tmp_path, config, monkeypatch):
+    import ctf_flightdeck
+
+    monkeypatch.setattr(ctf_flightdeck, "__version__", "0.5.0")
+    root = make_pack(tmp_path / "p", toml='name = "p"\nflightdeck = ">=0.5, <1"\n')
+    result = invoke("info", root, "--config", config)
+    assert result.exit_code == 0, result.output
+    assert "needs flightdeck >=0.5, <1 (you have 0.5.0)" in result.output
+    result = invoke("info", make_pack(tmp_path / "q"), "--config", config)
+    assert "needs flightdeck" not in result.output
+
+
 # ---------------------------------------------------------------- fetching
 
 

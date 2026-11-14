@@ -53,6 +53,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   the reason, and `http check` and each pull say so. A table for another platform can say the
   same with `[http.refuse]`. The preset has met a stand-in only, not a real GZCTF yet
   ([BOARDS.md](docs/BOARDS.md#a-board-from-a-platform-with-a-json-api)).
+- A solver pack can say which flightdeck it needs: `flightdeck = ">=0.6"` in its `pack.toml`
+  (`>=`, `>`, `<=`, `<`, `==`, `!=`, joined by commas). A flightdeck that does not meet it
+  refuses the pack and says both versions, as in `this pack needs flightdeck >=0.6, you have
+  0.5.0: upgrade flightdeck`: `pack install` stops before it runs anything, and doctor,
+  `pack info`, the `l1` commands and a run use none of its engines. `pack info` shows the
+  requirement ([the solver guide](docs/SOLVERS.md#a-pack-that-needs-setup)).
 
 ## 0.5.0 (2026-11-14)
 

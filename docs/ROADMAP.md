@@ -42,6 +42,9 @@ Proposals built and waiting for a release, in the order of their numbers in
   wants it encrypted; `flightdeck http example --preset gzctf`. Written from GZCTF's public
   source and tested against a fake on 127.0.0.1 only, never a real GZCTF; a site that encrypts
   its flags gets none from flightdeck, and the player submits them on the site.
+- **A pack names the flightdeck it needs** (P76). `flightdeck = ">=0.6"` in a `pack.toml`; a
+  flightdeck that does not meet it refuses the pack, at install and wherever its engines are
+  found, with both versions and what to do.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
