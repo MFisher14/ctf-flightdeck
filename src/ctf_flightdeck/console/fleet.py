@@ -87,6 +87,19 @@ def lane_rows(lines: int, *, compact: bool = False) -> int:
     return max(0, lines - (COMPACT_FLEET_ROWS if compact else FLEET_ROWS))
 
 
+class FittedTable(DataTable):
+    """One of the fleet view's tables: its columns are fitted again whenever its own width
+    changes. A change of layout (/layout, the board coming or going) gives the lane list its
+    new width only once the screen is laid out again, and that can be after anything the
+    fleet view asked to run "after the refresh": fitted then, the columns would keep the old
+    width until the terminal is resized. The table's own resize cannot come too early."""
+
+    def on_resize(self, event: events.Resize) -> None:
+        screen = self.screen
+        if event.size.width and isinstance(screen, FleetScreen) and screen._ready:  # no width: it is not shown
+            screen._set_columns()
+
+
 class FleetScreen(Screen, inherit_bindings=False):
     DEFAULT_CSS = """
     FleetScreen { layout: vertical; }
@@ -157,9 +170,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         yield Static(id="empty")
         with Horizontal(id="main"):
             with Vertical(id="board-pane", classes="panel"):
-                yield DataTable(id="board", cursor_type="row")
+                yield FittedTable(id="board", cursor_type="row")
             with Vertical(id="lanes-pane", classes="panel"):
-                yield DataTable(id="lanes", cursor_type="row")
+                yield FittedTable(id="lanes", cursor_type="row")
                 yield Static(id="why")
         yield Static(id="status")
         yield CommandBar(BAR, id="bar")

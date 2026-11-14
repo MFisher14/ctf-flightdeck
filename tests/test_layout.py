@@ -393,6 +393,39 @@ def test_layout_switches_the_view_and_back_and_keeps_the_cursor_the_filter_and_a
     drive(app, script, SIZE)
 
 
+def test_the_lane_list_fits_its_columns_to_its_width_whenever_that_changes():
+    """Not only when the fleet view asks for it: /layout gives the list its new width when the
+    screen is next laid out, and on a busy machine that is after the fleet view's own fitting,
+    which then fitted the old width. The board's pane is hidden here behind the fleet view's
+    back, so only the table's own resize can fit the columns."""
+    deck, app = three_lanes("deck")
+
+    async def script(pilot):
+        lanes = app.fleet.query_one("#lanes", DataTable)
+
+        def fitted() -> tuple[int, int, int]:
+            """The list's width, its last-action column's, and the cells its columns leave unused."""
+            widths = {column.key.value: column.width for column in lanes.ordered_columns}
+            return lanes.size.width, widths["last"], lanes.size.width - 1 - sum(widths.values()) - 2 * lanes.cell_padding * len(widths)
+
+        narrow, last, spare = fitted()
+        assert spare == 0 and columns(app, "lanes") == DECK_COLUMNS
+        pane = app.fleet.query_one("#board-pane")
+        pane.display = False
+        await pilot.pause()
+        wide = lanes.size.width
+        assert wide > narrow and fitted() == (wide, last + wide - narrow, 0)  # the last action takes the room
+        pane.display = True
+        await pilot.pause()
+        assert fitted() == (narrow, last, 0)
+        for layout in ("simple", "deck"):
+            app.run_command(f"/layout {layout}", None)
+            await pilot.pause()
+            assert fitted()[2] == 0 and (fitted()[0] > narrow) is (layout == "simple"), layout
+
+    drive(app, script, SIZE)
+
+
 def test_layout_refuses_any_other_word_and_says_where_to_keep_a_layout():
     deck, app = three_lanes("simple", config_path="/somewhere/config.toml")
 
