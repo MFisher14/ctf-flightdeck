@@ -644,7 +644,27 @@ async def until(pilot, done, tries: int = 500) -> None:
         if done():
             return
         await pilot.pause(0.01)
-    raise AssertionError("waited too long")
+    app = pilot.app
+    field = app.screen.query("#bar-input")
+    raise AssertionError(f"waited too long: the console is on {type(app.screen).__name__}, its status line says "
+                         f"{app._status[0]!r} and its command bar holds {field.first().value if field else None!r}")
+
+
+async def command(pilot, text: str) -> None:
+    """Send the command `text` from the bar: its `/` typed (the key opens the bar wherever
+    the focus is), the rest put in the way a terminal paste arrives, then Enter.
+
+    For the commands that name a file under tmp_path, whose path is over a hundred characters.
+    Typed key by key next to a lane at work they took 12 s each: Textual's pilot waits after
+    every key for the process to be idle, and a working lane leaves it idle only now and then
+    (0.1 s a key, measured). A paste that is not only paths is text (addchallenge.dropped), so
+    the bar holds exactly what the keys would have put there."""
+    assert text.startswith("/") and not addchallenge.dropped(text[1:])
+    await pilot.press("/")
+    pilot.app.post_message(events.Paste(text[1:]))
+    await pilot.pause()
+    assert pilot.app.screen.query_one("#bar-input").value == text
+    await pilot.press("enter")
 
 
 def said(form) -> str:
@@ -877,10 +897,13 @@ def test_new_and_attach_copy_in_a_thread_and_say_so_while_the_console_goes_on(tm
             go.set()
             await until(pilot, lambda: "added doll: 1 file" in app._status[0])
             assert (run.options.board / "doll" / "doll.bin").read_bytes() == b"inside"
-            # the simple layout (a run's default) opens the run's first lane: wait until its chat box has the focus
-            await until(pilot, lambda: type(app.screen).__name__ == "FocusScreen" and app.focused is not None)
+            # the simple layout (a run's default) opens the run's first lane: wait until its chat box has the
+            # focus. Not until anything has it: as the view opens the focus is on its transcript for a moment,
+            # and a `/` pressed then is lost if the focus moves on before the key has reached the view (the
+            # rest of the command then went to the lane as a message, and nothing was attached)
+            await until(pilot, lambda: type(app.screen).__name__ == "FocusScreen" and getattr(app.focused, "id", None) == "bar-input")
             go.clear()
-            await pilot.press(*f"/attach doll {more}", "enter")
+            await command(pilot, f"/attach doll {more}")
             await until(pilot, lambda: len(threads) == 2)
             assert app._status[0] == "copying 1 file into doll..." and threads[1] is not threading.main_thread()
             await pilot.press(*"/sort")  # the command bar takes keys meanwhile
@@ -937,7 +960,7 @@ def test_attach_puts_a_file_in_the_challenge_and_restarts_its_lane_with_it(tmp_p
                         break
                     await pilot.pause(0.01)
                 (first,) = run.deck.lanes
-                await pilot.press(*f"/attach matryoshka {handout}", "enter")
+                await command(pilot, f"/attach matryoshka {handout}")
                 for _ in range(500):
                     if len(run.deck.lanes) == 2 and "attached" in app._status[0]:
                         break
