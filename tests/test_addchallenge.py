@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -852,11 +853,12 @@ def test_the_form_says_what_it_found(tmp_path):
 # ---------------------------------------------------------------------- what is attached, and /attach
 
 
-def in_console(tmp_path, body, server=None) -> None:
-    """Run `body(run, app, pilot)` in the console of a run on an empty by-hand board."""
+def in_console(tmp_path, body, server=None, *, run_dir: Path | None = None) -> None:
+    """Run `body(run, app, pilot)` in the console of a run on an empty by-hand board; with
+    `run_dir`, its folder goes there (as --run-dir gives it) and not where the config says."""
     async def main():
         with server or FakeModelServer([]) as model:
-            run = prepare_run(options(tmp_path, model))
+            run = prepare_run(replace(options(tmp_path, model), run_dir=run_dir))
             app = run.app(refresh_seconds=None)
             try:
                 async with app.run_test(size=(160, 46)) as pilot:
@@ -1551,6 +1553,39 @@ def test_a_file_that_is_gone_after_it_was_dropped_is_still_added_and_still_attac
         await until(pilot, lambda: not copy_of(run, "more.bin").parent.exists())
 
     in_console(tmp_path, body, busy_lanes())
+
+
+def test_a_drop_attaches_when_the_run_folder_was_given_as_a_relative_path(tmp_path, monkeypatch):
+    """`flightdeck run --run-dir runs`: the command bar reads only a full path as a file, so
+    the copy a drop puts on it is named by its full path whatever the run folder was given as."""
+    monkeypatch.chdir(tmp_path)
+    shot, more = tmp_path / "shot.bin", tmp_path / "more.bin"
+    shot.write_bytes(b"in the form")
+    more.write_bytes(b"on the bar")
+
+    async def body(run, app, pilot):
+        assert not run.dir.is_absolute() and run.dir.parent == Path("relruns")
+        kept = tmp_path / run.dir / "dropped"  # where the copies are, by its full path
+        await pilot.press(*"/new Doll", "enter")
+        await pilot.pause()
+        form = app.screen
+        await app.on_event(events.Paste(f"{shot} "))
+        await until(pilot, lambda: form.files == [kept / "1" / "shot.bin"])
+        await pilot.press("ctrl+s")
+        await until(pilot, lambda: "doll" in run.deck.challenges)
+        assert (run.options.board / "doll" / "shot.bin").read_bytes() == b"in the form"
+        await until(pilot, lambda: not (kept / "1").exists())  # on the board: the run's copy is not kept
+        await until(pilot, lambda: app.screen.query("#bar-input") and app.focused is not None)
+        app.screen.set_focus(None)
+        await app.on_event(events.Paste(f"{more} "))
+        await on_bar(pilot, f"/attach doll '{kept / '1' / 'more.bin'}' ")
+        await pilot.press("enter")
+        await until(pilot, lambda: "attached more.bin to doll" in app._status[0])
+        assert (run.options.board / "doll" / "more.bin").read_bytes() == b"on the bar"
+        await until(pilot, lambda: not (kept / "1").exists())
+
+    in_console(tmp_path, body, busy_lanes(), run_dir=Path("relruns"))
+    assert len(list(tmp_path.glob("relruns/*"))) == 1 and list(tmp_path.glob("relruns/*/dropped")) == []  # gone with the run
 
 
 def test_three_files_that_arrive_as_three_pastes_are_one_attach_in_the_order_they_came(tmp_path):

@@ -467,7 +467,7 @@ class Run:
         if self.processes is not None:
             self.processes.finish()
         # copies of dropped files that were never attached (a form closed, an /attach not sent): nothing reads them now
-        shutil.rmtree(self.dir / "dropped", ignore_errors=True)
+        shutil.rmtree(self._drops, ignore_errors=True)
 
     def scorecard(self) -> str | None:
         """After close(): the run scored against the board's answers (practice mode), or None
@@ -783,21 +783,28 @@ class Run:
 
         return clipboard_image(self.dir / "pasted")
 
+    @property
+    def _drops(self) -> Path:
+        """Where the copies of dropped files are kept: in the run folder, by its full path
+        even when the run folder was given as a relative one (--run-dir runs). The console
+        writes a copy's path on the command bar, and /attach reads only a full path as a file."""
+        return (self.dir / "dropped").resolve()
+
     def stage_files(self, files: Sequence[Path]) -> list[Path]:
         """A drop the console took: copies of its files in the run folder (addchallenge.stage;
-        AddError when one cannot be copied), which are what is attached. The file behind a
-        drop may be gone before the player presses the key that attaches it. It copies, so
-        the console calls it in a thread."""
+        AddError when one cannot be copied), which are what is attached, each named by its
+        full path. The file behind a drop may be gone before the player presses the key that
+        attaches it. It copies, so the console calls it in a thread."""
         from .addchallenge import stage
 
-        return stage(self.dir / "dropped", files)
+        return stage(self._drops, files)
 
     def unstage_files(self, files: Sequence[Path]) -> None:
         """Remove the copies among `files` that stage_files made: they are attached, or the
         player took them back. A file that is no such copy is left alone (addchallenge.unstage)."""
         from .addchallenge import unstage
 
-        unstage(self.dir / "dropped", files)
+        unstage(self._drops, files)
 
     def _attached(self, files: Sequence[Path]) -> None:
         """The board has `files` now: the copies of a drop among them go from the run folder.
@@ -805,7 +812,7 @@ class Run:
         must not wait for it); with no such copy, nothing is started."""
         from .addchallenge import staged
 
-        copies = staged(self.dir / "dropped", files)
+        copies = staged(self._drops, files)
         if copies:
             asyncio.get_running_loop().run_in_executor(None, self.unstage_files, copies)
 
