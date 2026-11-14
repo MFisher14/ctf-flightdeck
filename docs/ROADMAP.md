@@ -45,6 +45,11 @@ Proposals built and waiting for a release, in the order of their numbers in
 - **A pack names the flightdeck it needs** (P76). `flightdeck = ">=0.6"` in a `pack.toml`; a
   flightdeck that does not meet it refuses the pack, at install and wherever its engines are
   found, with both versions and what to do.
+- **How a drop works in your terminal** (P77). The `/new` form and help say it in one
+  sentence chosen from `SSH_CONNECTION`/`SSH_TTY`, `TMUX` and `TERM_PROGRAM`: over SSH,
+  inside tmux, VS Code's terminal, iTerm2 and WezTerm on X11 have their own; every other
+  terminal gets the general one. Each sentence is from that terminal's own source or
+  documentation; none was tried in the terminal itself.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

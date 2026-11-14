@@ -16,7 +16,8 @@ but paths (or types the same text all at once, which the console tells from typi
 speed), and only text of that shape is one (`dropped`). A drop the console takes is copied
 into the run's folder at once (`stage`): the file behind a drop may be a temporary one. A
 paste of that shape whose file is not there is text, and gets a line that says why
-(`not_there_line`). What may be attached is a regular file or a folder (`refusal` names why
+(`not_there_line`). How to drop a file, in the terminal flightdeck runs in, is one sentence
+chosen from the environment (`drop_hint`). What may be attached is a regular file or a folder (`refusal` names why
 anything else is not), and nothing is copied over a file that is already there.
 
 The text is the player's own, typed at their console, but the description in it is the
@@ -285,6 +286,69 @@ def not_there_line(text: str, *, choose: str, env: Mapping[str, str] | None = No
                 f"file's name: {choose}")
     return (f"no such file: {_shown(missing)}. A dropped file may have been a temporary one, gone by now: drag the "
             f"saved file, or {choose}")
+
+
+def drop_terminal(env: Mapping[str, str] | None = None) -> str:
+    """Which drop sentence fits where flightdeck runs (drop_hint): "ssh", "tmux", "vscode",
+    "iterm2", "wezterm-x11", or "" for the generic one. Over SSH first (the file is on the
+    other machine whatever the terminal), then tmux, which sets TERM_PROGRAM to "tmux" and so
+    hides the terminal it runs in, then TERM_PROGRAM. Only a terminal whose own source or
+    documentation says how its drops go wrong has a sentence; every other one (Terminal.app,
+    Ghostty, kitty, GNOME Terminal, Warp, one not known) gets the generic sentence. It picks a
+    sentence and nothing else: how a paste is read never depends on it."""
+    env = os.environ if env is None else env
+    if env.get("SSH_CONNECTION") or env.get("SSH_TTY"):
+        return "ssh"
+    program = env.get("TERM_PROGRAM", "")
+    if env.get("TMUX") or program == "tmux":
+        return "tmux"
+    if program == "vscode":
+        return "vscode"
+    if program == "iTerm.app":
+        return "iterm2"
+    if program == "WezTerm" and env.get("XDG_SESSION_TYPE") == "x11":
+        return "wezterm-x11"
+    return ""
+
+
+def drop_hint(*, choose: str, env: Mapping[str, str] | None = None) -> str:
+    """How to attach a file by dropping it, in the terminal flightdeck runs in (drop_terminal),
+    for the /new form and help: where the player looks to learn how, and where a drop that
+    did nothing sends them. `choose` is how the player chooses a file instead ("press ctrl+o
+    to choose it"). Made of fixed words: nothing from the environment is shown."""
+    terminal = drop_terminal(env)
+    if terminal == "ssh":
+        return ("Over SSH a file you drop stays on the machine your terminal runs on: copy it here first (scp), then "
+                "/attach its path.")
+    if terminal == "tmux":
+        return ("Inside tmux, drop the file on the terminal tmux runs in: tmux passes its path on as a paste (flightdeck "
+                f"cannot tell which terminal that is). If nothing lands, {choose}.")
+    if terminal == "vscode":
+        return (f"VS Code's terminal types only the first file of a drop, and leaves {VSCODE_LEAVES_OUT} out of its "
+                f"name: drop one file at a time, or {choose}.")
+    if terminal == "iterm2":
+        return ("In iTerm2, drag the file with no key held: with Option iTerm2 offers an upload or takes nothing, and "
+                f"with Command it types a cd line. If nothing lands, {choose}.")
+    if terminal == "wezterm-x11":
+        return f"WezTerm takes a dropped file on X11 only in its nightly builds: {choose}."
+    return f"Drag a file onto this window to attach it. If nothing lands, your terminal kept the drop: {choose}."
+
+
+# The /new form's files line, by drop_terminal: drop_hint in as few words, since the form has
+# to fit on 66 by 24 with every field showing. Over SSH a path pasted that names a file here is a drop.
+_FORM_FILES = {
+    "ssh": "Files: over SSH, scp them here and paste the path",
+    "tmux": "Files: drop them on the terminal tmux runs in, or ctrl+o",
+    "vscode": "Files: drag one at a time (VS Code types one), or ctrl+o",
+    "iterm2": "Files: drag them in with no key held, or ctrl+o",
+    "wezterm-x11": "Files: ctrl+o (a drop needs a nightly WezTerm on X11)",
+    "": "Files: drag them in, or ctrl+o if none lands",
+}
+
+
+def form_files_line(env: Mapping[str, str] | None = None) -> str:
+    """The /new form's short line on how to attach files here (drop_hint has the whole sentence)."""
+    return _FORM_FILES[drop_terminal(env)] + "; the line under the box names them."
 
 
 # ---------------------------------------------------------------------- what may be attached

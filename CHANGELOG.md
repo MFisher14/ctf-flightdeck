@@ -59,6 +59,10 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   0.5.0: upgrade flightdeck`: `pack install` stops before it runs anything, and doctor,
   `pack info`, the `l1` commands and a run use none of its engines. `pack info` shows the
   requirement ([the solver guide](docs/SOLVERS.md#a-pack-that-needs-setup)).
+- The `/new` form and help ("Files, in this terminal") say how to drop a file in the terminal
+  you are in, and what to press when nothing lands: over SSH, inside tmux, VS Code's terminal,
+  iTerm2 and WezTerm on X11 each have their own sentence, and every other terminal the general
+  one ([the guide](docs/GUIDE.md#events-and-teams)).
 
 ## 0.5.0 (2026-11-14)
 
