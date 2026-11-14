@@ -536,6 +536,27 @@ def test_a_rate_limited_flag_is_sent_again_after_the_wait_the_plugin_gives(tmp_p
             "(send 2 of 4)") in notes(lane)
 
 
+def test_a_flag_that_waits_behind_a_pull_says_so_on_the_lane(tmp_path):
+    """Calls to a plugin never overlap, and a pull may take minutes: the lane says why its flag
+    has not gone yet, and a flag that does not wait says nothing of a pull."""
+    deck, link, caller = linked(tmp_path, Verdict("correct"), Verdict("correct"))
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+
+    async def body():
+        caller.running = "pull"
+        deck.report(first.id, TurnReport(action="solve.py", flag="t{c0}"))
+        await settled(link, deck, "c0")
+        caller.running = None
+        deck.report(second.id, TurnReport(action="solve.py", flag="t{c1}"))
+        await settled(link, deck, "c1")
+
+    drive(link, body)
+    assert caller.submits == [("17", "t{c0}"), ("23", "t{c1}")]
+    assert ("the acme plugin is pulling the board; t{c0} goes to the platform when the pull ends (a pull may take up to 300 s, "
+            "and calls to a plugin never overlap)") in notes(first)
+    assert not any("pulling the board" in note for note in notes(second))
+
+
 def test_a_flag_rate_limited_every_time_goes_back_to_the_player_after_three_more_sends(tmp_path):
     deck, link, caller = linked(tmp_path, *[Verdict("rate_limited", "slow down", retry_after=1)] * 4)
     lane = lane_on(deck, "c0")

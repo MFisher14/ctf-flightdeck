@@ -292,6 +292,29 @@ def test_a_call_that_runs_out_of_time_is_killed_with_everything_it_started(tmp_p
     assert gone(seen["child"])
 
 
+def test_a_caller_says_a_pull_is_running_while_a_submit_waits_behind_it(tmp_path):
+    """Calls never overlap (docs/PLUGINS.md): a submit waits for the pull, and `running` says
+    what it waits for, so a run can say so on the lane."""
+    acme = caller(tmp_path / "acme", {"pull": {"sleep": 1, "answer": {"challenges": []}}, "submit": {"answer": {"verdict": "correct"}}})
+
+    async def main():
+        assert acme.running is None
+        pulling = asyncio.create_task(acme.pull(tmp_path / "files"))
+        while acme.running is None:
+            await asyncio.sleep(0.01)
+        assert acme.running == "pull"
+        verdict = await acme.submit("17", "flag{x}")
+        assert pulling.done() and acme.running is None
+        return verdict
+
+    assert run(main()) == Verdict("correct", "", None, None)
+    assert [seen["request"]["op"] for seen in calls(tmp_path / "acme")] == ["pull", "submit"]
+    set_replies(tmp_path / "acme", {"submit": {"exit": 1}})
+    with pytest.raises(CallFailed):
+        run(acme.submit("17", "flag{x}"))
+    assert acme.running is None  # a call that fails holds nothing
+
+
 def test_the_time_a_call_may_take_is_per_op():
     assert call.SECONDS == {"pull": 300.0, "submit": 30.0, "solved": 30.0}
     assert call.MAX_STDOUT == {"pull": 8_000_000, "submit": 1_000_000, "solved": 1_000_000}

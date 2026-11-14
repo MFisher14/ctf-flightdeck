@@ -49,7 +49,7 @@ from pathlib import Path
 from ..core.deck import Deck
 from ..core.model import PendingKind
 from ..plugins.board import load_refs, pull_into
-from ..plugins.call import CallFailed, PlatformCaller, Verdict, plugin_label
+from ..plugins.call import SECONDS, CallFailed, PlatformCaller, Verdict, plugin_label
 from ..plugins.manifest import PluginError
 from ..text import untrusted
 
@@ -174,6 +174,7 @@ class PluginLink:
                     "submit it by hand, then say whether it was accepted")
         sends = 0
         while True:
+            self._waits_behind_pull(lane_id, flag)
             try:
                 verdict = await self.caller.submit(ref, flag)
             except CallFailed as exc:
@@ -190,6 +191,18 @@ class PluginLink:
                     f"again in {wait:g}s (send {sends + 1} of {self.RESENDS + 1})"
                 ))
             await self.sleep(wait)
+
+    def _waits_behind_pull(self, lane_id: str, flag: str) -> None:
+        """A note on the lane when the flag must wait for a pull to end: calls to a plugin never
+        overlap (docs/PLUGINS.md), and a pull may take minutes."""
+        if getattr(self.caller, "running", None) != "pull":
+            return
+        seconds = (getattr(self.caller, "seconds", None) or SECONDS)["pull"]
+        with contextlib.suppress(Exception):  # the note is a courtesy: the submit does not hang on it
+            self.deck.note(lane_id, (
+                f"{self.label} is pulling the board; {_show(flag)} goes to the platform when the pull ends "
+                f"(a pull may take up to {seconds:g} s, and calls to a plugin never overlap)"
+            ))
 
     def resend_after(self, challenge_id: str, verdict: Verdict) -> float | None:
         """How long to wait before sending the flag again, or None when it is not sent again:

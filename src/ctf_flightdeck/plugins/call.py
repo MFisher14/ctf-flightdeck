@@ -170,6 +170,7 @@ class Caller:
         self.seconds = {**SECONDS, **(seconds or {})}
         self._environ = environ
         self._lock = asyncio.Lock()
+        self.running: str | None = None  # the op of the call that holds the lock: a submit waits behind a pull
 
     async def pull(self, files_dir: Path, known: Sequence[str] = ()) -> PullReply:
         """The platform's challenges. The plugin downloads their files into `files_dir`; the
@@ -215,7 +216,11 @@ class Caller:
     async def _call(self, op: str, fields: dict, known: tuple[str, ...]) -> dict:
         request = {"api": self.plugin.api, "op": op, "event": self.event, "url": self.url, **fields}
         async with self._lock:
-            out = await self._run(op, json.dumps(request).encode("ascii"))
+            self.running = op
+            try:
+                out = await self._run(op, json.dumps(request).encode("ascii"))
+            finally:
+                self.running = None
         try:
             reply = _cut(json.loads(out.decode("utf-8"), parse_constant=_no_constant), self.token)
         except (UnicodeDecodeError, ValueError, RecursionError):

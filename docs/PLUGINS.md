@@ -164,6 +164,7 @@ variables of yours, when they are set, and nothing else: `PATH`, `HOME`, `LANG`,
 
 Every request has `"api": 1`, the `op`, the event's `name` from the profile as `event`, and its
 `url`. Calls never overlap: a pull, a submit and a read of the solved list each wait their turn.
+A flag that waits for a pull to end says so on its lane; its 30 seconds start when it is sent.
 
 | Call | May take | Answer may be |
 |---|---|---|
