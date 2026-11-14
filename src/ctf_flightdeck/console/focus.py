@@ -10,6 +10,11 @@ the lane it was written for.
 
 At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: one pane, with
 what the lane needs from you above its transcript, and no files pane.
+
+In the simple layout (FlightdeckApp.layout) the view shows a part only when it has something
+in it: the files pane once the lane changed a file, the strip on top while another lane needs
+you, the card while this one does. Its key line is short (SIMPLE_KEY_LABELS). The title is
+the same in both layouts: the lane's model, turns, tokens and idle time are there.
 """
 
 from __future__ import annotations
@@ -40,6 +45,10 @@ KEY_LABELS = (
 )
 # The compact layout's key line: back, the answers, the commands, the next lane that needs you.
 COMPACT_KEY_LABELS = (("esc", "fleet"), ("1-9 0", "answer"), ("/", "cmd"), ("ctrl+n", "next"))
+# The simple layout's key line: back, the commands, and where every key is listed (the chat box
+# takes what is typed, so no key opens help here); the answers lead while the lane has any.
+SIMPLE_KEY_LABELS = (("esc", "lanes"), ("/", "commands"), ("/help", "all keys"))
+SIMPLE_ANSWER_LABEL = ("1-9", "answer")
 KEY_MARGIN = 2  # the key line has a margin of one cell each side
 
 
@@ -53,20 +62,22 @@ def _key_line(labels: tuple[tuple[str, str], ...] = KEY_LABELS) -> Text:
     return out
 
 
-def key_room(columns: int) -> tuple[list[str], int]:
+def key_room(columns: int, *, simple: bool = False) -> tuple[list[str], int]:
     """The keys the key line does not show whole on a terminal `columns` wide (it is cut at its
     edge, the last keys first), and the columns it needs to show every key. The compact
-    layout's line leaves out every key it does not have, then any of its own that the edge cuts."""
-    labels, left = KEY_LABELS, []
+    layout's line leaves out every key it does not have, then any of its own that the edge cuts.
+    `simple`: of the simple layout's line at its longest, with the answers."""
+    whole = (SIMPLE_ANSWER_LABEL, *SIMPLE_KEY_LABELS) if simple else KEY_LABELS
+    labels, left = whole, []
     if views.compact(columns):
         kept = {key for key, _ in COMPACT_KEY_LABELS}
-        labels, left = COMPACT_KEY_LABELS, [f"{key} {label}" for key, label in KEY_LABELS if key not in kept]
+        labels, left = COMPACT_KEY_LABELS, [f"{key} {label}" for key, label in whole if key not in kept and key != "1-9"]
     width, end, cut = columns - KEY_MARGIN, 0, []
     for i, (key, label) in enumerate(labels):
         end += (2 if i else 0) + cell_len(f"{key} {label}")
         if end > width:
             cut.append(f"{key} {label}")
-    return left + cut, _key_line().cell_len + KEY_MARGIN
+    return left + cut, _key_line(whole).cell_len + KEY_MARGIN
 
 
 class FocusScreen(Screen, inherit_bindings=False):
@@ -86,6 +97,8 @@ class FocusScreen(Screen, inherit_bindings=False):
     FocusScreen.-compact #main { margin-top: 0; width: 100%; }
     FocusScreen.-compact #now { max-height: 60%; }
     FocusScreen.-compact #files-pane { display: none; }
+    FocusScreen .-nothing { display: none; }
+    FocusScreen.-simple #main { width: 100%; }
     """
     BINDINGS = [
         Binding("escape", "back", "fleet"),
@@ -105,6 +118,7 @@ class FocusScreen(Screen, inherit_bindings=False):
         self._drafts: dict[str, str] = {}  # unsent chat text, by lane
         self.diff_path: str | None = None
         self.compact = False  # the compact layout (views.compact of the terminal's width)
+        self._labels: tuple[tuple[str, str], ...] = ()  # the key line as drawn
         self._ready = False  # widgets composed; set at the start of on_mount
 
     @property
@@ -160,8 +174,28 @@ class FocusScreen(Screen, inherit_bindings=False):
         self._show_keys()
         return True
 
-    def _show_keys(self) -> None:
-        self.query_one("#keys", Static).update(_key_line(COMPACT_KEY_LABELS if self.compact else KEY_LABELS))
+    @property
+    def simple(self) -> bool:
+        """The simple layout is drawn: the app's layout, unless the terminal is narrow enough
+        for the compact one."""
+        return self.fd.layout == "simple" and not self.compact
+
+    def key_labels(self) -> tuple[tuple[str, str], ...]:
+        """The key line's keys now: the layout's, and in the simple one the answers first
+        while the lane has any."""
+        if self.compact:
+            return COMPACT_KEY_LABELS
+        if not self.simple:
+            return KEY_LABELS
+        lane = self.fd.deck.lanes.get(self.lane_id)
+        return ((SIMPLE_ANSWER_LABEL,) if lane is not None and views.quick_answers(lane) else ()) + SIMPLE_KEY_LABELS
+
+    def _show_keys(self, *, again: bool = True) -> None:
+        """Draw the key line; with `again` False, only if its keys changed."""
+        labels = self.key_labels()
+        if again or labels != self._labels:
+            self._labels = labels
+            self.query_one("#keys", Static).update(_key_line(labels))
 
     def repaint(self) -> None:
         """Draw everything again in the palette now in use (/theme): the transcript's lines
@@ -173,6 +207,11 @@ class FocusScreen(Screen, inherit_bindings=False):
         self._file_paths = None  # the files list's labels too
         self.query_one("#transcript", RichLog).clear()
         self._show_keys()
+        self.refresh_view()
+
+    def relayout(self) -> None:
+        """Draw in the layout now in use (/layout): refresh_view shows or hides the parts
+        the simple layout shows only when they have something in them, and the key line."""
         self.refresh_view()
 
     def show_lane(self, lane_id: str, file: str | None = None) -> None:
@@ -215,7 +254,11 @@ class FocusScreen(Screen, inherit_bindings=False):
             width = max(40, header.size.width or self.size.width - 2)
             header.update(self.fd.header_text(width, clock_keys=False, compact=self.compact))
             self.query_one("#status", Static).update(self.fd.status_text())
-            self.query_one("#others", Static).update(views.others_strip(deck, lane, compact=self.compact))
+            simple = self.simple
+            self.set_class(simple, "-simple")
+            others = self.query_one("#others", Static)
+            others.update(views.others_strip(deck, lane, compact=self.compact, simple=simple))
+            others.set_class(simple and not views.needing(deck, exclude=lane.id), "-nothing")
             pane = self.query_one("#talk-pane")
             pane.border_title = views.focus_title(deck, lane, compact=self.compact)
             pane.border_subtitle = views.plan_line(deck, lane)
@@ -225,8 +268,12 @@ class FocusScreen(Screen, inherit_bindings=False):
                 for line in views.transcript_lines(deck, lane, action):
                     log.write(line, scroll_end=at_end)
             self._written = len(lane.actions)
-            self.query_one("#now", Static).update(views.now_card(deck, lane, compact=self.compact))
+            card = views.now_card(deck, lane, compact=self.compact, simple=simple)
+            now = self.query_one("#now", Static)
+            now.update(card)
+            now.set_class(isinstance(card, Text) and not card.plain, "-nothing")  # no card: no blank row either
             self._render_files()
+            self._show_keys(again=False)
             chat = self.query_one("#chat", CommandBar)
             chat.set_suggestions(self.fd.command_suggestions(lane.id, with_lane=False))
 
@@ -236,6 +283,10 @@ class FocusScreen(Screen, inherit_bindings=False):
         files = self.query_one("#files", OptionList)
         pane = self.query_one("#files-pane")
         pane.border_title = Text.assemble(("files changed", "bold"), (f"  {len(paths)}", theme.MUTED))
+        hidden = self.simple and not paths  # the simple layout: no pane until the lane changed a file
+        if hidden and self.focused is not None and self.focused.id in ("files", "diff-scroll"):
+            self.query_one("#chat", CommandBar).field.focus()  # the pane is going: the chat box takes the keys
+        pane.set_class(hidden, "-nothing")
         if paths != self._file_paths:
             self._file_paths = paths
             files.clear_options()

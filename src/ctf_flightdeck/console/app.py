@@ -2,6 +2,9 @@
 (route C, chosen at the M0 review). One-key interventions in the fleet; a chat box and
 slash commands in both.
 
+It draws in one of two layouts (config.LAYOUTS): `deck`, the whole dashboard, or `simple`,
+one list of lanes with what needs the player. /layout switches for the rest of the run.
+
 The console only reads the Deck and sends it interventions, so the same app runs on the
 M0 mock and, in M1, on real lanes. It redraws on its own timer and whenever the deck
 emits an event, whether or not a mock clock is ticking.
@@ -27,6 +30,7 @@ from textual.drivers.linux_driver import LinuxDriver
 from textual.screen import Screen
 
 from .. import themes
+from ..config import LAYOUTS
 from ..core import interventions as iv
 from ..core.attention import SortMode
 from ..core.deck import Deck
@@ -79,13 +83,18 @@ class FlightdeckApp(App[None]):
         welcome: bool = False,
         palette: themes.Palette | None = None,
         themes_folder: Path | None = None,
+        layout: str = "deck",
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
         (a real run stops its lanes and closes their workspaces), also on SIGHUP or SIGTERM.
         `run_dir` is where the run's log goes (the quit prompt says it stays there).
         `palette` is the theme the console opens in (None: the default); `themes_folder` is
-        where /theme looks for the player's own themes (None: only the built-in ones)."""
+        where /theme looks for the player's own themes (None: only the built-in ones).
+        `layout` is the layout it opens in (config.LAYOUTS; a run passes the config's)."""
+        if layout not in LAYOUTS:
+            raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {layout!r}")
+        self.layout = layout
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
         self._use_textual_theme()
@@ -170,7 +179,8 @@ class FlightdeckApp(App[None]):
                 if go and empty:
                     self.new_challenge()
 
-            self.push_screen(WelcomeScreen(mock=self._ticker is not None, empty=empty, lanes=min(self.deck.config.max_lanes, 99)), done)
+            self.push_screen(WelcomeScreen(mock=self._ticker is not None, empty=empty, lanes=min(self.deck.config.max_lanes, 99),
+                                           simple=self.layout == "simple"), done)
 
     async def action_quit(self) -> None:
         """Quit (q, /quit, ctrl+q): stop the run's lanes (on_exit) before the console exits.
@@ -242,14 +252,15 @@ class FlightdeckApp(App[None]):
 
     def header_text(self, width: int, *, clock_keys: bool = True, compact: bool = False) -> Text:
         """The header; `clock_keys` says how to freeze the mock clock (only where space does).
-        `compact`: the compact layout's header (views.header_pieces)."""
+        `compact`: the compact layout's header (views.header_pieces); otherwise the header of
+        the layout in use."""
         note = ""
         if self._ticker is not None:
             if clock_keys:
                 note = "⏸ frozen: space resumes, . steps" if self.frozen else "▶ live: space freezes"
             else:
                 note = "⏸ frozen" if self.frozen else "▶ live"
-        return views.header(self.deck, mock=self.mock, note=note, width=width, compact=compact)
+        return views.header(self.deck, mock=self.mock, note=note, width=width, compact=compact, simple=self.layout == "simple")
 
     def status_text(self) -> Text:
         if self._status is None:
@@ -392,6 +403,10 @@ class FlightdeckApp(App[None]):
                 self.refresh_view()
 
         self.push_screen(NewChallengePrompt(name, paster=self.paster, adder=self.adder), done)
+
+    def action_new(self) -> None:
+        """A click on `/new` in the key line."""
+        self.new_challenge()
 
     def inform(self, text: str) -> None:
         self.say(text)
@@ -757,6 +772,32 @@ class FlightdeckApp(App[None]):
         self.say(outcome.message, "information" if outcome.ok else "warning")
         self.refresh_view()
 
+    def set_layout(self, name: str) -> None:
+        """Draw in the layout `name` from now on (config.LAYOUTS): both views, as they are now,
+        with the selection, the filter and anything typed where they were."""
+        if name not in LAYOUTS:
+            raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {name!r}")
+        self.layout = name
+        for screen in self.screen_stack:
+            if isinstance(screen, (FleetScreen, FocusScreen)):
+                screen.relayout()
+
+    def switch_layout(self, arg: str) -> None:
+        """/layout simple|deck: the console's layout for the rest of this run (the config file
+        keeps its own); /layout alone: the other one. Any other word is a warning, and the
+        layout stays."""
+        word = arg.strip().lower()
+        if not word:
+            word = next(name for name in LAYOUTS if name != self.layout)
+        elif word not in LAYOUTS:  # not shown: it is not a layout
+            self.warn(f"/layout takes {' or '.join(LAYOUTS)}")
+            return
+        self.set_layout(word)
+        keep = (f'. To keep it: layout = "{word}" under [console] in {self.config_path}' if self.config_path
+                else " (this console has no config file)")
+        narrow = "; this terminal is narrow, so the compact layout shows" if views.compact(self.size.width) else ""
+        self.say(f"layout {word} for this run{keep}{narrow}")
+
     def set_theme(self, arg: str) -> None:
         """/theme: the themes there are; /theme NAME: the console's colours for the rest of
         this run (the config file keeps its own). A name that is no theme, or a theme file
@@ -869,6 +910,8 @@ class FlightdeckApp(App[None]):
             self.configure(arg)
         elif name == "theme":
             self.set_theme(arg)
+        elif name == "layout":
+            self.switch_layout(arg)
         elif name == "new":
             self.new_challenge(arg)
         elif name == "attach":

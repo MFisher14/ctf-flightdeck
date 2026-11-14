@@ -637,6 +637,17 @@ COMPACT_LANE_COLUMNS = (
     ("chall", "chall", 0, 0),
 )
 COMPACT_CHALL_MIN = 8
+# The simple layout's lane row: what needs you, the lane, its challenge, state and cost, and what
+# it did last. Its model, turns and idle time are in the lane's own view (focus_title).
+SIMPLE_LANE_COLUMNS = (
+    ("bar", "", 1, 0),
+    ("!", "!", 12, 0),
+    ("lane", "lane", 4, 0),
+    ("chall", "chall", 20, 0),
+    ("state", "state", 8, 0),
+    ("cost", "cost", 8, 2),
+    ("last", "last action", 0, 1),
+)
 COMPACT_ALERT_TAG = {
     AlertKind.FLAG: "flag", AlertKind.BUDGET: "budg", AlertKind.LOOP: "loop", AlertKind.EFFORT: "efrt",
     AlertKind.HINT: "hint", AlertKind.DIRECTION: "wway", AlertKind.STALL: "stal", AlertKind.TEAMMATE: "mate",
@@ -845,12 +856,26 @@ def lane_matches(deck: Deck, lane: Lane, query: str) -> bool:
     return all(word in hay for word in query.lower().split())
 
 
-def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = False, compact: bool = False) -> Text:
-    text = Text("fleet ", "bold")
-    text.append(f"{len(deck.active_lanes())}/{lanes_text(deck.config.max_lanes)}")
-    text.append(f" · sort {sort.value}", theme.MUTED)
-    if board_hidden and not compact:  # the compact layout never has the board, and no room to say so
-        text.append(" · board hidden: narrow terminal", theme.MUTED)
+def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = False, compact: bool = False, simple: bool = False) -> Text:
+    """The lane list's title. In the simple layout (`simple`; the compact one wins over it) it
+    carries what the board and the header would: the challenges that wait for a lane and the
+    ones solved, each only when there are any, and the sort only when it is not by attention."""
+    if simple and not compact:
+        text = Text("lanes ", "bold")
+        text.append(f"{len(deck.active_lanes())}/{lanes_text(deck.config.max_lanes)}")
+        if deck.queue:
+            text.append(f" · {len(deck.queue)} waiting", theme.MUTED)
+        solved = sum(ch.status is ChallengeStatus.SOLVED for ch in deck.challenges.values())
+        if solved:
+            text.append(f" · ✓ {solved} solved", theme.GREEN)
+        if sort is not SortMode.ATTENTION:
+            text.append(f" · sort {sort.value}", theme.MUTED)
+    else:
+        text = Text("fleet ", "bold")
+        text.append(f"{len(deck.active_lanes())}/{lanes_text(deck.config.max_lanes)}")
+        text.append(f" · sort {sort.value}", theme.MUTED)
+        if board_hidden and not compact:  # the compact layout never has the board, and no room to say so
+            text.append(" · board hidden: narrow terminal", theme.MUTED)
     if query:
         text.append(" · filter ", theme.MUTED)
         text.append(untrusted(query, one_line=True), f"bold {theme.YELLOW}")
@@ -876,8 +901,12 @@ def _answers(lane: Lane, alert: Alert | None) -> Text:
     return out
 
 
-def lane_why(deck: Deck, lane: Lane) -> Text:
-    """Two lines under the lane list: why the selected lane is flagged, and the answers."""
+def lane_why(deck: Deck, lane: Lane, *, simple: bool = False) -> Text:
+    """Two lines under the lane list: why the selected lane is flagged, and the answers. In the
+    simple layout (`simple`) they are blank for a lane with no alert and no approval waiting:
+    its row says what it is doing, and enter opens the rest."""
+    if simple and not lane.alerts and lane.pending is None:
+        return Text("")
     out = Text(no_wrap=True, overflow="ellipsis")
     out.append("▌", theme.ACCENT)
     out.append(f"{lane.id} ", "bold")
@@ -1091,10 +1120,11 @@ def suggestion_command(key: str, text: str, lane: str | None = None, *, show_lan
     return " ".join([f"/{name}"] + ([named] if named else []) + ([text] if text else []))
 
 
-def now_card(deck: Deck, lane: Lane, *, compact: bool = False) -> RenderableType:
+def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = False) -> RenderableType:
     """What the lane needs from the player right now, with the answers as commands. In the
     compact layout each answer is one row, its number first and its command cut at the edge:
-    the reasons wrap, and every answer's number stays on the card."""
+    the reasons wrap, and every answer's number stays on the card. In the simple layout
+    (`simple`) a lane that needs nothing has no card: an empty Text."""
     one_row = {"no_wrap": True, "overflow": "ellipsis"} if compact else {}
     if lane.finished:
         return Text.assemble(
@@ -1144,6 +1174,8 @@ def now_card(deck: Deck, lane: Lane, *, compact: bool = False) -> RenderableType
     for hint in lane.hints:
         rows.append(Text.assemble(("› sent, not read yet: ", theme.MUTED), (untrusted(lane_text(deck, lane, hint), one_line=True), theme.ACCENT)))
     if not rows:
+        if simple:
+            return Text("")
         return Text("Nothing needs you on this lane. Type below to message it, or / for commands.", theme.MUTED)
     if border:
         rows.append(Text("a number answers (chat box empty)" if compact else
@@ -1192,11 +1224,14 @@ def _need_chip(lane: Lane) -> Text:
     return chip
 
 
-def others_strip(deck: Deck, lane: Lane, *, compact: bool = False) -> Text:
+def others_strip(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = False) -> Text:
+    """The other lanes that need the player, each a chip that opens it. With none: a line that
+    says so, or in the simple layout (`simple`) nothing."""
     others = needing(deck, exclude=lane.id)
     out = Text(no_wrap=True, overflow="ellipsis")
     if not others:
-        out.append("No other lane needs you.", theme.MUTED)
+        if not simple:
+            out.append("No other lane needs you.", theme.MUTED)
         return out
     if compact:  # the key first: the chips are what the edge cuts
         out.append(f"{len(others)} more need{'' if len(others) > 1 else 's'} you (ctrl+n): ", theme.MUTED)

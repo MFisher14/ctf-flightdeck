@@ -9,6 +9,11 @@ board hides so the lane list keeps its columns. The key line at the bottom alway
 While the board has no challenge, the page says so where the tables would be, and what to do
 about it (EMPTY_BY_HAND, EMPTY_PLATFORM): it stays until there is one, unlike a status line.
 
+In the simple layout (FlightdeckApp.layout; `deck` is the view as described above) there is no
+board: one list of lanes with fewer columns (views.SIMPLE_LANE_COLUMNS), a why line only for a
+lane that needs something, and a key line of the keys that apply to the selected lane now
+(context_keys). Every key still acts, and `?` lists them all. The compact layout wins over both.
+
 At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: each lane's
 row has what needs you, the lane, its challenge, state and cost; the why line has six rows,
 with the answers one a row; the key line has the answers, the commands, help and quit.
@@ -28,7 +33,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Static
 
 from ..core.attention import SortMode, sort_lanes
-from ..core.model import Lane
+from ..core.model import COURSE_ALERTS, Lane
 from . import theme, views
 from .commands import CommandError, needs_lane, parse
 from .widgets import CommandBar
@@ -59,6 +64,13 @@ COMPACT_KEYS = (
     ("a", "a", "yes"), ("d", "d", "no"), ("", "1-9", "answer"), ("slash", "/", "cmd"),
     ("question_mark", "?", "help"), ("q", "q", "quit"),
 )
+# The simple layout's key line: (what a click does: a binding's key, an action, or "" for
+# nothing; the key as shown; its label). Which of them a lane gets: context_keys().
+NEW_KEY = ("app.new", "/new", "add a challenge")
+APPROVE_KEY, DECLINE_KEY = ("a", "a", "approve"), ("d", "d", "decline")
+ANSWER_KEY, DISMISS_KEY = ("", "1-9", "answer"), ("x", "x", "dismiss")
+OPEN_KEY, COMMANDS_KEY = ("o", "enter", "open"), ("slash", "/", "commands")
+HELP_KEY, QUIT_KEY = ("question_mark", "?", "help"), ("q", "q", "quit")
 # What the page says while the board has no challenge: on a board the player fills (/new works
 # there), and on one that comes from a platform or a script.
 EMPTY_BY_HAND = "No challenges yet. Type /new to hand one over (its text, files, a screenshot)."
@@ -91,6 +103,7 @@ class FleetScreen(Screen, inherit_bindings=False):
     FleetScreen.-compact #main { margin-top: 0; width: 100%; }
     FleetScreen.-compact #empty { margin: 0; padding: 0 1; }
     FleetScreen.-compact #why { height: 6; margin-top: 0; }
+    FleetScreen.-simple #main { width: 100%; }
     """
     BINDINGS = [
         Binding("o", "open_lane", "open"),
@@ -175,6 +188,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         compact = views.compact(width)
         changed, self.compact = compact != self.compact, compact
         self.set_class(compact, "-compact")
+        self.set_class(self.simple, "-simple")
         return changed
 
     def _show_keys(self, width: int) -> None:
@@ -188,13 +202,33 @@ class FleetScreen(Screen, inherit_bindings=False):
         self._show_keys(self.size.width)
         self.refresh_view()
 
+    def relayout(self) -> None:
+        """Draw in the layout now in use (/layout): the board comes or goes, the lane list
+        takes that layout's columns once it has its new width, and the header, the titles,
+        the why line and the key line are drawn again. The selection, the filter, the sort
+        and what is typed in the bar stay."""
+        if not self._ready:
+            return
+        self.set_class(self.simple, "-simple")
+        self._fit_board(self.size.width)
+        self._show_keys(self.size.width)
+        self.call_after_refresh(self._set_columns)
+        self.refresh_view()
+
+    @property
+    def simple(self) -> bool:
+        """The simple layout is drawn: the app's layout, unless the terminal is narrow enough
+        for the compact one."""
+        return self.fd.layout == "simple" and not self.compact
+
     @property
     def board_hidden(self) -> bool:
         return not self.query_one("#board-pane").display
 
     def _fit_board(self, width: int) -> None:
-        """Hide the board on a narrow terminal (the lane list needs the room)."""
-        show = width >= BOARD_MIN_WIDTH
+        """Hide the board on a narrow terminal (the lane list needs the room), and in the
+        simple layout, which has none."""
+        show = width >= BOARD_MIN_WIDTH and self.fd.layout == "deck"
         pane = self.query_one("#board-pane")
         if pane.display == show:
             return
@@ -216,6 +250,10 @@ class FleetScreen(Screen, inherit_bindings=False):
                 views.COMPACT_LANE_COLUMNS, "chall", views.COMPACT_CHALL_MIN,
                 max(30, self.query_one("#lanes-pane").size.width - 1 - SCROLLBAR), lanes.cell_padding,
             )  # the pane's width less the scrollbar's, whether it shows yet or not: the columns do not move when it comes
+        elif self.simple:
+            lane_cols = views.fit_columns(
+                views.SIMPLE_LANE_COLUMNS, "last", views.LAST_MIN, max(30, lanes.size.width - 1), lanes.cell_padding, views.LANE_SHRINK
+            )
         else:
             lane_cols = views.fit_columns(
                 views.LANE_COLUMNS, "last", views.LAST_MIN, max(30, lanes.size.width - 1), lanes.cell_padding, views.LANE_SHRINK
@@ -348,7 +386,7 @@ class FleetScreen(Screen, inherit_bindings=False):
                 self.selected_lane = self._lane_cursor  # first lanes on screen: select the top one
                 self._render_lanes()
         self.query_one("#lanes-pane").border_title = views.lanes_title(
-            self.fd.deck, self.sort, self.filter_text, board_hidden=self.board_hidden, compact=self.compact
+            self.fd.deck, self.sort, self.filter_text, board_hidden=self.board_hidden, compact=self.compact, simple=self.simple
         )
 
     def _render_why(self) -> None:
@@ -367,7 +405,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         elif self.compact:
             why.update(views.compact_why(deck, lane, why.size.width or self.size.width - 2))
         else:
-            why.update(views.lane_why(deck, lane))
+            why.update(views.lane_why(deck, lane, simple=self.simple))
+        if self.simple:  # its key line is the selected lane's: drawn again when the selection or the lane changes
+            self._show_keys(self.size.width)
 
     # ------------------------------------------------------------------ selection
 
@@ -592,6 +632,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         Footer fills in after a later refresh, which made screenshots and tests flaky)."""
         if self.compact:
             return compact_keys_text()
+        if self.simple:
+            lane = self.fd.deck.lanes.get(self.selected_lane or "")  # the lane the why line is about
+            return keys_text(context_keys(lane, by_hand=self.fd.adder is not None))
         shown = [b for b in self.BINDINGS if b.show and self._allowed(b.action)]
         return self._keys_text(fit_keys(shown, width)[0])
 
@@ -631,16 +674,66 @@ def fit_keys(bindings: list[Binding], width: int | None) -> tuple[list[Binding],
 def compact_keys_text() -> Text:
     """The compact layout's key line (COMPACT_KEYS): the answers, the commands, help and quit,
     each clickable as on the full line; cut at the edge of a terminal too narrow for it."""
+    return keys_text(COMPACT_KEYS)
+
+
+def keys_text(keys: tuple[tuple[str, str, str], ...]) -> Text:
+    """A key line of (what a click does, the key as shown, its label): a binding's key clicks
+    as that binding, an action ("app.new") as itself, and "" does nothing."""
     by_key = {b.key: b for b in FleetScreen.BINDINGS}
     out = Text(no_wrap=True, overflow="ellipsis")
-    for i, (key, shown, label) in enumerate(COMPACT_KEYS):
+    for i, (key, shown, label) in enumerate(keys):
         binding = by_key.get(key)
-        action = "" if binding is None else binding.action if "." in binding.action.partition("(")[0] else f"screen.{binding.action}"
+        if binding is None:
+            action = key if "." in key else ""
+        else:
+            action = binding.action if "." in binding.action.partition("(")[0] else f"screen.{binding.action}"
         click = {"@click": action} if action else {}
         out.append("  " if i else "")
         out.append(shown, Style(color=theme.ACCENT, bold=True, meta=click))
         out.append(f" {label}", Style(color=theme.MUTED, meta=click))
     return out
+
+
+def context_keys(lane: Lane | None, *, by_hand: bool) -> tuple[tuple[str, str, str], ...]:
+    """The simple layout's key line for the selected lane: only the keys that apply to it now.
+    Every other key still acts, and help lists them all. With no lane: how to add a challenge
+    (on a board the player fills), help and quit. With one: what answers it (approve and
+    decline while it waits for the player; else the numbers of its alert's answers, and dismiss
+    for an alert about its course), then open, the commands, help and quit."""
+    if lane is None:
+        return ((NEW_KEY,) if by_hand else ()) + (HELP_KEY, QUIT_KEY)
+    answers: tuple[tuple[str, str, str], ...] = ()
+    if lane.finished:
+        pass
+    elif lane.pending is not None:
+        answers = (APPROVE_KEY, DECLINE_KEY)
+    else:
+        top = views.top_answerable(lane)
+        if views.quick_answers(lane):
+            answers += (ANSWER_KEY,)
+        if top is not None and top.kind in COURSE_ALERTS:
+            answers += (DISMISS_KEY,)
+    return answers + (OPEN_KEY, COMMANDS_KEY, HELP_KEY, QUIT_KEY)
+
+
+# The longest key line the simple layout draws: a lane with numbered answers and an alert to dismiss.
+SIMPLE_LONGEST = (ANSWER_KEY, DISMISS_KEY, OPEN_KEY, COMMANDS_KEY, HELP_KEY, QUIT_KEY)
+# Every key a lane's line can have, each once, in the order of a line.
+SIMPLE_KEYS = (APPROVE_KEY, DECLINE_KEY, ANSWER_KEY, DISMISS_KEY, OPEN_KEY, COMMANDS_KEY, HELP_KEY, QUIT_KEY)
+
+
+def simple_key_room(columns: int) -> tuple[list[str], int]:
+    """The keys the simple layout's key line does not show whole on a terminal `columns` wide,
+    and the columns its longest line (SIMPLE_LONGEST) needs. From the compact layout's width
+    down, the line is the compact one: it leaves out the keys it does not have, then any of
+    its own that the terminal's edge cuts."""
+    needed = keys_text(SIMPLE_LONGEST).cell_len + KEY_MARGIN
+    if views.compact(columns):
+        kept = {shown for _, shown, _ in COMPACT_KEYS}
+        left = [f"{shown} {label}" for _, shown, label in SIMPLE_KEYS if shown not in kept]
+        return left + cut_keys([(shown, label) for _, shown, label in COMPACT_KEYS], columns - KEY_MARGIN), needed
+    return cut_keys([(shown, label) for _, shown, label in SIMPLE_LONGEST], columns - KEY_MARGIN), needed
 
 
 def key_room(columns: int, *, team: bool) -> tuple[list[str], int]:

@@ -37,6 +37,8 @@ COMMANDS = (
     Command("note", "<text>", "a note for every lane: running ones read it on their next turn, later ones at their start", lane=False),
     Command("config", "[lanes N|unlimited | submit auto|confirm | file]", "this run's settings: lanes at once, auto approve (submit auto)", lane=False),
     Command("theme", "[name]", "the console's colours for this run; alone: the themes you have", lane=False),
+    Command("layout", "[simple|deck]", "simple: the lanes and what needs you; deck: the board and every column; alone: the other one",
+            lane=False),
     Command("new", "[name]", "hand a challenge to a lane: its name, text, files and address", lane=False),
     Command("attach", "[challenge] <files>", "add files to a challenge (drag them onto this bar); its lane restarts with them", lane=False),
     Command("queue", "<challenge>", "queue a parked or new challenge", lane=False),

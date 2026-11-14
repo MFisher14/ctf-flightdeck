@@ -313,7 +313,8 @@ class NewChallengePrompt(ModalScreen["str | None"]):
 
 class WelcomeScreen(ModalScreen[bool]):
     """What a player sees before the dashboard, the first time: what the screen is, and the
-    one thing to do next. Enter does that thing (True); esc just closes it (False)."""
+    one thing to do next. Enter does that thing (True); esc just closes it (False). `simple`:
+    the console opens in the simple layout, which has no board to describe."""
 
     DEFAULT_CSS = MODAL_CSS.format(name="WelcomeScreen") + """
     WelcomeScreen { background: $background 85%; }
@@ -322,9 +323,9 @@ class WelcomeScreen(ModalScreen[bool]):
     """
     BINDINGS = [Binding("enter", "go", "go"), Binding("escape", "close", "close"), Binding("q", "close", "close")]
 
-    def __init__(self, *, mock: bool, empty: bool, lanes: int) -> None:
+    def __init__(self, *, mock: bool, empty: bool, lanes: int, simple: bool = False) -> None:
         super().__init__()
-        self.is_mock, self.empty, self.lanes = mock, empty, lanes
+        self.is_mock, self.empty, self.lanes, self.simple = mock, empty, lanes, simple
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -337,9 +338,9 @@ class WelcomeScreen(ModalScreen[bool]):
                 first = f"Your board is loaded. Up to {self.lanes} AI agents start on the challenges now, cheapest first."
             yield Static(Text(first), classes="gap")
             yield Static(Text("What you are about to see:", style="bold"), classes="gap")
+            lanes = "the lanes: one AI agent per challenge, the one that needs you on top"
             yield Static(_meanings(
-                ("left", "the board: every challenge"),
-                ("right", "the lanes: one AI agent per challenge, the one that needs you on top"),
+                *((("middle", lanes),) if self.simple else (("left", "the board: every challenge"), ("right", lanes))),
                 ("bottom", "the command bar: type / to see everything you can do"),
             ))
             yield Static(Text("You only need three things:", style="bold"), classes="gap")

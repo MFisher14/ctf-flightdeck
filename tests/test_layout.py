@@ -9,21 +9,52 @@ test reports itself. Nothing needs a model or a network.
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 
 import pytest
+from rich.cells import cell_len
 from textual.widgets import DataTable
+from typer.testing import CliRunner
 
-from ctf_flightdeck.console import fleet, views
+from ctf_flightdeck import cli, config
+from ctf_flightdeck.addchallenge import slug
+from ctf_flightdeck.console import fleet, focus, room, views
 from ctf_flightdeck.console.app import FlightdeckApp
-from ctf_flightdeck.console.commands import COMMANDS
+from ctf_flightdeck.console.commands import BY_NAME, COMMANDS, complete, needs_lane, parse
+from ctf_flightdeck.console.fleet import FleetScreen
+from ctf_flightdeck.console.focus import FocusScreen
+from ctf_flightdeck.console.screens import HelpScreen
+from ctf_flightdeck.core.attention import SortMode
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
-from ctf_flightdeck.core.model import Challenge, DeckConfig, LaneState
-from test_console import bar, drive, lane_rows, press, quiet_deck, region_text, screen_text, status_line
+from ctf_flightdeck.core.model import Alert, AlertKind, Challenge, DeckConfig, FileChange, LaneState, Suggestion
+from ctf_flightdeck.mock import scenarios
+from ctf_flightdeck.mock.world import FakeWorld
+from test_console import (
+    WIDE,
+    assert_warning,
+    bar,
+    columns,
+    cursor_key,
+    drive,
+    footer_line,
+    lane_rows,
+    open_focus,
+    press,
+    prompt_text,
+    quiet_deck,
+    region_text,
+    screen_text,
+    status_line,
+    step_until,
+    type_line,
+)
 
 SIZE = (160, 46)
-LAYOUTS = ("deck",)
+LAYOUTS = ("simple", "deck")
+SIMPLE_COLUMNS = ["bar", "!", "lane", "chall", "state", "cost", "last"]
+DECK_COLUMNS = ["bar", "!", "lane", "chall", "model", "state", "turns", "cost", "idle", "last"]
 
 
 async def added(new) -> tuple[bool, str]:
@@ -31,14 +62,31 @@ async def added(new) -> tuple[bool, str]:
     return True, "added"
 
 
-def console(*, by_hand: bool, layout: str = "deck", **kw) -> tuple[Deck, FlightdeckApp]:
-    """A console on an empty board: one the player fills (`by_hand`), or one a platform fills."""
+def console(*, by_hand: bool, layout: str = "deck", adder=None, **kw) -> tuple[Deck, FlightdeckApp]:
+    """A console on an empty board: one the player fills (`by_hand`; `adder`: what /new calls),
+    or one a platform fills."""
     deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=4))
-    return deck, FlightdeckApp(deck, refresh_seconds=3600.0, adder=added if by_hand else None, **kw)  # the timer is on; it never fires here
+    app = FlightdeckApp(deck, refresh_seconds=3600.0, adder=(adder or added) if by_hand else None, layout=layout, **kw)  # the timer is on; it never fires here
+    return deck, app
 
 
 def release(deck: Deck, *ids: str) -> None:
     deck.release([Challenge(cid, cid.title(), "misc", 100) for cid in ids], [QueueEntry(cid, "glm") for cid in ids])
+
+
+COURSE = Alert(AlertKind.HINT, "the description says SSTV", (Suggestion("r", "Redirect", "decode it as SSTV"), Suggestion("h", "Hint", "think slow-scan")))
+
+
+def three_lanes(layout: str = "simple", **kw) -> tuple[Deck, FlightdeckApp]:
+    """A console with a lane of each kind a key line can be about: L01 at work with nothing to
+    answer, L02 waiting with a flag to approve, L03 with an alert about its course."""
+    deck, app = console(by_hand=True, layout=layout, **kw)
+    release(deck, "alpha", "beta", "gamma")
+    deck.report("L01", TurnReport(action="file alpha.bin", plan="look inside"))
+    deck.report("L02", TurnReport(action="cat flag.txt", flag="flag{synthetic}"))
+    deck.report("L03", TurnReport(action="strings gamma.wav", alerts=(COURSE,)))
+    assert deck.lanes["L02"].pending is not None and deck.lanes["L03"].alerts and not deck.lanes["L01"].needs_you
+    return deck, app
 
 
 # ---------------------------------------------------------------------- an empty board
@@ -269,3 +317,373 @@ def test_a_narrow_terminal_drops_the_simple_headers_pieces_in_order_and_never_th
         assert "▲ 1 need you" in text.plain and "$1.50" in text.plain and "flightdeck" in text.plain
     assert dropped == ["event", "mock", "queue", "host", "team"]
     assert all(name in views.HEADER_WORDS for name in dropped)  # doctor has a word for each
+
+
+def test_the_console_draws_the_simple_header_in_both_views_and_deck_keeps_its_own():
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        assert region_text(app, "#header").strip() == "flightdeck ╱ ev ╱ ▲ 2 need you ╱ $0.00"
+        await open_focus(pilot, app, "L01")
+        assert region_text(app, "#header").strip() == "flightdeck ╱ ev ╱ ▲ 2 need you ╱ $0.00"
+        app.run_command("/layout deck", "L01")
+        await pilot.pause()
+        assert "solo ╱ docker ╱ lanes 3/4 · queue 0 ╱ ▲ 2 need you ╱ tok 0" in region_text(app, "#header")
+
+    drive(app, script, SIZE)
+
+
+# ---------------------------------------------------------------------- the simple layout: the lane list
+
+
+def title_of(app: FlightdeckApp, pane: str) -> str:
+    """A pane's title as drawn on its frame."""
+    return region_text(app, pane).splitlines()[0].strip("╭╮─ ")
+
+
+def test_the_simple_layout_is_one_list_of_lanes_with_what_the_board_would_say_in_its_title():
+    deck, app = three_lanes("simple")
+    deck.release([Challenge(n, n.title(), "misc", 100) for n in ("delta", "echo", "fox")], [QueueEntry(n, "glm") for n in ("delta", "echo", "fox")])
+
+    async def script(pilot):
+        assert app.fleet.board_hidden and columns(app, "lanes") == SIMPLE_COLUMNS
+        assert [key for key, *_ in views.SIMPLE_LANE_COLUMNS] == SIMPLE_COLUMNS
+        assert title_of(app, "#lanes-pane") == "lanes 4/4 · 2 waiting"  # two queued behind the four lanes; nothing solved, sorted by attention: neither is said
+        assert "board hidden" not in screen_text(app)  # it is not hidden: this layout has none
+        await press(pilot, "s")
+        assert title_of(app, "#lanes-pane") == "lanes 4/4 · 2 waiting · sort idle"
+        app.fleet.set_sort(SortMode.ATTENTION)
+        app.fleet.select_lane("L02")
+        await press(pilot, "a")  # the flag is checked and wrong here: nothing solved yet
+        deck.challenges["gamma"].status = views.ChallengeStatus.SOLVED
+        app.fleet.set_filter("alpha")
+        await pilot.pause()
+        assert title_of(app, "#lanes-pane") == "lanes 4/4 · 2 waiting · ✓ 1 solved · filter alpha · 1 needing you hidden"
+
+    drive(app, script, SIZE)
+
+
+def test_layout_switches_the_view_and_back_and_keeps_the_cursor_the_filter_and_a_draft():
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        app.fleet.set_filter("a")  # every lane: Alpha, Beta, Gamma
+        app.fleet.set_sort(SortMode.LANE)
+        app.fleet.select_lane("L03")
+        bar(app).start("/hint keep this draft")
+        await pilot.pause()
+        before = lane_rows(app)
+        for layout, shown, board in (("deck", DECK_COLUMNS, False), ("simple", SIMPLE_COLUMNS, True), ("deck", DECK_COLUMNS, False)):
+            app.run_command(f"/layout {layout}", None)
+            await pilot.pause()
+            await pilot.pause()
+            assert app.layout == layout and columns(app, "lanes") == shown and app.fleet.board_hidden is board
+            assert f"layout {layout} for this run (this console has no config file)" in status_line(app)
+            assert (app.fleet.selected_lane, cursor_key(app), lane_rows(app)) == ("L03", "L03", before)
+            assert (app.fleet.filter_text, app.fleet.sort) == ("a", SortMode.LANE)
+            assert bar(app).field.value == "/hint keep this draft" and bar(app).field.has_focus
+        bar(app).clear()
+        await press(pilot, "escape")
+        await press(pilot, "slash")
+        await type_line(pilot, "layout")  # alone: the other one
+        await pilot.pause()
+        assert app.layout == "simple" and columns(app, "lanes") == SIMPLE_COLUMNS
+        assert "layout simple for this run" in status_line(app)
+
+    drive(app, script, SIZE)
+
+
+def test_layout_refuses_any_other_word_and_says_where_to_keep_a_layout():
+    deck, app = three_lanes("simple", config_path="/somewhere/config.toml")
+
+    async def script(pilot):
+        for word in ("wide", "full", "compact", "simple deck"):
+            app.run_command(f"/layout {word}", None)
+            await pilot.pause()
+            assert_warning(app, "/layout takes simple or deck")
+            assert app.layout == "simple" and columns(app, "lanes") == SIMPLE_COLUMNS
+        app.run_command("/layout DECK", None)
+        await pilot.pause()
+        assert app.layout == "deck"
+        assert 'layout deck for this run. To keep it: layout = "deck" under [console] in /somewhere/config.toml' in status_line(app)
+
+    drive(app, script, SIZE)
+
+
+def test_on_a_narrow_terminal_layout_says_the_compact_layout_shows_and_it_does():
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        compact = columns(app, "lanes")
+        assert app.fleet.compact and compact == [key for key, *_ in views.COMPACT_LANE_COLUMNS]
+        app.run_command("/layout deck", None)
+        await pilot.pause()
+        await pilot.pause()
+        said = app._status[0]
+        assert said == "layout deck for this run (this console has no config file); this terminal is narrow, so the compact layout shows"
+        assert app.layout == "deck" and columns(app, "lanes") == compact and app.fleet.board_hidden
+        assert footer_line(app).strip().startswith("a yes  d no")  # the compact key line, in both layouts
+        await pilot.resize_terminal(*SIZE)
+        await pilot.pause()
+        await pilot.pause()
+        assert columns(app, "lanes") == DECK_COLUMNS and not app.fleet.board_hidden  # the layout asked for, once there is room
+
+    drive(app, script, (60, 30))
+
+
+def test_an_app_is_built_in_the_deck_layout_unless_told_and_refuses_a_layout_it_has_not():
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",)))
+    assert FlightdeckApp(deck).layout == "deck" and FlightdeckApp(deck, layout="simple").layout == "simple"
+    assert config.LAYOUTS == ("simple", "deck") and config.ConsoleConfig().layout == "simple"  # a run opens in simple
+    with pytest.raises(ValueError, match="layout must be one of simple, deck"):
+        FlightdeckApp(deck, layout="full")
+    with pytest.raises(ValueError, match="layout must be one of simple, deck"):
+        FlightdeckApp(deck).set_layout("wide")
+
+
+# ---------------------------------------------------------------------- the simple layout: the key line and the why line
+
+NO_LANE_BY_HAND = "/new add a challenge  ? help  q quit"
+NO_LANE_PLATFORM = "? help  q quit"
+HEALTHY = "enter open  / commands  ? help  q quit"
+APPROVAL = "a approve  d decline  enter open  / commands  ? help  q quit"
+COURSE_ALERT = "1-9 answer  x dismiss  enter open  / commands  ? help  q quit"
+
+
+def test_the_simple_key_line_shows_the_keys_that_apply_to_the_selected_lane():
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        for lane_id, line in (("L01", HEALTHY), ("L02", APPROVAL), ("L03", COURSE_ALERT)):
+            app.fleet.select_lane(lane_id)
+            await pilot.pause()
+            assert footer_line(app).strip() == line, lane_id
+        app.fleet.select_lane("L02")  # the cursor moves: the line follows it
+        await press(pilot, "down")
+        assert app.fleet.selected_lane != "L02" and footer_line(app).strip() in (HEALTHY, COURSE_ALERT)
+        app.fleet.select_lane("L03")
+        await press(pilot, "x")  # the alert is dismissed: its keys go
+        assert not deck.lanes["L03"].needs_you and footer_line(app).strip() == HEALTHY
+        deck.report("L03", TurnReport(turn=False, gave_up="stuck"))
+        app.refresh_view()
+        await pilot.pause()
+        assert deck.lanes["L03"].finished and footer_line(app).strip() == HEALTHY  # a finished lane: open its transcript
+
+    drive(app, script, SIZE)
+
+
+@pytest.mark.parametrize("by_hand, line", [(True, NO_LANE_BY_HAND), (False, NO_LANE_PLATFORM)], ids=["by hand", "platform"])
+def test_with_no_lane_the_simple_key_line_says_how_to_start(by_hand, line):
+    deck, app = console(by_hand=by_hand, layout="simple")
+
+    async def script(pilot):
+        assert footer_line(app).strip() == line
+        deck.release([Challenge("alpha", "Alpha", "misc", 100)], [])  # a challenge, and still no lane
+        await pilot.pause()
+        await pilot.pause()
+        assert app.fleet.query_one("#main").display and footer_line(app).strip() == line
+        if by_hand:  # the line's /new is a way in, like every key on it
+            await pilot.click("#keys", offset=(2, 0))
+            await pilot.pause()
+            assert type(app.screen).__name__ == "NewChallengePrompt"
+
+    drive(app, script, SIZE)
+
+
+def test_a_key_the_simple_line_does_not_show_still_acts_and_help_lists_it():
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        app.fleet.select_lane("L01")
+        await pilot.pause()
+        assert "p pause" not in footer_line(app) and "k kill" not in footer_line(app)
+        await press(pilot, "p")
+        assert deck.lanes["L01"].state is LaneState.PAUSED
+        await press(pilot, "p")
+        assert deck.lanes["L01"].state is LaneState.RUNNING
+        await press(pilot, "k")
+        assert type(app.screen).__name__ == "KillPrompt"
+        await press(pilot, "escape")
+        await press(pilot, "question_mark")
+        assert isinstance(app.screen, HelpScreen) and "Pause or resume the selected lane" in prompt_text(app)
+
+    drive(app, script, SIZE)
+
+
+def test_the_deck_layout_keeps_its_key_line_of_every_key():
+    deck, app = three_lanes("deck")
+
+    async def script(pilot):
+        app.fleet.select_lane("L01")
+        await pilot.pause()
+        line = footer_line(app)
+        assert all(key in line for key in ("o open", "p pause", "k kill", "a approve", "d decline", "x dismiss"))
+
+    drive(app, script, WIDE)
+
+
+def test_the_simple_why_line_is_blank_for_a_lane_that_needs_nothing():
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        app.fleet.select_lane("L01")
+        await pilot.pause()
+        assert region_text(app, "#why").strip() == "" and app.fleet.query_one("#why").size.height == views.WHY_ROWS  # blank, and still there
+        app.fleet.select_lane("L02")
+        await pilot.pause()
+        why = region_text(app, "#why")
+        assert "L02 ▲ Flag found" in why and "submit flag{synthetic}" in why
+        app.fleet.select_lane("L03")
+        await pilot.pause()
+        assert "L03 ▲ Ignores the hint: the description says SSTV" in region_text(app, "#why")
+        app.run_command("/layout deck", None)
+        app.fleet.select_lane("L01")
+        await pilot.pause()
+        assert "L01 plan: look inside" in region_text(app, "#why")  # the dashboard says what a calm lane is doing
+
+    drive(app, script, SIZE)
+
+
+SIMPLE_PAIRS = {f"{shown} {label}" for _, shown, label in fleet.SIMPLE_KEYS}
+
+
+@pytest.mark.parametrize("size", [(65, 24), (80, 24), (100, 30), (120, 40), SIZE, WIDE], ids=["65x24", "80x24", "100x30", "120x40", "160x46", "190x46"])
+def test_the_simple_key_line_fits_whole_at_every_size_whatever_the_lane(size):
+    world = FakeWorld(scenarios.get("default"))  # team mode: claim acts, and is not on this line
+    app = FlightdeckApp(world.deck, ticker=world.tick, mock="MOCK · test", refresh_seconds=None, layout="simple")
+    deck = world.deck
+
+    async def script(pilot):
+        await step_until(pilot, app, lambda: any(lane.pending for lane in deck.active_lanes())
+                         and any(views.top_answerable(lane) and not lane.pending for lane in deck.active_lanes()),
+                         "a lane waiting for a yes and one with an alert to answer", limit=200)
+        seen = set()
+        for lane in list(deck.lanes.values()):
+            app.fleet.select_lane(lane.id)
+            await pilot.pause()
+            line = footer_line(app).strip()
+            pairs = line.split("  ")
+            assert cell_len(line) <= size[0] - 2 and "…" not in line, line
+            assert set(pairs) <= SIMPLE_PAIRS and {"? help", "q quit", "/ commands", "enter open"} <= set(pairs), line
+            if lane.pending is not None and not lane.finished:
+                assert {"a approve", "d decline"} <= set(pairs), line
+            seen.add(line)
+        assert {APPROVAL, HEALTHY} <= seen and len(seen) >= 3  # an alert's line too
+
+    drive(app, script, size)
+
+
+# ---------------------------------------------------------------------- the simple layout: the focus view
+
+
+def test_the_simple_focus_view_shows_a_part_only_when_it_has_something_in_it():
+    deck, app = console(by_hand=True, layout="simple")
+    release(deck, "alpha", "beta")
+    deck.report("L01", TurnReport(action="file alpha.bin", plan="look inside", tokens=1200))
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, "L01")
+        shown = lambda part: view.query_one(part).display  # noqa: E731
+        assert not shown("#files-pane") and not shown("#others") and not shown("#now")
+        text = screen_text(app)
+        for filler in ("Nothing needs you on this lane", "No other lane needs you", "No files changed yet", "files changed"):
+            assert filler not in text, filler
+        title = title_of(app, "#talk-pane")
+        assert "glm" in title and "turn 1" in title and "1k tok" in title and "idle" in title  # as in the dashboard
+        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys"
+        app.run_command("/diff", "L01")
+        await pilot.pause()
+        assert "L01 has not changed any files yet" in status_line(app) and not shown("#files-pane")
+        deck.report("L01", TurnReport(action="write solve.py", files=(FileChange("solve.py", "+++ b/solve.py\n+print(1)\n", status="added"),)))
+        app.refresh_view()
+        await pilot.pause()
+        assert shown("#files-pane") and "solve.py" in region_text(app, "#files-pane")
+        app.run_command("/diff", "L01")
+        await pilot.pause()
+        assert app.focused is not None and app.focused.id == "files" and "+print(1)" in region_text(app, "#files-pane")
+        deck.report("L02", TurnReport(action="cat flag.txt", flag="flag{synthetic}"))  # another lane needs the player
+        app.refresh_view()
+        await pilot.pause()
+        assert shown("#others") and "L02 flag" in region_text(app, "#others") and not shown("#now")
+        deck.report("L01", TurnReport(action="strings alpha.bin", alerts=(COURSE,)))  # and now this one
+        app.refresh_view()
+        await pilot.pause()
+        assert shown("#now") and "needs you now" in region_text(app, "#now")
+        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  /help all keys"
+        bar(app).field.focus()
+        await press(pilot, "1")  # the answer the line promises, from the empty chat box
+        assert deck.lanes["L01"].plan == "decode it as SSTV"
+        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys"
+
+    drive(app, script, SIZE)
+
+
+def test_a_lane_with_no_files_takes_the_focus_off_a_files_pane_that_goes():
+    deck, app = console(by_hand=True, layout="simple")
+    release(deck, "alpha", "beta")
+    deck.report("L01", TurnReport(action="write solve.py", files=(FileChange("solve.py", "+++ b/solve.py\n+print(1)\n"),)))
+    deck.report("L02", TurnReport(action="cat flag.txt", flag="flag{synthetic}"))
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, "L01")
+        app.run_command("/diff", "L01")
+        await pilot.pause()
+        assert app.focused.id == "files"
+        await press(pilot, "ctrl+n")  # to L02, which changed no file
+        assert view.lane_id == "L02" and not view.query_one("#files-pane").display
+        assert app.focused is bar(app).field
+        await press(pilot, "h", "i")
+        assert bar(app).field.value == "hi"
+
+    drive(app, script, SIZE)
+
+
+def test_the_deck_focus_view_keeps_every_part_and_layout_switches_an_open_lane():
+    deck, app = console(by_hand=True, layout="deck")
+    release(deck, "alpha")
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, "L01")
+        text = screen_text(app)
+        assert view.query_one("#files-pane").display and view.query_one("#others").display
+        assert "No files changed yet." in text and "No other lane needs you." in text and "Nothing needs you on this lane." in text
+        assert footer_line(app).strip().startswith("esc fleet  enter send  / commands")
+        app.run_command("/layout simple", "L01")
+        await pilot.pause()
+        assert isinstance(app.screen, FocusScreen) and not view.query_one("#files-pane").display and not view.query_one("#others").display
+        assert footer_line(app).strip() == "esc lanes  / commands  /help all keys"
+        app.run_command("/layout deck", "L01")
+        await pilot.pause()
+        assert view.query_one("#files-pane").display and footer_line(app).strip().startswith("esc fleet  enter send")
+
+    drive(app, script, SIZE)
+
+
+# ---------------------------------------------------------------------- the command, and what a run opens in
+
+
+def test_layout_is_a_command_that_acts_on_no_lane_listed_beside_the_runs_other_settings():
+    parsed = parse("/layout deck")
+    assert (parsed.command.name, parsed.lane, parsed.arg) == ("layout", None, "deck")
+    assert parse("/layout").arg == "" and not needs_lane(parse("/layout")) and not needs_lane(parsed)
+    assert [c.text for c in complete("/la")] == ["/layout "]
+    names = [c.name for c in COMMANDS]
+    assert names.index("layout") == names.index("theme") + 1 == names.index("config") + 2
+    assert BY_NAME["layout"].args == "[simple|deck]"
+    assert BY_NAME["layout"].help == "simple: the lanes and what needs you; deck: the board and every column; alone: the other one"
+
+
+def test_help_and_the_command_menu_list_layout():
+    deck, app = three_lanes("simple")
+    listed = "/layout [simple|deck] simple: the lanes and what needs you; deck: the board and every column; alone: the other one"
+
+    async def script(pilot):
+        await press(pilot, "question_mark")
+        assert isinstance(app.screen, HelpScreen) and listed in prompt_text(app)
+        await press(pilot, "escape")
+        await press(pilot, "slash", *"la")
+        assert bar(app).menu_open and listed in " ".join(region_text(app, "#bar").split())
+        await press(pilot, "tab")
+        assert bar(app).field.value == "/layout "
+
+    drive(app, script, size=(160, 120))
