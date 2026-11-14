@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
+from pathlib import PurePosixPath
 
 from ..core.model import Challenge
+from ..imageread import MEDIA
 from ..text import untrusted
 
 FENCE_OPEN = "<<<challenge-text"
@@ -129,8 +131,14 @@ NOTHING_GIVEN = (
 )
 
 
+# Said after the fence to a lane that has the view_image tool (agent/tools.py), and only when a
+# file of the challenge is an image by its name: the one line that tells it the tool is worth a call.
+VIEW_IMAGE = "Some of the files are images: view_image shows you one."
+
+
 def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "", *, flag_format: str = "",
-          recon: str = "", instance: str = "auto", shell_hosts: Mapping[str, str] | None = None, toolkit: str = "") -> str:
+          recon: str = "", instance: str = "auto", shell_hosts: Mapping[str, str] | None = None, toolkit: str = "",
+          view_image: bool = False) -> str:
     """The first user message: the challenge as the lane should see it.
 
     Everything that comes from the board or the event profile (name, category, file names,
@@ -147,7 +155,9 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
     the lane is kept off the instance. `toolkit` is the player's solver pack's own note
     (pack.lane_note: [l1] lane_tools), after the challenge's fence and outside it: the pack is
     the player's code, never the challenge's. A challenge whose flag rotates (Challenge.rotates)
-    gets rotates() after the fence: how to submit such a flag."""
+    gets rotates() after the fence: how to submit such a flag. `view_image` says the lane has
+    the view_image tool and a model that can be sent images: then, and only when one of `files`
+    is an image by its name (imageread.MEDIA), VIEW_IMAGE follows the fence."""
     shown = ", ".join(one(name, 200) for name in files[:MAX_BRIEF_FILES])
     if len(files) > MAX_BRIEF_FILES:
         shown += f", and {len(files) - MAX_BRIEF_FILES} more (list the workspace to see them)"
@@ -175,6 +185,8 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
         lines.append(shell_names(shell_hosts))
     if challenge.rotates:
         lines.append(rotates(challenge.rotates))
+    if view_image and any(PurePosixPath(name).suffix.lower() in MEDIA for name in files):
+        lines.append(VIEW_IMAGE)
     if toolkit.strip():
         lines += [TOOLKIT, _MARKER.sub(MARKER_REMOVED, toolkit.strip())]
     if recon.strip():
