@@ -31,7 +31,10 @@ platform is left alone: those are the player's):
   killed and parked;
 - an "ignores the hint" or "wrong direction" alert: the lane is redirected to the alert's own
   suggestion (the detector's words, from flightdeck's tables, never a challenge's), once per
-  lane and kind. A light hint judge, if configured, has had its say in the Watch already;
+  lane and kind. The same alert again on that lane means the redirect did not take: the lane
+  is escalated one rung, and at the top it is killed and parked, as a stalled lane is. An
+  alert with no redirect to suggest waits for the player. A light hint judge, if configured,
+  has had its say in the Watch already;
 - a second opinion on a timer (`second_after`, in seconds; 0, the default, is off): when an
   unsolved challenge has exactly one open lane and nothing queued, and that lane started at
   least `second_after` seconds ago, or a flag of the challenge was judged wrong (the first
@@ -417,12 +420,19 @@ class Autopilot:
             else:
                 for kind in (AlertKind.HINT, AlertKind.DIRECTION):
                     alert = lane.alert(kind)
-                    if alert is None or (lane.id, kind) in self._redirected:
+                    if alert is None:
                         continue
-                    self._redirected.add((lane.id, kind))
+                    if (lane.id, kind) in self._redirected:
+                        # the same alert again after its redirect: the redirect did not take, so the lane goes up a
+                        # rung as a stalled one does, and at the top it is killed and parked (P78)
+                        if not self._apply(Escalate(lane.id)).ok and self._apply(Kill(lane.id, requeue=False)).ok:
+                            self._parked.add(lane.id)
+                        break
                     text = next((s.text for s in alert.suggestions if s.key == "r" and s.text.strip()), "")
-                    if text:
-                        self._apply(Redirect(lane.id, text))
+                    if not text:
+                        continue  # no plan to redirect to: the alert waits for the player
+                    self._redirected.add((lane.id, kind))
+                    self._apply(Redirect(lane.id, text))
                     break
 
     def _opinions(self) -> None:
