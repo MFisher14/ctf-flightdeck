@@ -209,6 +209,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         Binding("escape", "escape", "back", show=False),
         Binding("ctrl+c,super+c", "copy", "copy the selection", show=False),
         Binding("space", "peek", "peek", show=False),
+        Binding("ctrl+o", "attach", "attach files", show=False),
         Binding("comma", "app.toggle_clock", "freeze clock", show=False),
         Binding("full_stop", "app.step_clock", "step clock", show=False),
         *(Binding(str(n), f"quick('{n}')", f"answer {n}", show=False) for n in range(10)),
@@ -715,6 +716,13 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     def action_command(self) -> None:
         self.start_command("/")
+
+    def action_attach(self) -> None:
+        """ctrl+o: the file window, for files to attach to the selected lane's challenge (on
+        the board, the selected challenge), as a bare /attach on the command bar does: for a
+        terminal where a drop does nothing. Where /attach cannot be used (a board the platform
+        fills, the mock) it says why, as /attach does. In a lane's view ctrl+o is details."""
+        self.fd.run_command("/attach", self.selected_lane)
 
     def start_command(self, text: str) -> None:
         bar = self.query_one("#bar", CommandBar)

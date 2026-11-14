@@ -592,7 +592,10 @@ class FlightdeckApp(App[None]):
         if self.adder is None:
             return False
         form = self.screen if isinstance(self.screen, NewChallengePrompt) else None
-        line = not_there_line(text, choose="press ctrl+o to choose it" if form else "type /attach with no file to choose it")
+        choose = ("press ctrl+o to choose it" if form is not None
+                  else "press ctrl+o or type /attach with no file to choose it" if self.screen is self._fleet
+                  else "type /attach with no file to choose it")  # ctrl+o in a lane's view is details
+        line = not_there_line(text, choose=choose)
         if not line:
             return False
         if form is not None:

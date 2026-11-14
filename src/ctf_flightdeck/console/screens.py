@@ -1040,6 +1040,8 @@ KEY_HELP = (
     ("1-9, 0", "Quick answers, no enter: the numbers in the why line under the list (0 says no)"),
     ("c", "Team mode: claim or release the selected challenge"),
     ("/", "Command bar: slash commands with completion; plain text messages the lane"),
+    ("ctrl+o", "Attach files: your system's file window, for the selected lane's challenge, as /attach with no file does "
+               "(for a terminal where a drop does nothing); its lanes start afresh with them. In a lane, ctrl+o is details"),
     ("s", "Change the lane sort: attention, idle, cost, turns, lane"),
     ("tab", "Move focus: board, lanes, command bar (the board hides under 100 columns)"),
     ("enter on ▸", "Expand or collapse finished lanes"),
