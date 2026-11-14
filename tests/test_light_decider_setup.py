@@ -4,7 +4,6 @@ checks the server's GET /health (the fake decider server, fake_decider.py), neve
 
 from __future__ import annotations
 
-import socket
 
 import pytest
 from typer.testing import CliRunner
@@ -14,14 +13,9 @@ from ctf_flightdeck import light as L
 from ctf_flightdeck.config import LightConfig, load_config
 from ctf_flightdeck.setup import Answers, LightAnswers, doctor, report, write_config
 from fake_decider import MODEL, FakeDeciderServer, Reply, health_body
+from serving import closed_port
 
 runner = CliRunner()
-
-
-def closed_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def init(tmp_path, monkeypatch, *args: str):

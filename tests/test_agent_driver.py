@@ -13,7 +13,6 @@ import os
 import re
 import shlex
 import shutil
-import socket
 import stat
 import threading
 import time
@@ -36,6 +35,7 @@ from ctf_flightdeck.core.model import Challenge, ChallengeStatus, DeckConfig, Ev
 from ctf_flightdeck.pricing import Price
 
 from fake_model import FakeModelServer, FakeReply, text_reply, tool_call_reply, tool_calls_reply
+from serving import closed_port
 from stand_in_kit import PAST, STAND_IN as STAND_IN_FLAG, cut_short, handout_of
 
 FLAG = r"t\{[a-z0-9_]+\}"
@@ -933,9 +933,7 @@ def test_a_model_api_failure_every_lane_would_hit_holds_the_queue_and_says_why(t
 
 
 def test_a_model_api_that_does_not_answer_holds_the_queue(tmp_path):
-    with socket.socket() as probe:  # a port on this machine that nothing listens on
-        probe.bind(("127.0.0.1", 0))
-        dead = f"http://127.0.0.1:{probe.getsockname()[1]}/v1"
+    dead = f"http://127.0.0.1:{closed_port()}/v1"  # a port on this machine that nothing listens on
 
     async def main():
         lab = Lab(tmp_path, SimpleNamespace(base_url=dead), handouts=five_challenges(tmp_path), max_lanes=2)

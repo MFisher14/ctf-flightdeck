@@ -41,6 +41,7 @@ from fake_model import (
     tool_call_reply,
     tool_calls_reply,
 )
+from serving import closed_port
 
 KEY = "test-key-7Qk2-not-a-real-one"  # synthetic; the shape of no real provider's key
 SESSION = "lane-L01-a1"
@@ -96,13 +97,6 @@ def fails(base_url: str, **kwargs) -> ModelError:
     with pytest.raises(ModelError) as info:
         call(base_url, **kwargs)
     return info.value
-
-
-def closed_port() -> int:
-    """A loopback port nothing listens on: connecting to it is refused."""
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 class CountingTransport(httpx.AsyncBaseTransport):

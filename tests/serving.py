@@ -8,6 +8,9 @@ as soon as the thread runs, and a server nobody talks to never wakes.
 
 Stopping only ends the accept loop, as shutdown() did: what a fake does about connections
 still open and requests still being answered (its close(wait=...)) is its own, after stop().
+
+closed_port() is the other end: a port on 127.0.0.1 that refuses connections, for the tests
+of a server that is not there.
 """
 
 from __future__ import annotations
@@ -16,6 +19,30 @@ import selectors
 import socket
 import socketserver
 import threading
+
+# Ports only root can listen on (below 1024), none in use on a machine that runs no inetd
+# services: discard, tcpmux, echo, daytime, chargen.
+_NEVER_LISTENING = (9, 1, 7, 13, 19)
+
+
+def closed_port() -> int:
+    """A port on 127.0.0.1 that refuses connections, now and for as long as the test lasts.
+
+    Not a free port taken and given back (bind to port 0, read its number, close): between
+    giving it back and the test's connection, and through every retry after that, another
+    test process may be given that very port for a fake server of its own (pytest -n runs
+    several), and the test would then be answered instead of refused. A port below 1024 is
+    never handed out that way. The one returned is checked to refuse a connection first; a
+    machine where all of them answer fails here, by name."""
+    for port in _NEVER_LISTENING:
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=2).close()
+        except ConnectionRefusedError:
+            return port
+        except OSError:
+            continue  # filtered rather than refused: not a port that answers "nobody here" at once
+    raise AssertionError(f"every one of the ports {_NEVER_LISTENING} on 127.0.0.1 answers or is filtered: "
+                         "the tests of a server that is not there need one that refuses connections")
 
 
 class Serving:

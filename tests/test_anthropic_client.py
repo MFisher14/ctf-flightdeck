@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import socket
 import time
 
 import anthropic
@@ -31,6 +30,7 @@ from ctf_flightdeck.config import ANTHROPIC_BASE_URL
 from ctf_flightdeck.pricing import Price
 from fake_anthropic import FakeAnthropicServer, attempt, error, message, refusal, text_message, thinking, tool_message
 from fake_model import FakeReply, held_until_retried
+from serving import closed_port
 
 KEY = "test-anthropic-key-4Rq9-not-real"  # synthetic; the shape of no real provider's key
 SESSION = "flightdeck-run1-L01"
@@ -58,12 +58,6 @@ def fails(base_url: str, **kwargs) -> ModelError:
     with pytest.raises(ModelError) as info:
         chat(base_url, **kwargs)
     return info.value
-
-
-def closed_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def turn(server: FakeAnthropicServer, messages: list[dict], **kwargs) -> Reply:

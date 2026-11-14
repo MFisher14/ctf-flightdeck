@@ -16,7 +16,6 @@ import email.utils
 import fcntl
 import json
 import os
-import socket
 import stat
 import time
 from pathlib import Path
@@ -48,6 +47,7 @@ from ctf_flightdeck.platform.ctfd import (
 )
 from ctf_flightdeck.platform.manual import BoardError, load_board
 from fake_ctfd import FLAG_FORMAT, HANG_UP, TOKEN, FakeChallenge, FakeCTFd, Reply, make_tls, sample
+from serving import closed_port
 
 
 def client(fake: FakeCTFd, *, token: str = TOKEN, **options) -> CTFdClient:
@@ -75,13 +75,6 @@ def failure(fake: FakeCTFd, use, **options) -> CTFdError:
     with pytest.raises(CTFdError) as caught:
         call(fake, use, **options)
     return caught.value
-
-
-def closed_port() -> int:
-    """A port on 127.0.0.1 that nothing listens on."""
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def unreachable(**options) -> CTFdError:
