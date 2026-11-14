@@ -10,7 +10,8 @@ the console is suspended, its lanes keep working, and it is drawn again when the
 exits. The text goes through a file of the player's own (mode 0600), removed afterwards.
 What the editor leaves in it comes back as the bar's text, nothing is sent: the bar is one
 line, so lines are joined by spaces, and a control character shows as text.untrusted()
-draws it (ESC as ^[), never raw to the terminal.
+draws it (ESC as ^[), never raw to the terminal. A file left empty is given up, as git
+takes an empty message, and the bar keeps what it had.
 """
 
 from __future__ import annotations
@@ -63,11 +64,15 @@ def one_line(text: str) -> tuple[str, int]:
 
 async def edit(app: App, text: str, environ: Mapping[str, str] | None = None) -> tuple[str, int]:
     """Open `text` in the player's editor and return what it holds when the editor exits, as
-    one_line gives it. Raises EditorError with the reason when there is no editor, it cannot
-    have the terminal, or it exits with a status other than 0 (as git takes it: given up)."""
+    one_line gives it. Raises EditorError with the reason when there is no editor, the file
+    cannot be made or read back, the editor cannot have the terminal, it exits with a status
+    other than 0, or it leaves the file empty (both as git takes them: given up)."""
     environ = os.environ if environ is None else environ
     argv = editor_command(environ)
-    handle, path = tempfile.mkstemp(prefix="flightdeck-bar-", suffix=".txt")
+    try:
+        handle, path = tempfile.mkstemp(prefix="flightdeck-bar-", suffix=".txt")
+    except OSError as exc:
+        raise EditorError(f"no file for the editor could be made ({exc}): the box keeps what it had") from None
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as file:
             file.write(text + "\n" if text else "")
@@ -79,8 +84,15 @@ async def edit(app: App, text: str, environ: Mapping[str, str] | None = None) ->
             raise EditorError(f"the editor did not start: {exc}") from None
         if status != 0:
             raise EditorError(f"the editor ({argv[0]}) exited with status {status}: the box keeps what it had")
-        with open(path, encoding="utf-8", errors="replace") as file:
-            return one_line(file.read())
+        try:
+            with open(path, encoding="utf-8", errors="replace") as file:
+                written = file.read()
+        except OSError as exc:
+            raise EditorError(f"the editor's file could not be read back ({exc}): the box keeps what it had") from None
+        line, lines = one_line(written)
+        if not lines:
+            raise EditorError("the editor left the file empty: the box keeps what it had")
+        return line, lines
     finally:
         try:
             os.unlink(path)

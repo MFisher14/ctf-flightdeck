@@ -594,6 +594,9 @@ warning on the status line and leaves the bar as it was:
 - the variable names a program not on `PATH`, or is not a command line: the variable is named,
   and the other one is not tried in its place;
 - the editor exits with another status: `the editor (vim) exited with status 1: the box keeps what it had`;
+- the editor leaves the file empty (only blanks): `the editor left the file empty: the box keeps what it had`;
+- the file cannot be made (a full or read-only temporary folder) or read back (the editor
+  moved or removed it): the reason is named;
 - a console that cannot hand over the terminal: `this console cannot hand the terminal to an editor`.
 
 ### Approving several flags at once

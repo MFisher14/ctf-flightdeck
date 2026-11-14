@@ -48,18 +48,22 @@ def editor_env(monkeypatch):
 
 class StandIn:
     """Plays the editor for run_in_terminal: records what it was asked to run and what the
-    file held, then writes `writes` into the file and exits with `status`."""
+    file held, then writes `writes` into the file (or removes it, as an editor or a wrapper
+    that moves the file does) and exits with `status`."""
 
-    def __init__(self, writes: str = "", status: int = 0) -> None:
-        self.writes, self.status = writes, status
+    def __init__(self, writes: str = "", status: int = 0, removes: bool = False) -> None:
+        self.writes, self.status, self.removes = writes, status, removes
         self.calls: list[tuple[list[str], str, int]] = []  # (argv, the file's text, its mode)
 
     async def __call__(self, app, argv, cwd, env) -> int:
         path = argv[-1]
         with open(path, encoding="utf-8") as file:
             self.calls.append((list(argv), file.read(), os.stat(path).st_mode & 0o777))
-        with open(path, "w", encoding="utf-8") as file:
-            file.write(self.writes)
+        if self.removes:
+            os.unlink(path)
+        else:
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(self.writes)
         return self.status
 
 
@@ -262,6 +266,63 @@ def test_an_editor_that_exits_badly_leaves_the_bar_as_it_was(editor_env):
         await pilot.pause()
         assert bar(app).field.value == "kept" and not os.path.exists(stand_in.calls[0][0][-1])
         assert_warning(app, "exited with status 1: the box keeps what it had")
+
+    drive(app, script, SIZE)
+
+
+def test_an_editor_that_leaves_the_file_empty_leaves_the_bar_as_it_was(editor_env):
+    stand_in = StandIn(writes="  \n\t\n")
+    editor_env.setattr(takeover, "run_in_terminal", stand_in)
+    editor_env.setenv("EDITOR", TRUE)
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await typed(pilot, "kept")
+        await press(pilot, "ctrl+g")
+        await pilot.pause()
+        assert bar(app).field.value == "kept" and len(stand_in.calls) == 1
+        assert "Back from your editor" not in status_line(app)
+        assert_warning(app, "the editor left the file empty: the box keeps what it had")
+
+    drive(app, script, SIZE)
+
+
+def test_an_editor_that_removes_its_file_is_said_and_the_bar_keeps_what_it_had(editor_env):
+    stand_in = StandIn(removes=True)
+    editor_env.setattr(takeover, "run_in_terminal", stand_in)
+    editor_env.setenv("EDITOR", TRUE)
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await typed(pilot, "kept")
+        await press(pilot, "ctrl+g")
+        await pilot.pause()
+        assert bar(app).field.value == "kept" and len(stand_in.calls) == 1
+        assert_warning(app, "the editor's file could not be read back")
+
+    drive(app, script, SIZE)
+
+
+def test_no_file_for_the_editor_is_said_and_no_editor_runs(editor_env):
+    stand_in = StandIn(writes="never")
+    editor_env.setattr(takeover, "run_in_terminal", stand_in)
+    editor_env.setenv("EDITOR", TRUE)
+
+    def full(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    editor_env.setattr(editor.tempfile, "mkstemp", full)
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        await typed(pilot, "kept")
+        await press(pilot, "ctrl+g")
+        await pilot.pause()
+        assert stand_in.calls == [] and bar(app).field.value == "kept"
+        assert_warning(app, "no file for the editor could be made")
 
     drive(app, script, SIZE)
 

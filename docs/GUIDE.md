@@ -545,8 +545,8 @@ think over. flightdeck uses `$VISUAL`, or `$EDITOR` when that is not set (`expor
 EDITOR=nano`, or `EDITOR="code --wait"` for an editor that opens a window). The console steps
 aside while you write and your lanes keep working. When you save and quit, the text is back in
 the box, the lines joined by spaces since the box is one line, and nothing is sent until you
-press Enter. Quit without saving, or with an error (`:cq` in vim), and the box keeps what it
-had. With neither variable set, the status line says so and nothing opens.
+press Enter. Quit without saving, with an error (`:cq` in vim), or with the file emptied, and
+the box keeps what it had. With neither variable set, the status line says so and nothing opens.
 
 ### Layouts
 
