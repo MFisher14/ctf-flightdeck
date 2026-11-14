@@ -14,6 +14,22 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   press Enter to attach` on the command bar), and one that is refused says why. If nothing at
   all happens when you drop a file, your terminal kept it: use `ctrl+o`, or `/attach` with no
   file, for the file window.
+- A dropped file attaches in more cases. On a Mac with a 12-hour clock, a fresh screenshot
+  dragged onto iTerm2 or Ghostty was pasted as text and not attached: its name has a narrow
+  space before AM or PM that those terminals send as it is (a 24-hour clock's name has none).
+  Only an ordinary space or a tab parts two dropped paths now. A name with a double quote in
+  iTerm2's "wrap in double quotes" form, and one with both a space and a quote in WezTerm's
+  default form (`John's notes.pdf`), are read too.
+- A dropped file is copied into the run's folder the moment it lands, so one that is gone
+  before you press `ctrl+s` or Enter (a temporary file) is still attached. The `/attach` on
+  the command bar names that copy. On macOS, still drag the saved screenshot and not the
+  floating thumbnail: its file may be gone before the terminal sends the path.
+- When what arrives reads as a dropped file but no such file is on this machine, the console
+  says why and what to do, then pastes it as text as before: over SSH the file is on your own
+  machine, under WSL a `C:\` path needs Windows Terminal's `pathTranslationStyle`, VS Code's
+  terminal leaves some characters out of the name, or it was a temporary file that is gone.
+- In Windows Terminal and Alacritty, the terminal's own paste key with a screenshot on the
+  clipboard now pastes it into the `/new` form, as `ctrl+v` does.
 - `mouse = false` under `[console]` leaves the mouse to your terminal, so you select and copy
   text the terminal's own way. Clicks and the wheel then do nothing in the console; every key
   works as before. The default is unchanged.
@@ -68,6 +84,20 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   with the event you just played first in the list; its spend, run folder and next commands
   are in the terminal under it. The practice set and the demo come back too. `q` there
   leaves, and a run that stops with an error leaves with its reason showing.
+- The first five minutes read the way they run. `flightdeck --help` opens with the "New here?"
+  line (run `flightdeck`: its home screen sets you up and offers the practice set), and
+  `eval-local` has a panel of its own, below the commands a new player needs. `flightdeck
+  doctor` ends with the line to act on: how many things there are to fix before a run (it used
+  to end without one when a check failed), or `Ready` and the next command, with the warnings
+  counted as what a run does not wait for. Help says "API key", "access token" and "model
+  tokens" where "key" and "token" stood alone. The README's quickstart is three commands (look
+  at the mock, install with uv, `flightdeck`) with `pipx` and the `.deb` as other ways to
+  install, and the guide's glossary now comes second, with wave, live instance, brief, command
+  bar and park added.
+- The README opens on a one-minute recording of the demo (`uvx ctf-flightdeck mock`): a flag
+  submitted with one key, a lane that ignores its hint redirected, a lane going the wrong way
+  killed and started fresh, a wave of 43 challenges. It is the mock itself, played key by key
+  by a script in the repository (`scripts/demo.py`), so it shows the console as it is.
 
 ## 0.4.0 (2026-11-13)
 

@@ -19,6 +19,34 @@ the lines for players are under Unreleased in [CHANGELOG.md](../CHANGELOG.md)).
   player's own that flightdeck runs out of process: `flightdeck plugin new`, `add` and `pull`,
   and `platform = "NAME"` in the event profile ([PLUGINS.md](PLUGINS.md)).
 
+Built since, from the list of what comes next (the
+[milestones](https://github.com/MFisher14/ctf-flightdeck/milestones) have the rest):
+
+- **The first five minutes in words** (P54,
+  [#36](https://github.com/MFisher14/ctf-flightdeck/issues/36)). The README's quickstart is
+  three commands and follows the first run (the mock, `uv tool install`, `flightdeck` and its
+  setup form, practice); `--help` opens with where a new player starts; `flightdeck doctor` ends
+  with what is left to fix or the next command; an API key, an access token and model tokens
+  are each called by name; and the guide's glossary comes second. The README and the guide
+  describe the tree, so this quickstart is true of a release from the next one on: 0.4.0 has no
+  setup form on its home screen, and both pages say so beside the form, with the commands that
+  do the same on 0.4.0.
+- **A dropped file always attaches** (P55,
+  [#37](https://github.com/MFisher14/ctf-flightdeck/issues/37)). A dropped path is read as
+  each terminal writes it, with only an ordinary space or a tab between two paths (a macOS
+  screenshot's name on a 12-hour clock was not read from iTerm2 or Ghostty); a drop is copied
+  into the run's folder as it lands; a paste that reads as a dropped file that is not on this
+  machine says why; and an empty paste in the `/new` form pastes the clipboard's image. None
+  of it was tried in a real terminal: each format is from that terminal's own source or
+  documentation, and Terminal.app's and tmux's are not known.
+- **A one-minute demo at the top of the README** (P60,
+  [#43](https://github.com/MFisher14/ctf-flightdeck/issues/43)). `scripts/demo.py` plays the
+  mock key by key with no terminal and writes `docs/screenshots/demo.gif`; the tests play it on
+  every push, so a change to the console that breaks a step fails with that step's name. It is
+  the console's own screenshots joined into a GIF, not a recording of a terminal. Still open
+  from the same issue: what the 14-challenge practice set costs. Nothing prints a figure until
+  one full run has been measured.
+
 Known limits, each said where it applies:
 
 - No plugin has met a real platform: the plugin path was built against synthetic plugins and a

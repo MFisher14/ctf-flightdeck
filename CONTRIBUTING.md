@@ -163,6 +163,31 @@ builds and tests the `.deb`s too, and publishes neither them nor the formula.
   `homebrew-tap` job says so and passes, and the tap is not touched. The token is never in this
   repository.
 
+### The README's demo
+
+The recording at the top of the README is `docs/screenshots/demo.gif`, and `scripts/demo.py`
+writes it. The script plays `flightdeck mock` with no terminal, key by key, and each step says
+what must be true once it is done (the flag is submitted, the lane has its new plan, the wave is
+on the board).
+
+```sh
+uv run python scripts/demo.py --check                     # play it and say how it went; writes nothing
+uv run python scripts/demo.py docs/screenshots/demo.gif   # play it and write the GIF
+uv run python scripts/demo.py --frames DIR                # the frames alone, as SVGs
+```
+
+The tests play it on every push (`tests/test_demo.py`). A change to the console or to the
+mock's default scenario that breaks a step fails there with the step's name: change `DEMO` in
+the script so the demo shows the console as it now is, then write the GIF again. A test holds
+the GIF's frames and seconds against the script's, so a changed `DEMO` with the old GIF fails
+too. Also write it again when the console looks different: no test sees that.
+
+Writing the GIF needs `rsvg-convert` (librsvg) and `ffmpeg` on your PATH; without one the
+script names it and writes nothing, and the test that writes a GIF reports as not run. The
+letters are drawn in your machine's monospace font (Fira Code when it is installed), so two
+machines write slightly different pictures of the same frames. Keep the file under 2 MB, where
+the commit guard starts to warn: `--width` makes it smaller.
+
 ### Adding a practice challenge
 
 The practice set is the board that `flightdeck practice` plays

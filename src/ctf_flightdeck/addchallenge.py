@@ -13,9 +13,11 @@ address, when a line is nothing else (`parse`).
 A file is attached only when the player hands it over as a file: `--file`, the file window,
 the clipboard's image, /attach, or a drop. A terminal sends a drop as a paste that is nothing
 but paths (or types the same text all at once, which the console tells from typing by its
-speed), and only text of that shape is one (`dropped`). What may be attached is a
-regular file or a folder (`refusal` names why anything else is not), and nothing is copied
-over a file that is already there.
+speed), and only text of that shape is one (`dropped`). A drop the console takes is copied
+into the run's folder at once (`stage`): the file behind a drop may be a temporary one. A
+paste of that shape whose file is not there is text, and gets a line that says why
+(`not_there_line`). What may be attached is a regular file or a folder (`refusal` names why
+anything else is not), and nothing is copied over a file that is already there.
 
 The text is the player's own, typed at their console, but the description in it is the
 event's: it goes into challenge.json and is handled as challenge text from there on
@@ -29,13 +31,14 @@ import os
 import re
 import shutil
 import stat
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from .keys import KeysError, keys_path
 from .platform.manual import CHALLENGE_FILE, ID, MAX_ID, _origin, tcp_service
+from .text import untrusted
 
 MAX_NAME = 120
 MAX_DROP = 20_000  # characters: a longer paste is text, not a drop
@@ -69,19 +72,27 @@ def slug(name: str) -> str:
 # ---------------------------------------------------------------------- a drop: a paste that is only paths
 
 
+# What parts two words of a drop: an ASCII space or a tab, and nothing else. Never str.isspace()
+# or \s: a terminal escapes or quotes ASCII only, so any other blank character arrives bare and
+# is a character of the file's name (macOS names a screenshot "... 9.41.12<U+202F>AM.png" on a
+# 12-hour clock).
+_BLANK = " \t"
 # A piece of one word of a drop, as a terminal writes a path: in quotes, or bare with each
 # space (and other special character) escaped by a backslash. Pieces side by side are one
-# word, as in a shell: 'it'\''s.txt' is it's.txt.
-_PIECE = re.compile(r"""'([^'\n]*)'|"([^"\n]*)"|((?:\\.|[^\s\\'"])+)""")
+# word, as in a shell: 'it'\''s.txt' is it's.txt. Inside double quotes a backslash is read
+# before a double quote or a backslash only (_IN_QUOTES), as the terminals that wrap a name in
+# them write it.
+_PIECE = re.compile(r"""'([^'\n]*)'|"((?:\\.|[^"\\\n])*)"|((?:\\.|[^ \t\\'"])+)""")
+_IN_QUOTES = re.compile(r"""\\(["\\])""")
 # Where the files start in /attach's argument: the first word written as an absolute path.
-_FIRST_PATH = re.compile(r"""(?:^|(?<=\s))['"]?(?:/|~/|~(?=['"]?(?:\s|$))|file://)""")
+_FIRST_PATH = re.compile(r"""(?:^|(?<=[ \t]))['"]?(?:/|~/|~(?=['"]?(?:[ \t]|$))|file://)""")
 
 
 def _path_of(word: str) -> Path | None:
     """`word` as a file or folder that exists on this machine, or None. Only an absolute
     path is one (/..., ~/..., file://...): a word must not become a file because one of that
     name is in the folder flightdeck runs in."""
-    text = word.strip()
+    text = word.strip(_BLANK)
     if not text or "\n" in text or len(text) > 4096:
         return None
     if text.startswith("file://"):
@@ -101,41 +112,62 @@ def _words(line: str) -> list[str] | None:
     words: list[str] = []
     at, end = 0, len(line)
     while at < end:
-        if line[at].isspace():
+        if line[at] in _BLANK:
             at += 1
             continue
         word = ""
-        while at < end and not line[at].isspace():
+        while at < end and line[at] not in _BLANK:
             match = _PIECE.match(line, at)
             if match is None:
                 return None
-            quoted = match.group(1) if match.group(1) is not None else match.group(2)
-            word += quoted if quoted is not None else re.sub(r"\\(.)", r"\1", match.group(3))
+            if match.group(1) is not None:
+                word += match.group(1)
+            elif match.group(2) is not None:
+                word += _IN_QUOTES.sub(r"\1", match.group(2))
+            else:
+                word += re.sub(r"\\(.)", r"\1", match.group(3))
             at = match.end()
         words.append(word)
     return words
+
+
+def _spaced_words(line: str) -> list[str]:
+    """The words of a line read a second way, as WezTerm writes dropped files by default: a
+    backslash before each space and before nothing else, so a quote or any other backslash
+    is a character of the name (John's\\ notes.pdf)."""
+    return [word.replace("\\ ", " ") for word in re.split(r"(?<!\\) +", line) if word]
+
+
+def _line(line: str) -> tuple[list[Path], str]:
+    """(the paths one line is made of, "") by the first reading in which every word is a
+    path that exists; else ([], the word of the first reading that is not one). The second
+    reading is only ever another way to find files that exist: it cannot make a file of text."""
+    first = _words(line)
+    for words in (first, _spaced_words(line)):
+        paths = [_path_of(word) for word in words or ()]
+        if paths and all(path is not None for path in paths):
+            return [path for path in paths if path is not None], ""
+    if first is None:
+        return [], line.strip(_BLANK)
+    return [], next(word for word in first if _path_of(word) is None)
+
+
+def _lines(text: str) -> list[str]:
+    return [line for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n") if line.strip(_BLANK)]
 
 
 def _drop(text: str) -> tuple[list[Path], str]:
     """(the paths `text` is made of, "") when the whole text is paths that exist; else
     ([], the word that is not one)."""
     found: list[Path] = []
-    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        if not line.strip():
-            continue
+    for line in _lines(text):
         whole = _path_of(line)  # one path, pasted bare with its spaces as they are
         if whole is not None:
             paths = [whole]
         else:
-            words = _words(line)
-            if words is None:
-                return [], line.strip()
-            paths = []
-            for word in words:
-                path = _path_of(word)
-                if path is None:
-                    return [], word
-                paths.append(path)
+            paths, missing = _line(line)
+            if missing:
+                return [], missing
         for path in paths:
             if path not in found:
                 found.append(path)
@@ -144,8 +176,9 @@ def _drop(text: str) -> tuple[list[Path], str]:
 
 def dropped(text: str) -> list[Path]:
     """The files a paste hands over: its paths, when the WHOLE text is one or more absolute
-    paths that exist, separated by spaces or line ends, each quoted or with its spaces
-    escaped (what a terminal sends for files dropped on it). [] for any other text: a path
+    paths that exist, separated by ASCII spaces, tabs or line ends, each quoted or with its
+    spaces escaped (what a terminal sends for files dropped on it; each terminal writes them
+    its own way, and every way is read on every terminal). [] for any other text: a path
     inside a sentence is text, and nothing is ever taken out of text."""
     if not text.strip() or len(text) > MAX_DROP:
         return []
@@ -170,6 +203,88 @@ def quote(path: Path) -> str:
     """A path as one word that `dropped` and `attach_arg` read back."""
     text = str(path)
     return f"'{text}'" if "'" not in text else re.sub(r"""([\s\\'"])""", r"\\\1", text)
+
+
+# ---------------------------------------------------------------------- a drop whose file is not there
+
+
+# An absolute path as a terminal writes a dropped file's: two parts or more. One name under the
+# root is not read as one: /help and /new are commands, and no dropped file lives there.
+_FULL_PATH = re.compile(r"(?:/[^/ \t]+/|~/)")
+_NAMED = re.compile(r"\.[A-Za-z0-9]{1,8}$")  # how a file's name ends: a dot and its kind
+_WINDOWS_PATH = re.compile(r"""["']?[A-Za-z]:\\[^ \t]""")  # C:\Users\..., as a terminal on Windows writes one
+VSCODE_LEAVES_OUT = "` $ | & > ~ # ! ^ * ; <"  # what VS Code's terminal takes out of a dropped file's name
+MAX_SHOWN_PATH = 48  # characters of a path in a status line: its end, where the file's name is
+
+
+def _written(word: str) -> str | None:
+    """`word` when it is written as a full absolute path (/a/b, ~/a, file:///a/b), whether or
+    not anything is there; else None."""
+    text = word.strip(_BLANK)
+    if len(text) > 4096:
+        return None
+    if text.startswith("file://"):
+        text = unquote(urlsplit(text).path)
+    return text if _FULL_PATH.match(text) else None
+
+
+def not_there(text: str) -> str:
+    """The first path of `text` that names nothing on this machine, when the text reads as a
+    drop but for that: every word of it is written as a full absolute path, in one of the
+    ways a terminal writes dropped files (the readings `dropped` makes, and a whole line as
+    one bare path). "" for a drop, and for any other text. This only chooses a line to say:
+    nothing is ever attached, or kept from being pasted, because of it."""
+    if not text.strip() or len(text) > MAX_DROP or _drop(text)[0]:
+        return ""
+    missing = ""
+    for line in _lines(text):
+        # a whole line as one bare path only when it ends as a file's name does: prose may start with a path too
+        bare = [line] if _NAMED.search(line.rstrip(_BLANK)) else []
+        for words in (_words(line), _spaced_words(line), bare):
+            written = [_written(word) for word in words or ()]
+            if written and all(word is not None for word in written):
+                break
+        else:
+            return ""
+        missing = missing or next((word for word in written if word is not None and _path_of(word) is None), "")
+    return missing
+
+
+def windows_path(text: str) -> str:
+    """The first line of `text` when every line of it starts as a Windows path does (C:\\...,
+    quoted or not), which is what a terminal on Windows sends for a dropped file unless it is
+    set to translate the path; else ""."""
+    lines = _lines(text) if len(text) <= MAX_DROP else []
+    return lines[0].strip(_BLANK) if lines and all(_WINDOWS_PATH.match(line.lstrip(_BLANK)) for line in lines) else ""
+
+
+def _shown(path: str) -> str:
+    """A path for a status line: safe to draw, on one line, and its end when it is long."""
+    text = untrusted(path, one_line=True)
+    return text if len(text) <= MAX_SHOWN_PATH else "..." + text[-(MAX_SHOWN_PATH - 3):]
+
+
+def not_there_line(text: str, *, choose: str, env: Mapping[str, str] | None = None) -> str:
+    """What to tell the player about a paste that reads as dropped files of which one is not
+    on this machine ("" for any other text): why that happens here, and what works instead.
+    `choose` is how the player chooses a file where the paste arrived ("press ctrl+o to
+    choose it"). The environment only picks the sentence (over SSH, under WSL, in VS Code's
+    terminal); how a paste is read never depends on it."""
+    env = os.environ if env is None else env
+    missing, windows = not_there(text), windows_path(text)
+    if (missing or windows) and (env.get("SSH_CONNECTION") or env.get("SSH_TTY")):
+        return (f"not on this machine: {_shown(missing or windows)}. Over SSH a dropped file stays on the machine your "
+                "terminal runs on: copy it here first (scp), then /attach its path")
+    if windows and (env.get("WSL_DISTRO_NAME") or env.get("WSL_INTEROP")):
+        return (f'{_shown(windows)} is a Windows path. Set "pathTranslationStyle": "wsl" on this Windows Terminal profile '
+                "and drop the file again, or /attach its /mnt/c/... path")
+    if not missing:
+        return ""
+    if env.get("TERM_PROGRAM") == "vscode":
+        return (f"no such file: {_shown(missing)}. VS Code's terminal leaves {VSCODE_LEAVES_OUT} out of a dropped "
+                f"file's name: {choose}")
+    return (f"no such file: {_shown(missing)}. A dropped file may have been a temporary one, gone by now: drag the "
+            f"saved file, or {choose}")
 
 
 # ---------------------------------------------------------------------- what may be attached
@@ -323,6 +438,61 @@ def _remove(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
     else:
         path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------- a drop, kept until it is attached
+
+
+def stage(folder: Path, files: Sequence[Path]) -> list[Path]:
+    """Copy files the console took as a drop into `folder` (the run's own) and return the
+    copies, each under its own name in a numbered folder of its own: `folder`/1/shot.png.
+    The copy is what is attached later, so a file that is gone by then (a screenshot's
+    thumbnail, a terminal's temporary file) is attached all the same. Each file is checked
+    first (`refusal`); AddError names the one that cannot be copied and why, and what this
+    call copied is removed again."""
+    made: list[Path] = []
+    copies: list[Path] = []
+    file: Path | None = None
+    try:
+        for file in files:
+            why = refusal(file, into=folder)
+            if why is not None:
+                raise AddError(why)
+            real = file.resolve()
+            name = file.name if file.name not in ("", "..") else real.name
+            folder.mkdir(parents=True, exist_ok=True)
+            n = 1
+            while True:  # making the folder decides whose number it is: two drops copied at once get one each
+                slot = folder / str(n)
+                try:
+                    slot.mkdir()
+                    break
+                except FileExistsError:
+                    n += 1
+            made.append(slot)
+            _copy(real, slot / name)
+            copies.append(slot / name)
+    except (OSError, AddError) as exc:
+        for slot in made:
+            shutil.rmtree(slot, ignore_errors=True)
+        if isinstance(exc, AddError):
+            raise
+        raise AddError(f"cannot copy {file}: {_why(exc)}") from None
+    return copies
+
+
+def staged(folder: Path, files: Sequence[Path]) -> list[Path]:
+    """Those of `files` that are copies `stage` made in `folder`: a file in a numbered folder directly in it."""
+    return [file for file in files if file.parent.parent == folder and file.parent.name.isdigit()]
+
+
+def unstage(folder: Path, files: Sequence[Path]) -> None:
+    """Remove the copies among `files` that `stage` made in `folder`, each with its numbered
+    folder. Any other path is left alone: only a numbered folder directly in `folder` is
+    ever removed, so a file of the player's own that was attached from where it is stays."""
+    for file in staged(folder, files):
+        if not file.parent.is_symlink():
+            shutil.rmtree(file.parent, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------- the text

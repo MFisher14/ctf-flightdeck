@@ -372,5 +372,5 @@ flightdeck build check ~/ctf/solvers
 ```
 
 `build check` runs every such test in the pack and lists the engines passing and failing. It needs
-pytest (`pipx install "ctf-flightdeck[build]"`), and the tests get no API keys or tokens from
-flightdeck's environment. An engine is done when its test passes.
+pytest (`uv tool install "ctf-flightdeck[build]"`, or the same with `pipx install`), and the tests
+get no API keys or access tokens from flightdeck's environment. An engine is done when its test passes.

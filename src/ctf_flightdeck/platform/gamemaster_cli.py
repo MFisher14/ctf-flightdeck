@@ -109,9 +109,9 @@ def pull(
     the reason.
 
     Exit status 1 when some challenges could not be pulled (each is named, with the reason;
-    pull again to retry them). 2 when the pull could not start or finish (a refused token,
-    the Game Master not answering, nothing started to pull, a flag format other than the
-    board's): what was written stays.
+    pull again to retry them). 2 when the pull could not start or finish (a refused Game
+    Master token, the Game Master not answering, nothing started to pull, a flag format other
+    than the board's): what was written stays.
     """
     import asyncio
 

@@ -4,7 +4,9 @@ A command a page shows is one a player copies: every `flightdeck ...` line in a 
 and every one in a code span, names a command flightdeck has and options that command has.
 The passages a release got wrong before are pinned one by one below: the scripted `start`
 (run here as the guide writes it), what Autopilot needs, where a stuck player is sent, and
-which installs exist.
+which installs exist. So is a new player's first five minutes: the quickstart's commands, the
+home screen's choices by the names the home screen gives them, the three keys, and the words
+"key" and "token".
 
 Nothing here reaches a network: `start` is run away from a terminal with a config, a keys
 file and a home folder of the test's own, and nothing is launched.
@@ -23,6 +25,7 @@ from typer.testing import CliRunner
 from ctf_flightdeck import cli, start
 from ctf_flightdeck.autopilot import NEEDS_BUDGET, NEEDS_DOCKER
 from ctf_flightdeck.setup import Answers, doctor, report, write_config
+from words_kit import bare
 
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
@@ -180,6 +183,253 @@ def test_the_readme_sends_a_stuck_player_to_doctor_which_gives_a_fix_and_not_to_
     monkeypatch.setattr(cli, "_home", lambda: opened.append("home"))
     alone = CliRunner().invoke(cli.app, [])
     assert alone.exit_code == 0 and opened == ["home"] and "flightdeck doctor" not in alone.output
+
+
+# ---------------------------------------------------------------------- the first five minutes
+
+
+def section(markdown: str, heading: str) -> str:
+    """The text under `heading` (a whole heading line, like "## Quickstart"), up to the next
+    heading of its level or above. A `#` line inside a fenced block is a comment, not one."""
+    level = len(heading) - len(heading.lstrip("#"))
+    lines = markdown.split(f"\n{heading}\n", 1)[1].split("\n")
+    fenced = False
+    for at, line in enumerate(lines):
+        if line.startswith(("```", "~~~")):
+            fenced = not fenced
+        elif not fenced and re.match(rf"#{{1,{level}}} ", line):
+            return "\n".join(lines[:at])
+    return "\n".join(lines)
+
+
+def commands_in(block_text: str) -> list[str]:
+    """The command lines of a fenced block's text, without their comments."""
+    return [" ".join(shlex.split(line, comments=True)) for line in block_text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+
+
+def test_section_stops_at_the_next_heading_of_its_level_and_not_at_a_comment_in_a_code_block():
+    markdown = "# T\n\n## A\n\none\n\n```sh\n# not a heading\nrun\n```\n\n### A1\n\ntwo\n\n## B\n\nthree\n"
+    assert section(markdown, "## A") == "\none\n\n```sh\n# not a heading\nrun\n```\n\n### A1\n\ntwo\n"
+    assert section(markdown, "### A1") == "\ntwo\n" and section(markdown, "## B") == "\nthree\n"
+
+
+def test_the_quickstart_is_three_commands_uv_first_with_nothing_optional_before_the_first_run():
+    """Look, install, run: the README's first block of commands under Quickstart, and the
+    guide's under "Install and first run" (which has no mock: its reader has seen it). uv is
+    the installer both show; pipx is named in prose, as another way, and in no block before
+    the first run. The solver pack is optional, so it is in no block at all."""
+    readme, guide = read(README), read(GUIDE)
+    quick = section(readme, "## Quickstart")
+    blocks = [block.group(2) for block in _FENCE.finditer(quick)]
+    assert commands_in(blocks[0]) == ["uvx ctf-flightdeck mock", "uv tool install ctf-flightdeck", "flightdeck"]
+    first = section(guide, "## Install and first run")
+    assert commands_in(next(_FENCE.finditer(first)).group(2)) == ["uv tool install ctf-flightdeck", "flightdeck"]
+    for page, text in (("README.md", quick), ("docs/GUIDE.md", first)):
+        shown = [line for block in _FENCE.finditer(text) for line in commands_in(block.group(2))]
+        assert not [line for line in shown if line.split()[0] in ("pipx", "pip")], f"{page}: uv is the installer a block shows"
+        assert not [line for line in shown if line.startswith("flightdeck pack")], f"{page}: the solver pack is optional: not in a block"
+        assert "`pipx install ctf-flightdeck`" in text, f"{page} still says how to install with pipx"
+        assert text.index("uv tool install ctf-flightdeck") < text.index("pipx install ctf-flightdeck"), f"{page}: uv comes first"
+    assert "`flightdeck pack install`" in quick  # named, in prose, after the event commands
+    # the same by command: what the home screen does, in the order a script runs it
+    assert commands_in(blocks[1]) == ["flightdeck init", "flightdeck image build", "flightdeck doctor", "flightdeck practice"]
+    llms = flat(read(ROOT / "llms.txt"))
+    assert "Install: `uv tool install ctf-flightdeck` (recommended: uv brings the Python it needs), or `pipx install ctf-flightdeck`" in llms
+
+
+def test_the_quickstart_names_the_home_screens_choices_as_the_home_screen_does():
+    """"Get started", then "Build the lane image" when Docker lanes need it, then "Practice":
+    the README's and the guide's words are the menu's own titles, in the menu's order, and
+    `ctrl+s` is the key the setup form saves on."""
+    from ctf_flightdeck.console import home
+
+    first = home.items(have_config=False)[0]
+    assert (first.title, first.choice) == ("Get started", ("setup", "practice"))
+    after = [item.title for item in home.ready_items(home.Ready(build=True))]
+    assert after[:2] == ["Build the lane image", "Practice"]
+    assert [item.title for item in home.ready_items(home.Ready())][0] == "Practice"  # with the image built, practice is first
+    assert any(binding.key == "ctrl+s" and binding.action == "save" for binding in home.SetupForm.BINDINGS)
+    quick = flat(section(read(README), "## Quickstart"))
+    assert 'flightdeck # open the home screen, and choose "Get started"' in quick
+    assert "**Get started** is a form on the home screen:" in quick and "`ctrl+s` saves it." in quick
+    assert quick.index("**Get started**") < quick.index("1. **Build the lane image**") < quick.index("2. **Practice**")
+    guide = flat(section(read(GUIDE), "## Install and first run"))
+    assert 'flightdeck # the home screen: choose "Get started", then "Practice"' in guide
+    assert '"Get started", its first choice, is a form:' in guide and "`ctrl+s` saves it" in guide
+
+
+def welcome_screen(monkeypatch, tmp_path) -> str:
+    """What the welcome screen says on a board with challenges, as one line: the mock's, which
+    opens on the same rows a first practice run does."""
+    import asyncio
+
+    from ctf_flightdeck.console.app import FlightdeckApp
+    from ctf_flightdeck.mock import scenarios
+    from ctf_flightdeck.mock.world import FakeWorld
+    from test_console import prompt_text
+
+    monkeypatch.setenv("HOME", str(tmp_path))  # no config of the player's: the mock reads its look from one
+    monkeypatch.delenv("FLIGHTDECK_CONFIG", raising=False)
+
+    async def main() -> str:
+        world = FakeWorld(scenarios.get("default"))
+        app = FlightdeckApp(world.deck, ticker=world.tick, tick_seconds=None, refresh_seconds=None, mock="MOCK", welcome=True)
+        async with app.run_test(size=(160, 46)) as pilot:
+            await pilot.pause()
+            assert type(app.screen).__name__ == "WelcomeScreen"
+            return prompt_text(app)
+
+    return asyncio.run(main())
+
+
+def test_the_three_keys_the_quickstart_names_are_the_welcome_screens_in_its_words_and_do_that(monkeypatch, tmp_path):
+    """The README and the guide name the three keys the welcome screen names, each with the
+    meaning that screen gives it, so a player reads the same words twice; and each key is
+    bound in the console to what those words say."""
+    from ctf_flightdeck.console import fleet
+
+    bound = {binding.key: binding.action for binding in fleet.FleetScreen.BINDINGS}
+    assert fleet.OPEN_KEY == ("o", "enter", "open") and bound["a"] == "lane('approve')" and bound["question_mark"] == "app.help"
+    opens, approves, every = "open a lane to watch it and talk to it", "approve a flag an agent found", "every key, any time"
+    welcome = welcome_screen(monkeypatch, tmp_path)
+    assert "You only need three things:" in welcome
+    for row in (f"enter {opens}", f"a {approves} (d declines it)", f"? {every}"):
+        assert row in welcome, (row, welcome)
+    said = f"Enter to {opens}, `a` to {approves}, and `?` for {every}"
+    assert said in flat(section(read(README), "## Quickstart")).replace("**", "")
+    assert said in flat(section(read(GUIDE), "## Install and first run"))
+
+
+def test_the_readme_says_of_the_mock_and_of_the_solver_pack_what_the_program_says_of_them():
+    """The mock is told of once, under "Try it": what it needs is the released README's list
+    with the API key named, and its last two claims are the `mock` command's own. The
+    quickstart's first line points back at it and does not tell it again; the install line's
+    comment is the guide's. The solver pack's sentence has the home screen's count and its
+    "run first on every challenge", with "no-model" said in the words "What it is" uses."""
+    from ctf_flightdeck.console import home
+
+    readme = read(README)
+    tried, quick = flat(section(readme, "## Try it in ten seconds")), flat(section(readme, "## Quickstart"))
+    assert "on scripted data: no install, no API key, no network, nothing spent." in tried
+    assert flat(cli.mock.__doc__).endswith("no network, nothing spent.")
+    assert "uvx ctf-flightdeck mock # the demo from above: the console, before you set anything up " in quick
+    installs = "uv tool install ctf-flightdeck # installs the flightdeck command"
+    assert installs + " (uv brings the Python it needs) " in quick
+    assert installs + " " in flat(section(read(GUIDE), "## Install and first run"))
+    pack = next(item for item in home.items(have_config=True) if item.choice == ("pack",))
+    assert pack.detail == "some 800 no-model solvers that run first on every challenge"
+    assert "(the ones that need no model)" in flat(section(readme, "## What it is"))
+    assert ("`flightdeck pack install` adds flightdeck's solver pack: some 800 solvers that need no model and run first on every "
+            "challenge. Installing it takes `uv` and `git`.") in quick
+
+
+# What the README calls a key with no more said, in the order it says it: each is one the
+# player presses. A new sentence that means an API key says "API key"; one about the keyboard
+# is added here.
+KEYBOARD = [
+    "step in with one key.",
+    "one key submits a flag",  # the demo's recording, in words: three of them
+    "opened and redirected with one key,",
+    "the help screen lists every key]",
+    "and one key sends a hint",
+    "names the three keys to begin with:",
+    "`?` for every key, any time.",
+    "every key the console takes",
+    "`?` for every key.",
+    "and the keys that apply now.",
+]
+
+
+def test_in_the_readme_a_bare_key_is_one_you_press_and_a_token_says_which_kind_it_is():
+    readme = flat(read(README))
+    keys = bare(readme, "key")
+    unknown = [place for place in keys if not any(phrase in place for phrase in KEYBOARD)]
+    assert not unknown, ("README.md says key without saying which (an API key is called one; a key the player presses goes in "
+                         "KEYBOARD):\n" + "\n".join(f"...{place}..." for place in unknown))
+    assert len(keys) == len(KEYBOARD) and all(phrase in place for place, phrase in zip(keys, KEYBOARD)), keys
+    assert bare(readme, "token") == [], "README.md: say access token, or model tokens"
+    # and the three kinds are there, each by its name
+    for kind in ("an API key for a model API", "your access token for it", "400,000 model tokens"):
+        assert kind in readme, kind
+    # the check itself: the sentences this README had before would not pass it
+    assert bare("Your config and keys stay as they are.", "key") and bare("Lanes have token and dollar caps.", "token")
+    assert len(bare("models and keys, the console's keys, boards", "key")) == 2  # two meanings in one sentence, both bare
+
+
+SETUP_FORM = "First-time setup happens in the home screen."  # how the changelog line the setup form came with begins
+_RELEASE = re.compile(r"^## (\d+\.\d+\.\d+) \(", re.M)
+
+
+def release_before(changelog: str, line: str) -> str:
+    """The newest release that does not have what the changelog line beginning `line` tells:
+    the first release heading under that line. While the line is under "## Unreleased" that is
+    the newest release there is; once a release has taken the line, it is the one before it."""
+    parts = changelog.split(f"\n- {line}")
+    assert len(parts) == 2, f"the changelog has {len(parts) - 1} lines that begin {line!r}: one is expected"
+    under = _RELEASE.search(parts[1])
+    assert under, f"no release is under the changelog line that begins {line!r}"
+    return under.group(1)
+
+
+def test_release_before_is_the_newest_release_while_a_line_is_unreleased_and_the_one_before_once_it_is_out():
+    unreleased = "# C\n\n## Unreleased\n\n- A form. More.\n- Other.\n\n## 0.4.0 (2026-11-13)\n\n- Old.\n\n## 0.3.0 (2026-11-12)\n"
+    assert release_before(unreleased, "A form.") == "0.4.0"
+    released = unreleased.replace("## Unreleased", "## 0.5.0 (2026-12-01)")
+    assert release_before(released, "A form.") == "0.4.0" and release_before(released, "Old.") == "0.3.0"
+    with pytest.raises(AssertionError, match="0 lines"):
+        release_before(unreleased, "Not there.")
+    with pytest.raises(AssertionError, match="no release is under"):
+        release_before("## Unreleased\n\n- A form.\n", "A form.")
+
+
+def test_each_page_that_tells_of_the_setup_form_says_which_release_does_not_have_it_and_what_to_do_there():
+    """The README and the guide follow the code, and the quickstart leads to a form the newest
+    release may not have: a player who installed that release is told so where the form is
+    told of, with the commands that do the same there. The release is the changelog's: the
+    one under the line the form came with."""
+    changelog = read(ROOT / "CHANGELOG.md")
+    last = release_before(changelog, SETUP_FORM)
+    said = f"The setup form came after {last} (`flightdeck --version` says which you have)."
+    quick = flat(section(read(README), "## Quickstart"))
+    assert said in quick, f"README.md, Quickstart: {said}"
+    # after the form is told of, and before the commands it sends that player to
+    assert quick.index("**Get started** is a form on the home screen:") < quick.index(said) < quick.index("### The same by command")
+    there = quick[quick.index(said):quick.index("The console opens on a welcome screen")]
+    assert f'On {last}, "Get started" asks the same at the prompt' in there and 'the four commands under "The same by command"' in there
+    assert len(commands_in([block.group(2) for block in _FENCE.finditer(section(read(README), "### The same by command"))][0])) == 4
+    first = section(read(GUIDE), "## Install and first run")
+    assert said in flat(first), f"docs/GUIDE.md, Install and first run: {said}"
+    assert flat(first).index('"Get started" sets flightdeck up in a form') < flat(first).index(said) < flat(first).index("**The same by command.**")
+    assert f'On {last}, "Get started" asks the same at the prompt' in flat(first) and 'run the commands under "The same by command" below' in flat(first)
+    assert f'The setup form came after {last}: on {last} "Get started" asks the same at the prompt' in flat(read(ROOT / "llms.txt"))
+    # and the status line names the newest release, and says this page can be ahead of it
+    newest = _RELEASE.search(changelog).group(1)
+    status = flat(read(README)).split("> **Status: ", 1)[1].split(" ## ", 1)[0].replace(" > ", " ")  # one quoted paragraph
+    assert status.startswith(f"v{newest} (alpha)** is the newest release."), status
+    assert "this page follows the code, which can be ahead of that release" in status and '"Unreleased"' in status
+
+
+def test_the_guide_explains_its_words_second_and_names_commands_the_console_has():
+    """The glossary comes right after "Install and first run", before any section that uses
+    its words, and has the five a new player met undefined: wave, live instance, brief,
+    command bar, park. A `/command` it names is one the console takes."""
+    from ctf_flightdeck.console import commands
+
+    guide = read(GUIDE)
+    headings = re.findall(r"^## (.+)$", _FENCE.sub("", guide), re.M)
+    assert headings[:3] == ["Install and first run", "Words used here", "What a run costs"]
+    glossary = section(guide, "## Words used here")
+    terms = [term.lower() for term in re.findall(r"^- \*\*([^*]+)\*\*", glossary, re.M)]
+    assert {"wave", "live instance", "brief", "command bar", "park"} <= set(terms), terms
+    assert {"board", "lane", "ladder", "caps", "l1", "light model", "lane image", "event profile", "run folder"} <= set(terms), terms
+    for word in ("key", "API key", "access token", "tokens", "setting"):  # the four that are easy to mix up, and the bare one
+        assert f"**{word}**" in glossary, word
+    named = set(re.findall(r"`/([a-z]+)", glossary))
+    assert {"new", "theme", "queue", "kill"} <= named and named <= set(commands.BY_NAME), named - set(commands.BY_NAME)
+    assert "`/kill park`" in glossary and commands.BY_NAME["kill"].args == "[park]"
+    assert "`/queue` puts it back in the queue" in flat(glossary) and commands.BY_NAME["queue"].help == "queue a parked or new challenge"
+    # the first section sends its reader there for the words it uses
+    assert "are in [Words used here](#words-used-here), the next section." in flat(section(guide, "## Install and first run"))
 
 
 def test_the_guide_offers_the_deb_a_release_builds_and_no_homebrew_tap_while_there_is_none():

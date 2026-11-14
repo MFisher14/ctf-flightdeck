@@ -1,68 +1,104 @@
 # The player's guide
 
-Everything a player needs after the [README](../README.md)'s quickstart: where lanes run, models
-and keys, the console, boards, your own solvers, events and teams, coding-agent lanes, and what a
-run leaves behind. Deeper pages: [Model APIs](MODEL-APIS.md), [Models](MODELS.md),
-[Boards](BOARDS.md), [Solvers](SOLVERS.md), [Plugins](PLUGINS.md) and the
+Everything a player needs after the [README](../README.md)'s quickstart: the words flightdeck uses,
+where lanes run, models and API keys, the console, boards, your own solvers, events and teams,
+coding-agent lanes, and what a run leaves behind. Deeper pages: [Model APIs](MODEL-APIS.md),
+[Models](MODELS.md), [Boards](BOARDS.md), [Solvers](SOLVERS.md), [Plugins](PLUGINS.md) and the
 [console spec](CONSOLE-SPEC.md).
 
 ## Install and first run
 
-Needs Python 3.12+ on macOS or Linux (Windows through WSL), and Docker for the safest setup.
+macOS or Linux (Windows through WSL). Install with
+[uv](https://docs.astral.sh/uv/getting-started/installation/): it brings the Python flightdeck needs
+(3.12 or newer), so you install none yourself.
+[Docker](https://docs.docker.com/get-started/get-docker/), running, gives the safest setup ([Docker
+or host](#docker-or-host)).
 
 ```sh
-pipx install ctf-flightdeck   # or: uv tool install ctf-flightdeck   (from a clone: uv tool install .)
-flightdeck init               # a few questions (provider, models, Docker or host, your API key); writes your config
-flightdeck image build        # once, for Docker lanes: pulls Debian and common tools (about 700 MB)
-flightdeck doctor             # checks your setup and says how to fix each problem
-flightdeck practice           # 14 small practice challenges: spends tokens on your model API
+uv tool install ctf-flightdeck   # installs the flightdeck command
+flightdeck                       # the home screen: choose "Get started", then "Practice"
+```
+
+If your shell does not find `flightdeck` after that, `uv tool update-shell` puts uv's tool folder on
+your `PATH`; open a new terminal then. Without uv, `pipx install ctf-flightdeck` does the same with
+a Python 3.12 or newer of your own, and everything below is the same from there. From a clone of the
+repository: `uv tool install .`. Debian and Ubuntu have a `.deb`
+([below](#install-with-homebrew-or-apt)).
+
+"Get started" sets flightdeck up in a form on the home screen (your model API, its API key, the
+models, Docker or host), and the home screen then offers the practice set: 14 small challenges, on
+your model. The paragraphs below say what each step asks and does. The words this guide uses from
+here on (lane, ladder, board, lane image) are in [Words used here](#words-used-here), the next
+section.
+
+The setup form came after 0.4.0 (`flightdeck --version` says which you have). On 0.4.0, "Get
+started" asks the same at the prompt and goes on to set up an event: for the practice set there,
+run the commands under "The same by command" below, which that release has too.
+
+**The first run.** With no config yet the home screen sets flightdeck up itself. "Get started", its
+first choice, is a form: your model API, its API key (typed out of sight; it goes to your keys
+file), the models (every API has some to offer) and Docker or host, where Docker is offered when it
+runs on your machine and host when it does not. Docker can take a while to answer (up to 20 s when
+its daemon hangs): until it does the form offers neither and saves none, so wait for it or choose
+one yourself, and a choice you made meanwhile stands. Leaving the form stops the question. `ctrl+s`
+saves it; what is wrong with an answer is said in the form. The home screen then says what it wrote
+and offers the practice set first, with starting an event one below; when your lanes run in Docker
+and the lane image is not built yet, building it comes first (`flightdeck image build`, run for you
+in the terminal). "Start a new CTF" with no config asks the same setup first and then offers the
+event's form first. The form sets up one model API with the rules as the light model; for an
+OpenRouter fallback or a light model, use `flightdeck init` (below).
+
+**Every run after it.** Once it is set up, `flightdeck` on its own, at a terminal, opens the home
+screen on what you can play: resume an event (the ones you set up or played, most recent first;
+Enter takes the first), start a new CTF, the practice set, a demo, or install the solver pack when
+you have none. Arrow keys move, Enter chooses, `q` quits. "Start a new CTF" is a form on that screen
+with the questions `flightdeck start` asks; `ctrl+s` sets the event up and opens its console. What
+would stop that (a folder that cannot be made, a VPN file that is not there, an access token that
+cannot be kept) is said in the form, with your answers still in it, and under the flag format the
+form says what it made of what you typed. Steps that need your password (connecting a VPN,
+installing its tool or the solver pack) are asked in the plain terminal before the console opens.
+When a run you started there ends (you quit its console), flightdeck comes back to the home screen
+with that event first in the list; what the run spent, its run folder and the commands that read it
+are in the terminal under the home screen, and `q` shows them. The practice set and the demo come
+back to it too. `q` on the home screen leaves, and a run that stops with an error leaves with its
+reason showing.
+
+**The same by command.** Each step has a command of its own, for a script, or when you would rather
+answer at the prompt:
+
+```sh
+flightdeck init          # the setup questions (model API, models, Docker or host, your API key); writes your config
+flightdeck image build   # once, for Docker lanes: pulls Debian and common tools (about 700 MB)
+flightdeck doctor        # checks your setup and says how to fix each problem
+flightdeck practice      # 14 small practice challenges: spends tokens on your model API
 ```
 
 `init` shows a numbered list of model APIs: answer with a number or a name. Lanes use one API;
-"anthropic, openrouter" together makes OpenRouter the fallback for when Anthropic keeps failing.
-A coding-agent CLI (Claude Code, Codex) is not chosen there: `flightdeck play --agent claude`
-uses it. Every API has models to offer, and Enter takes them (which, and why:
-[Models](MODELS.md#what-we-would-start-with)). Last, `init` asks for your API key: nothing
-shows as you paste, and it goes to your keys file (`~/.config/ctf-flightdeck/keys.env`, yours
-only), never into the config. Enter alone skips it; a key already in your environment or in
-that file is not asked for, and away from a terminal `init` asks nothing and says where the
-key goes. For an event, the next command is `flightdeck start` ([Events and teams](#events-and-teams)).
+"anthropic, openrouter" together makes OpenRouter the fallback for when Anthropic keeps failing. A
+coding-agent CLI (Claude Code, Codex) is not chosen there: `flightdeck play --agent claude` uses it.
+Every API has models to offer, and Enter takes them (which, and why:
+[Models](MODELS.md#what-we-would-start-with)). Last, `init` asks for your API key: nothing shows as
+you paste, and it goes to your keys file (`~/.config/ctf-flightdeck/keys.env`, yours only), never
+into the config. Enter alone skips it; an API key already in your environment or in that file is not
+asked for, and away from a terminal `init` asks nothing and says where the API key goes. For an
+event, the next command is `flightdeck start` ([Events and teams](#events-and-teams)).
 
-`flightdeck` on its own, at a terminal, opens the home screen: resume an event (the ones you
-set up or played, most recent first; Enter takes the first), start a new CTF, the practice set,
-a demo, or install the solver pack when you have none. Arrow keys move, Enter chooses, `q` quits.
-"Start a new CTF" is a form on that screen with the questions `flightdeck start` asks; `ctrl+s`
-sets the event up and opens its console. What would stop that (a folder that cannot be made, a
-VPN file that is not there, a token that cannot be kept) is said in the form, with your answers
-still in it, and under the flag format the form says what it made of what you typed. Steps that need your password (connecting a VPN,
-installing its tool or the solver pack) are asked in the plain terminal before the console
-opens. When a run you started there ends (you quit its console), flightdeck comes back to the
-home screen with that event first in the list; what the run spent, its run folder and the
-commands that read it are in the terminal under the home screen, and `q` shows them. The
-practice set and the demo come back to it too. `q` on the home screen leaves, and a run that
-stops with an error leaves with its reason showing.
+In a script or a pipe `flightdeck` alone asks nothing and prints these commands instead.
 
-With no config yet the home screen does `init`'s part itself. "Get started", its first choice,
-is a form with the same questions: your model API, its key (typed out of sight; it goes to your
-keys file), the models (every API has some to offer) and Docker or host, where Docker is offered
-when it runs on your machine and host when it does not. Docker can take a while to answer (up
-to 20 s when its daemon hangs): until it does the form offers neither and saves none, so wait
-for it or choose one yourself, and a choice you made meanwhile stands. Leaving the form stops
-the question. `ctrl+s` saves it; what is wrong with an answer is said in the form. The home screen then says what it wrote and offers the practice
-set first, with starting an event one below; when your lanes run in Docker and the lane image
-is not built yet, building it comes first (`flightdeck image build`, run for you in the
-terminal). "Start a new CTF" with no config asks the same setup first and then offers the
-event's form first. The form sets up one model API with the rules as the light model; for an
-OpenRouter fallback or a light model, use `flightdeck init`.
+**Your first console.** The first console you open, and the mock, start on a welcome screen: what
+the board, the lanes and the command bar are, and the keys you need; Enter goes on (on an empty
+board, to adding your first challenge). With challenges on the board it names three keys to begin
+with: Enter to open a lane to watch it and talk to it, `a` to approve a flag an agent found, and `?`
+for every key, any time ([The console](#the-console)).
 
-In a script or a pipe `flightdeck` alone asks nothing and prints the commands
-instead. The first console you open, and the mock, start on a welcome screen: what the board,
-the lanes and the command bar are, and the keys you need; Enter goes on (on an empty board, to
-adding your first challenge). `flightdeck doctor` checks Python,
-the config, the key variables, a local model server and its models, the light model, Docker, the
-lane image and your terminal's size. Before the console opens, `play` and `practice` ask the model
-API whether it takes your key and serves every model in your ladder, and stop with what to fix if
-not. `ctfdeck` and `ctf-flightdeck` are other names for the `flightdeck` command.
+**When something is missing.** `flightdeck doctor` checks Python, the config, the variables that
+hold your API keys, a local model server and its models, the light model, Docker, the lane image and
+your terminal's size. Each problem has a line of its own with its fix under it, and the last line is
+the one to act on: how many things there are to fix before a run (the `FAIL` lines; a `warn` line is
+something a run does not wait for), or `Ready` with the next command. Before the console opens,
+`play` and `practice` ask the model API whether it takes your API key and serves every model in your
+ladder, and stop with what to fix if not. `ctfdeck` and `ctf-flightdeck` are other names for the
+`flightdeck` command.
 
 ### Upgrade
 
@@ -92,8 +128,60 @@ repository yet, so `apt upgrade` does not find a new release: install the next `
 old one. It does not install Docker.
 
 **Homebrew:** not yet. flightdeck's tap does not exist yet, so
-`brew install mfisher14/tap/ctf-flightdeck` finds nothing: on macOS, install with `pipx` or `uv`
+`brew install mfisher14/tap/ctf-flightdeck` finds nothing: on macOS, install with `uv` or `pipx`
 as above.
+
+## Words used here
+
+Four words that are easy to mix up. A **key** is one you press. An **API key** is what a model
+API gives you to use it, and the keys file is where flightdeck keeps yours. An **access token**
+is what a CTF platform gives you; **tokens** alone are what a model counts its work in, and what
+a model API charges for. A **setting** is a line of your config.
+
+- **Board**: the event's challenges. To flightdeck it is a folder of challenge folders, each with
+  a `challenge.json` and its handout files ([Boards](BOARDS.md)). With CTFd, flightdeck pulls
+  one into a folder.
+- **Wave**: challenges an event releases together, sometimes dozens at once, when it opens or
+  while it runs. flightdeck pulls each new wave into the board, starts lanes on as many of its
+  challenges as `max_lanes` allows and queues the rest.
+- **Live instance** (the console calls it a **live box**): a server the event runs for one
+  challenge, such as a web site or a service you reach with `nc host port`. A lane reaches it
+  only as the event's rules allow ([Docker or host](#docker-or-host)).
+- **Lane**: one agent working one challenge: a model conversation with its own shell, in a
+  container (or on this machine with `--host`). `max_lanes` run at once (4 by default); the rest
+  queue.
+- **Brief**: what a lane's model is told about its challenge when it starts: the challenge's
+  name, text, files and live instance (handed over as data, never as instructions) and the flag
+  format.
+- **Command bar**: the line at the bottom of the console. `/` opens it for a command (`/new`,
+  `/theme`); plain text typed in it is a message to the selected lane, which reads it on its
+  next turn.
+- **Ladder**: your models, weakest first (`[models] ladder`). Lanes start on the first.
+  **Escalate** (`e`) restarts a lane on the next one, with a summary of what it did.
+- **Fork** (`f`): a second lane on the same challenge. **Take over** (`t`): the lane's shell is
+  yours; exit it to hand the lane back.
+- **Park**: set a challenge aside. A parked challenge is not queued and no lane works it, but it
+  can still be solved: `/queue` puts it back in the queue. `/kill park` parks a lane's challenge
+  when it kills the lane, and Autopilot parks one it gave up on for now.
+- **Caps**: per lane, `token_cap` and `dollar_cap` under `[lanes]`. An alert comes at 80%, and at
+  100% the lane waits for you.
+- **L1**: your own no-model solvers, which run before a lane's model does anything. They come as a
+  **pack** of **engines**, each with a **manifest** saying which challenges it fits
+  ([Solvers](SOLVERS.md)).
+- **Light model**: an optional small model for small jobs (by default, the hint judge). Off by
+  default.
+- **Lane image**: the Docker image lanes run in, `ctf-flightdeck-lane:1`.
+  `flightdeck image build` builds it once.
+- **Event profile** (`event.toml`): what an event's rules allow, and a **policy** for each stage:
+  `auto`, `confirm`, `manual` or `off`.
+- **Run folder**: where a run's event log, transcripts and reports go
+  (`~/.local/share/ctf-flightdeck/runs/`).
+- **Layout**: how the console is laid out: `simple` (the default: one list of lanes and what
+  needs you) or `deck` (the whole dashboard, with the board). **Theme**: its colours
+  ([The console](#the-console)).
+- **Plugin**: a small program of your own that lets flightdeck play an event on a platform it
+  does not know ([Plugins](PLUGINS.md)). Not a pack: a pack solves challenges, a plugin talks
+  to the platform.
 
 ## What a run costs
 
@@ -179,38 +267,6 @@ encoded): use Docker, a disposable VM, or a separate key with a low limit.
 A coding-agent CLI holds its own credential, and the commands it runs can read it, in Docker too:
 give it a key you can revoke, with a low spending limit. Practise in Docker: on the host, a lane
 can read the practice set's reference solutions in a clone of this repository.
-
-## Words used here
-
-- **Board**: a folder of challenge folders, each with a `challenge.json` and its handout files
-  ([Boards](BOARDS.md)). With CTFd,
-  flightdeck pulls one into a folder.
-- **Lane**: one agent working one challenge: a model conversation with its own shell, in a
-  container (or on this machine with `--host`). `max_lanes` run at once (4 by default); the rest
-  queue.
-- **Ladder**: your models, weakest first (`[models] ladder`). Lanes start on the first.
-  **Escalate** (`e`) restarts a lane on the next one, with a summary of what it did.
-- **Fork** (`f`): a second lane on the same challenge. **Take over** (`t`): the lane's shell is
-  yours; exit it to hand the lane back.
-- **Caps**: per lane, `token_cap` and `dollar_cap` under `[lanes]`. An alert comes at 80%, and at
-  100% the lane waits for you.
-- **L1**: your own no-model solvers, which run before a lane's model does anything. They come as a
-  **pack** of **engines**, each with a **manifest** saying which challenges it fits
-  ([Solvers](SOLVERS.md)).
-- **Light model**: an optional small model for small jobs (by default, the hint judge). Off by
-  default.
-- **Lane image**: the Docker image lanes run in, `ctf-flightdeck-lane:1`.
-  `flightdeck image build` builds it once.
-- **Event profile** (`event.toml`): what an event's rules allow, and a **policy** for each stage:
-  `auto`, `confirm`, `manual` or `off`.
-- **Run folder**: where a run's event log, transcripts and reports go
-  (`~/.local/share/ctf-flightdeck/runs/`).
-- **Layout**: how the console is laid out: `simple` (the default: one list of lanes and what
-  needs you) or `deck` (the whole dashboard, with the board). **Theme**: its colours
-  ([The console](#the-console)).
-- **Plugin**: a small program of your own that lets flightdeck play an event on a platform it
-  does not know ([Plugins](PLUGINS.md)). Not a pack: a pack solves challenges, a plugin talks
-  to the platform.
 
 ## Models and keys
 
@@ -452,8 +508,8 @@ and on a selected row, each state's colour on the page), and each needs a contra
 /home/you/.config/ctf-flightdeck/themes/dusk.toml: colors.ink_light on colors.error has contrast 2.1, under 3.0: "▲ N need you" could not be read
 ```
 
-Other mistakes are named the same way, with the file and the key and never a value from the
-file: an unknown key (`unknown key colors.acent`, with the known ones), a colour that is not
+Other mistakes are named the same way, with the file and the setting and never a value from the
+file: an unknown setting (`unknown key colors.acent`, with the known ones), a colour that is not
 `#` and six hex digits, colours missing when there is no `base`, a `base` that is not a
 built-in, a `syntax` that names no Pygments style, a file over 64 KiB. A theme that cannot be
 used stops the command that loads your config (`play`, `doctor`, `mock`, the home screen)
@@ -788,6 +844,33 @@ drop; what you type is never read for paths. Every drop that lands says so: the 
 that cannot be attached says why. In the form, the line under the box says what is attached
 (each file's name and size) and the target it found; `ctrl+r` takes the last file off again.
 
+Each terminal writes a dropped file's path its own way (in quotes, with a backslash before a
+space, or bare), and flightdeck reads every one of them in every terminal, whatever is in the
+name: a quote, a bracket, or the narrow space macOS puts before AM or PM in a screenshot's
+name. A dropped file is copied into the run's folder the moment it lands, and the copy is
+what gets attached: the file behind a drop can be a temporary one, so it may be gone by the
+time you press `ctrl+s` or Enter, and the challenge has it all the same. That is why the
+`/attach` on the command bar names a path under `dropped/` in the run's folder. The copy is
+removed once the challenge has the file.
+
+On macOS, drag the saved screenshot (from the Desktop or a Finder window), not the thumbnail
+that floats in the corner right after you take it: the thumbnail's file may be gone before
+the terminal has sent its path, and then there is nothing to copy (kitty from 0.49 keeps
+such a file for ten minutes). When what arrives reads as a dropped file but no such file is
+on this machine, the console says so and pastes it as the text it is. The line starts with
+`no such file:` or `not on this machine:` and says the likely reason for where you are:
+
+- **A temporary file that is gone.** Drag the saved file, or choose it: `ctrl+o` in the
+  form, `/attach` with no file elsewhere.
+- **Over SSH.** A file you drop is on the machine your terminal runs on, not the one
+  flightdeck runs on. Copy it over first (`scp`), then `/attach` its path.
+- **Windows Terminal with WSL.** A path that starts `C:\` is a Windows path. A WSL profile
+  that Windows Terminal made for you translates it to `/mnt/c/...`; in one you wrote yourself,
+  set `"pathTranslationStyle": "wsl"`, or `/attach` the `/mnt/c/...` path.
+- **VS Code's terminal.** It takes `` ` $ | & > ~ # ! ^ * ; < `` out of a dropped file's
+  name, so a file with one of those in its name arrives as a path that names nothing. Use
+  `ctrl+o` for that file.
+
 If you drag a file in and nothing at all happens (no text, no line), your terminal kept the
 drop to itself; flightdeck was sent nothing. Use `ctrl+o`, or `/attach <challenge>` and the
 file window. A terminal may hold drops back while a program has the mouse, as the console does
@@ -798,7 +881,11 @@ console, and every key works as before.
 A file or a folder can be attached. A device, your home folder itself, and anything that
 holds flightdeck's config folder or keys file are refused, with the reason. `ctrl+v` pastes a
 screenshot from the clipboard (macOS: take it with cmd+ctrl+shift+4); text pastes the
-terminal's own way (cmd+v).
+terminal's own way (cmd+v). In Windows Terminal and Alacritty the terminal's own paste key
+works for a screenshot too: with no text on the clipboard they send an empty paste, and in the
+form that does what `ctrl+v` does (in Windows Terminal `ctrl+v` is that key, so it is the only
+way the key arrives). Other terminals send nothing for an image, or have not been tried: use
+`ctrl+v` there.
 flightdeck's lanes read text, so when a challenge has images the run asks your lanes' model
 once for each image's text and puts it in the description; the image is in the handout too. A
 model that takes no images is said, and the challenge is added without that text.
@@ -912,7 +999,7 @@ Each stage (pull, L1, agents, submit, live instance) has a policy in the event p
 never looser than the rules. With agents `manual` or `off`, `play` does not start. Under `confirm`
 for live instances, a lane asks before it may reach its challenge's instance and has no network
 until you allow it; then, and under `auto` from its start, a Docker lane's network reaches that
-instance and nothing else ([Docker or host](#docker-or-host)). The profile, key by key:
+instance and nothing else ([Docker or host](#docker-or-host)). The profile, setting by setting:
 [Boards](BOARDS.md#the-event-profile-eventtoml).
 
 Team mode shares claims, live-box holds and solves through a folder your teammates sync (a network
@@ -1079,9 +1166,10 @@ from before 0.3.0 has none, and its card says so.
 ## Configuration and files
 
 `flightdeck init` writes `~/.config/ctf-flightdeck/config.toml` (or the file `$FLIGHTDECK_CONFIG`
-names). `flightdeck config` checks it, and `flightdeck config --example` prints every key with
-its default. Keys come from your environment, else from `~/.config/ctf-flightdeck/keys.env` (or
-the file `$FLIGHTDECK_KEYS` names). Each run writes a folder under
+names). `flightdeck config` checks it, and `flightdeck config --example` prints every setting with
+its default. API keys and access tokens come from your environment, else from
+`~/.config/ctf-flightdeck/keys.env` (or the file `$FLIGHTDECK_KEYS` names). Each run writes a
+folder under
 `~/.local/share/ctf-flightdeck/runs/` (`[run] dir`, or `--run-dir`). flightdeck keeps notes of its
 own in `~/.local/state/ctf-flightdeck/` (or under `$XDG_STATE_HOME`). `l1 import` writes manifests
 into `FOLDER/.flightdeck/generated/`.
@@ -1093,7 +1181,7 @@ themes are `NAME.toml` files in a `themes` folder beside the config file, read o
 one. `[plugins.NAME]` tables, each with the `path` of a plugin's folder, are written by
 `flightdeck plugin add` ([Plugins](PLUGINS.md)); to stop allowing a plugin, take its table out.
 
-To remove flightdeck: `pipx uninstall ctf-flightdeck` (or `uv tool uninstall ctf-flightdeck`),
+To remove flightdeck: `uv tool uninstall ctf-flightdeck` (or `pipx uninstall ctf-flightdeck`),
 `docker image rm ctf-flightdeck-lane:1`, and delete those folders.
 
 ### The host governor

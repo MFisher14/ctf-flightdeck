@@ -466,6 +466,8 @@ class Run:
         self.log.close()
         if self.processes is not None:
             self.processes.finish()
+        # copies of dropped files that were never attached (a form closed, an /attach not sent): nothing reads them now
+        shutil.rmtree(self._drops, ignore_errors=True)
 
     def scorecard(self) -> str | None:
         """After close(): the run scored against the board's answers (practice mode), or None
@@ -493,6 +495,8 @@ class Run:
             adder=self.add_challenge if self.by_hand else None,
             paster=self.paste_image if self.by_hand else None,
             attacher=self.attach_files if self.by_hand else None,
+            stager=self.stage_files if self.by_hand else None,
+            unstager=self.unstage_files if self.by_hand else None,
         )
         self.stopper = app.stop_run  # the event's end under autopilot: quit as the player would, without asking
         return app
@@ -748,6 +752,7 @@ class Run:
             item = load_challenge(handout)
         except (AddError, BoardError) as exc:
             return False, str(exc)
+        self._attached(files)
         self._folders[handout.name] = _mtime(handout)
         self.driver.files[challenge_id] = item.challenge.files
         self.deck.challenges[challenge_id].files = item.challenge.files
@@ -778,6 +783,39 @@ class Run:
 
         return clipboard_image(self.dir / "pasted")
 
+    @property
+    def _drops(self) -> Path:
+        """Where the copies of dropped files are kept: in the run folder, by its full path
+        even when the run folder was given as a relative one (--run-dir runs). The console
+        writes a copy's path on the command bar, and /attach reads only a full path as a file."""
+        return (self.dir / "dropped").resolve()
+
+    def stage_files(self, files: Sequence[Path]) -> list[Path]:
+        """A drop the console took: copies of its files in the run folder (addchallenge.stage;
+        AddError when one cannot be copied), which are what is attached, each named by its
+        full path. The file behind a drop may be gone before the player presses the key that
+        attaches it. It copies, so the console calls it in a thread."""
+        from .addchallenge import stage
+
+        return stage(self._drops, files)
+
+    def unstage_files(self, files: Sequence[Path]) -> None:
+        """Remove the copies among `files` that stage_files made: they are attached, or the
+        player took them back. A file that is no such copy is left alone (addchallenge.unstage)."""
+        from .addchallenge import unstage
+
+        unstage(self._drops, files)
+
+    def _attached(self, files: Sequence[Path]) -> None:
+        """The board has `files` now: the copies of a drop among them go from the run folder.
+        In a thread that nothing waits for (a folder may be big, and what the player is told
+        must not wait for it); with no such copy, nothing is started."""
+        from .addchallenge import staged
+
+        copies = staged(self._drops, files)
+        if copies:
+            asyncio.get_running_loop().run_in_executor(None, self.unstage_files, copies)
+
     async def _add_now(self, new) -> tuple[bool, str]:
         from .addchallenge import AddError, create
 
@@ -788,6 +826,7 @@ class Run:
         # the folder watch may have released it while this waited for the loop: on the board either way
         if folder.name not in self.scan_board() and self._handouts.get(folder.name) != folder:
             return False, f"{_show(folder)} was written but could not be added: the warning above says why"
+        self._attached(new.files)
         files = len(self.driver.files.get(folder.name, ()))
         if not files and not new.urls:  # the lane has the description and nothing else: said, so it is no surprise
             return True, (f"added {folder.name} with NO file and no target: its lane has only the description. "

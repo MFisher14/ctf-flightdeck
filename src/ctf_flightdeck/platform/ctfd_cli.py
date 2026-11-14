@@ -37,7 +37,7 @@ def pull(
         typer.Argument(metavar="DEST", file_okay=False, help="The board folder: new or empty, or one pulled from this CTFd before (a re-pull adds what is new)."),
     ],
     token_env: Annotated[
-        str, typer.Option("--token-env", help="The environment variable that holds your CTFd API token (its name, not the token).")
+        str, typer.Option("--token-env", help="The environment variable that holds your CTFd access token (its name, not the token).")
     ] = "CTFD_TOKEN",
     event: Annotated[
         str | None,
@@ -54,7 +54,7 @@ def pull(
     """Pull the board from CTFd: a folder per challenge with its challenge.json and files.
 
     Exit status 1 when some challenges could not be pulled (each is named, with the reason;
-    pull again to retry them). 2 when the pull could not start or finish (a refused token,
+    pull again to retry them). 2 when the pull could not start or finish (a refused access token,
     CTFd not answering, nothing to pull, a flag format other than the board's): what was
     written stays, each challenge left out so far is named, and pulling again goes on from
     there.

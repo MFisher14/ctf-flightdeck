@@ -2,7 +2,9 @@
 
 > A terminal harness for playing capture-the-flag (CTF) events with AI agents under a human's control. It pulls the board, runs the player's own no-model solvers, starts an agent lane per challenge, shows every lane on one console with alerts and one-key interventions, and submits approved flags. Python 3.12+, MIT, on PyPI as `ctf-flightdeck`; the command is `flightdeck`.
 
-Install: `pipx install ctf-flightdeck` or `uv tool install ctf-flightdeck`. Try with nothing installed and nothing spent: `uvx ctf-flightdeck mock`.
+Install: `uv tool install ctf-flightdeck` (recommended: uv brings the Python it needs), or `pipx install ctf-flightdeck` with Python 3.12+. Try with nothing installed and nothing spent: `uvx ctf-flightdeck mock`.
+
+First run: `flightdeck` alone, at a terminal, opens a home screen whose "Get started" form sets it up (the model API, its API key, the models, Docker or host) and then offers the practice set. The setup form came after 0.4.0: on 0.4.0 "Get started" asks the same at the prompt and then sets up an event, and `flightdeck init`, `flightdeck image build` and `flightdeck practice` are the way to the practice set. With no terminal it asks nothing: `flightdeck init` with every answer as an option writes the config, the API key goes in the environment or the keys file (never on a command line), and `flightdeck doctor` ends with one line saying how many things are left to fix, or `Ready` and the next command (exit status 1 while something a run needs is missing).
 
 Commands that are safe to run unattended: `flightdeck --help`, `flightdeck doctor`, `flightdeck config --example`, `flightdeck models`, `flightdeck mock --screenshot DIR`. Commands that spend money on a model API: `flightdeck practice`, `flightdeck play`, and `flightdeck start` once it launches (it sets up an event by asking questions, so it needs a person at the terminal, or every answer as an option and the token through `--token-env NAME` or `--token-stdin`). `flightdeck play --event` talks to a live CTF platform and must follow that event's rules.
 
@@ -13,8 +15,8 @@ flightdeck has no telemetry, no account and no server of its own. It contacts on
 ## Use it
 
 - [README](https://github.com/MFisher14/ctf-flightdeck/blob/main/README.md): what it is, the quickstart, privacy, how to contribute
-- [Player's guide](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/GUIDE.md): Docker or host, models and keys, the console (its layouts and themes), boards, solvers, events and teams, coding-agent lanes, reports
-- [Model APIs](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODEL-APIS.md): providers, keys, prices, fallbacks, fast mode
+- [Player's guide](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/GUIDE.md): install and first run, the words flightdeck uses (a glossary), Docker or host, models and API keys, the console (its layouts and themes), boards, solvers, events and teams, coding-agent lanes, reports
+- [Model APIs](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODEL-APIS.md): providers, API keys, prices, fallbacks, fast mode
 - [Models](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/MODELS.md): which model for which job and which machine, with measurements
 - [Boards](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/BOARDS.md): the board folder, `challenge.json`, the event profile `event.toml`
 - [Solvers](https://github.com/MFisher14/ctf-flightdeck/blob/main/docs/SOLVERS.md): L1 packs of no-model solvers, manifests, build mode

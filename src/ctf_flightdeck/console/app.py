@@ -86,6 +86,8 @@ class FlightdeckApp(App[None]):
         adder: Callable[[object], Awaitable[tuple[bool, str]]] | None = None,
         paster: Callable[[], object] | None = None,
         attacher: Callable[[str, list], Awaitable[tuple[bool, str]]] | None = None,
+        stager: Callable[[list], list] | None = None,
+        unstager: Callable[[list], None] | None = None,
         welcome: bool = False,
         palette: themes.Palette | None = None,
         themes_folder: Path | None = None,
@@ -121,6 +123,13 @@ class FlightdeckApp(App[None]):
         # a worker, like the adder: each makes its copy in a thread, so neither holds the keys up
         self.attacher = attacher
         self.adder = adder  # /new: puts a challenge the player hands over on the board (a folder board's run; None otherwise)
+        # A drop: `stager` copies its files into the run's folder and returns the copies, which are what is attached
+        # (the file behind a drop may be gone before the key that attaches it); `unstager` removes copies that will
+        # not be. Both work on files, so each is called in a thread (stage, unstage). None: a dropped file is
+        # attached from where it is (a console with no run folder).
+        self.stager = stager
+        self.unstager = unstager
+        self._staging = asyncio.Lock()  # one drop is copied at a time, in the order they came
         self.config_path = config_path  # the player's config file, named by /config ("": none, as in the mock)
         self._exiting = False
         self.stopped_by: signal.Signals | None = None  # the signal that stopped the run, if one did
@@ -306,9 +315,14 @@ class FlightdeckApp(App[None]):
         """Files dropped on the terminal arrive as pasted paths, or, from a terminal with no
         bracketed paste, as the same text typed all at once (take_keys). Wherever the focus
         is, they go where files belong (take_drop) instead of into whatever widget had the
-        focus; any other paste, and any other key, goes on as usual."""
-        if isinstance(event, events.Paste) and not event.is_forwarded and self.take_drop(event.text):
-            return
+        focus; any other paste, and any other key, goes on as usual. A paste that reads as
+        dropped files, one of which is not on this machine, also gets a line that says why
+        (say_not_there), and a paste of nothing is the terminal's paste key pressed on a
+        clipboard that holds no text (empty_paste)."""
+        if isinstance(event, events.Paste) and not event.is_forwarded:
+            if self.empty_paste() if event.text == "" else self.take_drop(event.text):
+                return
+            self.say_not_there(event.text)  # and the text goes on, as any paste
         if isinstance(event, events.Key) and not event.is_forwarded:  # (forwarded: one a widget passed back up)
             if event is self._typing:  # a key that was held, back to be typed: the next one once this one has acted
                 self._typing = None
@@ -324,12 +338,14 @@ class FlightdeckApp(App[None]):
         """Whether `event` is held as part of a burst of typed text that may be a dropped
         path. A burst starts at a key a path starts with (PATH_STARTS) that no key came just
         before (a path in the middle of text that arrives all at once is text), and takes
-        every key of text that comes within BURST_GAP of the one before. When no more come it is a drop
-        only if all of it together is paths of files that exist (addchallenge.dropped) and it
-        is at least BURST_MIN characters; any other burst is typed, in order, as if it had
-        never been held (at most BURST_GAP late). A key that is not text (Enter, an arrow)
-        ends a burst as typing. Nothing a player types is read for paths: no one types a path
-        that exists at 50 keys a second."""
+        every key of text that comes within BURST_GAP of the one before. When no more come
+        it is a drop only if all of it together is paths of files that exist
+        (addchallenge.dropped) and it is at least BURST_MIN characters. A burst that reads
+        as dropped files of which one is not there is said (say_not_there) and is a paste of
+        that text: no key of it acts. Any other burst is typed, in order, as if it had never
+        been held (at most BURST_GAP late). A key that is not text (Enter, an arrow) ends a
+        burst as typing. Nothing a player types is read for paths: no one types a path that
+        exists at 50 keys a second."""
         from ..addchallenge import MAX_DROP
 
         if not (self.key_drops if self.key_drops is not None else not self.is_headless):
@@ -414,7 +430,49 @@ class FlightdeckApp(App[None]):
             if not self.take_drop(text):  # not taken (take_drop said why): text for a field that has the focus, as a paste is
                 await super().on_event(events.Paste(text))
             return
+        if len(text) >= BURST_MIN and self.say_not_there(text):
+            # a dropped file that is not there (said): text for a field that has the focus, and none of its keys acts
+            await super().on_event(events.Paste(text))
+            return
         self._type(keys)
+
+    def empty_paste(self) -> bool:
+        """Whether a paste of nothing was taken. A terminal that sends one (Windows Terminal
+        and Alacritty do) is saying its paste key was pressed and the clipboard holds no
+        text: nearly always an image. In the /new form that is ctrl+v, so the image is read
+        from the clipboard with the system's own tool; anywhere else on a board that takes
+        files, a line says where an image goes. It is never taken for anything on a board
+        that takes none."""
+        from .screens import NewChallengePrompt
+
+        if self.adder is None:
+            return False
+        if isinstance(self.screen, NewChallengePrompt):
+            self.screen.action_paste_image()
+        else:
+            self.say("nothing to paste: the clipboard holds no text. A screenshot on it: /new, then ctrl+v in the form; "
+                     "a file: drag it onto this window")
+        return True
+
+    def say_not_there(self, text: str) -> bool:
+        """Whether `text` reads as dropped files of which one is not on this machine, on a
+        board that takes files: the console then says why, and what works instead
+        (addchallenge.not_there_line), in the /new form when it is open. The text itself is
+        left to go on as the paste it is."""
+        from ..addchallenge import not_there_line
+        from .screens import NewChallengePrompt
+
+        if self.adder is None:
+            return False
+        form = self.screen if isinstance(self.screen, NewChallengePrompt) else None
+        line = not_there_line(text, choose="press ctrl+o to choose it" if form else "type /attach with no file to choose it")
+        if not line:
+            return False
+        if form is not None:
+            form.problem(line)
+        else:
+            self.warn(line)
+        return True
 
     def take_drop(self, text: str) -> bool:
         """Whether `text` was files dropped (or pasted) on the console, now taken. Only a
@@ -424,10 +482,15 @@ class FlightdeckApp(App[None]):
         when that loses nothing: the bar is empty (the /attach then names the challenge Enter
         attaches to: the one selected) or already holds an /attach. What the player typed
         there is never replaced: the paste then goes on as text. A file that cannot be
-        attached is not taken, and the console says why."""
+        attached is not taken, and the console says why.
+
+        A drop that is taken is copied into the run's folder at once, off the UI thread
+        (stage), and the copy is what the form attaches or the /attach names: the file
+        behind a drop may be a temporary one (a screenshot's thumbnail), gone by the time
+        the player presses the key that attaches it."""
         from textual.widgets import Input, TextArea
 
-        from ..addchallenge import dropped, quote, refusal, size_text
+        from ..addchallenge import dropped, refusal, size_text
         from .screens import NewChallengePrompt
 
         files = dropped(text)
@@ -440,7 +503,7 @@ class FlightdeckApp(App[None]):
                           + ("comes from the platform" if self._ticker is None else "is the mock's"))
             return False
         if isinstance(screen, NewChallengePrompt):
-            return screen.add_files(files)
+            return screen.add_dropped(files)
         bar = screen.query("#bar-input")
         if not bar:
             return False
@@ -452,26 +515,92 @@ class FlightdeckApp(App[None]):
         if not files:
             return False
         field = bar.first()
+        if not self._bar_takes(field):
+            if screen.focused is not field:  # the paste goes to whatever has the focus, which shows nothing: say what to do
+                self.warn(self._bar_full(files))
+            return False
+        if self.stager is None:
+            self._onto_bar(screen, files)
+        else:
+            self.say("copying " + ", ".join(f"{file.name} ({size_text(file)})" for file in files) + "...")
+            self.run_worker(self._drop_onto_bar(screen, files), exclusive=False)
+        return True
+
+    @staticmethod
+    def _bar_takes(field) -> str:
+        """How the command bar would take dropped files now: "more" (it holds an /attach,
+        and they are added to it), "new" (nothing is typed, or the start of that very
+        command: nothing is lost), or "" (it holds what the player typed)."""
         typed = field.value.strip()
-        count = f"{len(files)} file{'' if len(files) == 1 else 's'}"
+        if typed.split(maxsplit=1)[:1] == ["/attach"]:
+            return "more"
+        return "new" if "/attach".startswith(typed) else ""
+
+    @staticmethod
+    def _bar_full(files: list) -> str:
+        return (f"{len(files)} file{'' if len(files) == 1 else 's'} not taken: the command bar holds what you typed. "
+                f"Send or clear it, then drop the file{'' if len(files) == 1 else 's'} again")
+
+    def _onto_bar(self, screen: Screen, files: list) -> bool:
+        """Put dropped files onto `screen`'s command bar as an /attach, and say so; False
+        when the bar holds what the player typed (_bar_takes)."""
+        from ..addchallenge import quote, size_text
+
+        field = screen.query("#bar-input").first()
+        how = self._bar_takes(field)
+        if not how:
+            return False
         got = ", ".join(f"{file.name} ({size_text(file)})" for file in files)  # the drop landed: which files, how big
         quoted = " ".join(quote(file) for file in files)
-        if typed.split(maxsplit=1)[:1] == ["/attach"]:
-            field.value = f"{typed} {quoted} "
+        if how == "more":
+            field.value = f"{field.value.strip()} {quoted} "
             self.say(f"got {got}: added to the /attach in the command bar, Enter attaches")
-        elif "/attach".startswith(typed):  # nothing typed, or the start of this very command: nothing is lost
+        else:
             target = self._selected_challenge(getattr(screen, "lane_id", None) or getattr(screen, "selected_lane", None))
             field.value = f"/attach {target} {quoted} " if target else f"/attach {quoted} "
             self.say(f"got {got}: press Enter to attach to {target} (or change the name in the command bar)" if target
                      else f"got {got}: type the challenge's name after /attach, then Enter")
-        else:
-            if screen.focused is not field:  # the paste goes to whatever has the focus, which shows nothing: say what to do
-                self.warn(f"{count} not taken: the command bar holds what you typed. Send or clear it, then drop the "
-                          f"file{'' if len(files) == 1 else 's'} again")
-            return False
         field.focus()
         field.cursor_position = len(field.value)
         return True
+
+    async def _drop_onto_bar(self, screen: Screen, files: list) -> None:
+        """A drop outside the /new form, in a worker: copy its files into the run's folder,
+        then put the copies onto the command bar (_onto_bar). A copy that fails is said with
+        its reason. The player may have typed, or opened something, while it was made: what
+        they typed is still never replaced, and the copies are removed again."""
+        from ..addchallenge import AddError
+
+        try:
+            copies = await self.stage(files)
+        except AddError as exc:  # a file that could not be copied, and why
+            self.warn(f"not attached: {exc}")
+            return
+        except Exception as exc:  # a bug: said, and the console goes on
+            self.warn(f"not attached: {type(exc).__name__}: {exc}")
+            return
+        if self.screen is screen and self._onto_bar(screen, copies):
+            return
+        self.unstage(copies)
+        self.warn(self._bar_full(files) if self.screen is screen else
+                  f"{len(files)} file{'' if len(files) == 1 else 's'} not taken: the screen changed while "
+                  f"{'it was' if len(files) == 1 else 'they were'} copied. Drop {'it' if len(files) == 1 else 'them'} again")
+
+    async def stage(self, files: list) -> list:
+        """Copies of dropped files in the run's folder (the stager, in a thread: a file may
+        be big), which are what is attached; without a stager, the files themselves. One
+        drop is copied at a time, in the order they came (a terminal may send three files as
+        three pastes). AddError names a file that cannot be copied."""
+        if self.stager is None:
+            return files
+        async with self._staging:
+            return await asyncio.to_thread(self.stager, files)
+
+    def unstage(self, files: list) -> None:
+        """Remove copies `stage` made that will not be attached, in a thread (a folder may be big)."""
+        if self.unstager is not None and files:
+            unstager, copies = self.unstager, list(files)
+            self.run_worker(lambda: unstager(copies), thread=True, exclusive=False)
 
     async def pick_files(self, *, many: bool = True, warn: Callable[[str], None] | None = None) -> list:
         """The operating system's file window (filepick.choose), in a thread so lanes go on

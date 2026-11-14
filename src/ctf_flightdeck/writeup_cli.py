@@ -56,7 +56,7 @@ def writeups(
         str | None,
         typer.Option(
             "--polish", metavar="MODEL",
-            help="Have MODEL tidy the prose, through the API in your config (spends tokens). It never sees "
+            help="Have MODEL tidy the prose, through the model API in your config (spends model tokens). It never sees "
             "the run's flags, commands or outputs.",
         ),
     ] = None,

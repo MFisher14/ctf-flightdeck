@@ -155,7 +155,9 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
     of its own). Files are attached by handing them over: ctrl+o (the file window), ctrl+v
     (the clipboard's image), or a drop, which arrives as a paste that is only paths, or as
     the same text typed all at once (FlightdeckApp.take_drop, take_keys); the line under the
-    box shows each one. A terminal may keep a drop to itself: the form says ctrl+o for that.
+    box shows each one. A dropped file is copied into the run's folder at once, and the copy
+    is what is attached (add_dropped). A terminal may keep a drop to itself: the form says
+    ctrl+o for that.
 
     ctrl+s checks the challenge and hands it to `adder`, which copies the files off the UI
     thread. The form closes once the challenge is added, with what to tell the player (None:
@@ -194,27 +196,40 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
         self.adder = adder  # async: puts the challenge on the board; (whether it was taken, what to tell the player)
         self.files: list[Path] = []  # what is attached, in the order it was handed over
         self.adding = self.choosing = self.pasting = False  # what is going on off the UI thread
+        self.dropped: dict[Path, Path] = {}  # an attached copy of a dropped file in the run's folder: the file it was dropped as
+        self.copying: list[Path] = []  # dropped files whose copy is being made (add_dropped)
 
     def _say(self, text: str, style: str = "") -> None:
         """The line over the keys: a problem (in the warning colour), or with a style, what is going on."""
         self.query_one("#new-problem", Static).update(Text(text, style=style) if style else Text(text))
 
+    def problem(self, text: str) -> None:
+        """Say `text` on the form's own line, as a problem (the console's status line is under the form)."""
+        self._say(text)
+
+    def _refused(self, file: Path, beside: list[Path]) -> str | None:
+        """Why `file` cannot be attached to this challenge beside the files in `beside`, or None."""
+        from ..addchallenge import CHALLENGE_FILE, refusal
+
+        why = refusal(file)
+        if why is None and file.name == CHALLENGE_FILE:
+            why = f"{file}: a handout file cannot be named {CHALLENGE_FILE}; rename it"
+        if why is None and any(other.name == file.name for other in beside):
+            why = f"{file}: a file named {file.name} is already attached; rename one"
+        return why
+
     def add_files(self, files, *, said: str = "") -> bool:
-        """Attach files the player handed over (a drop, the file window, the clipboard's
-        image). One that cannot be attached is not, and the form says why (addchallenge.refusal).
-        False when nothing in `files` was taken."""
-        from ..addchallenge import CHALLENGE_FILE, refusal, size_text
+        """Attach files the player handed over (the file window, the clipboard's image, a
+        drop's copies). One that cannot be attached is not, and the form says why
+        (addchallenge.refusal). False when nothing in `files` was taken."""
+        from ..addchallenge import size_text
 
         taken, known, problems = [], 0, []
         for file in files:
             if file in self.files:
                 known += 1
                 continue
-            why = refusal(file)
-            if why is None and file.name == CHALLENGE_FILE:
-                why = f"{file}: a handout file cannot be named {CHALLENGE_FILE}; rename it"
-            if why is None and any(other.name == file.name for other in self.files):
-                why = f"{file}: a file named {file.name} is already attached; rename one"
+            why = self._refused(file, self.files)
             if why is not None:
                 problems.append(why)
                 continue
@@ -230,12 +245,80 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
             self._say("already attached", theme.GREEN)
         return bool(taken or known)
 
+    def add_dropped(self, files) -> bool:
+        """Attach files dropped on the form (FlightdeckApp.take_drop). Each is checked as any
+        file handed over is; those that may be attached are copied into the run's folder at
+        once, off the UI thread (FlightdeckApp.stage), and the copies are what is attached:
+        a file that is gone before ctrl+s (a screenshot's thumbnail, a terminal's temporary
+        file) is still added. The line under the box names them once they are copied. False
+        when nothing in `files` was taken."""
+        from ..addchallenge import size_text
+
+        app = self.app
+        if app.stager is None:  # no run folder to keep a copy in: attached from where they are
+            return self.add_files(files)
+        taking, known, problems = [], 0, []
+        for file in files:
+            if file in self.files or file in self.copying or any(self.dropped.get(copy) == file for copy in self.files):
+                known += 1
+                continue
+            why = self._refused(file, [*self.files, *self.copying, *taking])
+            if why is not None:
+                problems.append(why)
+                continue
+            taking.append(file)
+        if problems:
+            self._say("not attached: " + "; ".join(problems))
+        elif taking:
+            self._say("copying " + ", ".join(f"{file.name} ({size_text(file)})" for file in taking) + "...", "bold")
+        elif known:
+            self._say("already attached", theme.GREEN)
+        if taking:
+            self.copying.extend(taking)
+            app.run_worker(self._keep(taking, problems, app), exclusive=False)  # the app's worker: it ends when the copy has
+        return bool(taking or known)
+
+    async def _keep(self, files: list[Path], problems: list[str], app) -> None:
+        """Copy dropped files into the run's folder and attach the copies. A copy that fails
+        is said with its reason; copies made for a form that has closed are removed again."""
+        from ..addchallenge import AddError
+
+        failed, copies = "", []
+        try:
+            copies = await app.stage(files)
+        except AddError as exc:  # a file that could not be copied, and why
+            failed = str(exc)
+        except Exception as exc:  # a bug: said, and the console goes on
+            failed = f"{type(exc).__name__}: {exc}"
+        finally:
+            for file in files:
+                self.copying.remove(file)
+        if self not in app.screen_stack:  # the form was closed while they were copied
+            app.unstage(copies)
+            return
+        if failed:
+            problems = [*problems, failed]
+        else:
+            self.dropped.update(zip(copies, files, strict=True))
+            self.add_files(copies)
+            unused = [copy for copy in copies if copy not in self.files]  # refused now: a file of that name came meanwhile
+            for copy in unused:
+                del self.dropped[copy]
+            app.unstage(unused)
+            if unused:
+                return  # add_files said why
+        if problems:
+            self._say("not attached: " + "; ".join(problems))
+
     def action_remove_file(self) -> None:
-        """ctrl+r: take the last attached file off again."""
+        """ctrl+r: take the last attached file off again (and remove the copy of a dropped one)."""
         if not self.files:
             self._say("no file is attached")
             return
-        self._say(f"removed {self.files.pop().name}", theme.GREEN)
+        file = self.files.pop()
+        if self.dropped.pop(file, None) is not None:
+            self.app.unstage([file])
+        self._say(f"removed {file.name}", theme.GREEN)
         self._show_attached()
 
     def action_choose_files(self) -> None:
@@ -263,7 +346,9 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
 
     def action_paste_image(self) -> None:
         """ctrl+v: the image on the clipboard becomes a file, and is attached. The clipboard
-        tool runs in a thread. (Text is pasted the terminal's own way: cmd+v, or ctrl+shift+v.)"""
+        tool runs in a thread. (Text is pasted the terminal's own way: cmd+v, or ctrl+shift+v.)
+        Also what a paste of nothing does (FlightdeckApp.empty_paste): where ctrl+v is the
+        terminal's own paste key, that is all of the key that arrives."""
         if self.paster is None:
             self._say("pasting an image is not available here; drag the file in")
             return
@@ -335,6 +420,9 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
         if self.adder is None:
             self._say("a challenge cannot be added from here")
             return
+        if self.copying:
+            self._say("still copying the files you dropped: press ctrl+s again once the line under the box names them", "bold")
+            return
         name = " ".join(self.query_one("#new-name", Input).value.split())
         points_text = self.query_one("#new-points", Input).value.strip()
         try:
@@ -373,6 +461,8 @@ class NewChallengePrompt(FittedModal, ModalScreen["str | None"]):
     def action_cancel(self) -> None:
         if self.adding:
             self.app.say("still adding the challenge: this line says when it is on the board")
+        else:  # nothing will attach the copies of dropped files now (while it is being added, the adder still reads them)
+            self.app.unstage(list(self.dropped))
         self.dismiss(None)
 
 

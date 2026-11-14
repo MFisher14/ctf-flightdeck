@@ -1332,14 +1332,30 @@ def image_present(image: str) -> bool:
 def report(checks: Sequence[Check], *, agent: str | None = None) -> tuple[str, int]:
     """The checks as lines for the terminal, and the exit status (1 if an essential check
     failed). `agent`: what was checked was for that coding-agent CLI's lanes, so the next
-    step is practice with it."""
+    step is practice with it.
+
+    The last line is the one a player acts on: how many things there are to fix (the FAIL
+    lines, which stop a run) and what to run then, or that the setup is ready and the next
+    command. Warnings are counted on it too, as what they are: nothing a run waits for."""
     lines = []
     for check in checks:
         mark = "ok  " if check.ok else ("FAIL" if check.essential else "warn")
         lines.append(f"{mark} {check.name}: {check.detail}")
         if not check.ok and check.fix:
             lines.append(f"     fix: {check.fix}")
-    failed = any(not c.ok and c.essential for c in checks)
+    failed = sum(1 for c in checks if not c.ok and c.essential)
+    warned = sum(1 for c in checks if not c.ok and not c.essential)
+    warnings = f"{warned} warning{'' if warned == 1 else 's'}"
+    again = "flightdeck doctor" + (f" --agent {agent}" if agent else "")
     practice = "flightdeck practice" + (f" --agent {agent}" if agent else "")
-    lines.append("" if failed else f"Ready. Try `{practice}`.")
-    return "\n".join(lines).rstrip() + "\n", 1 if failed else 0
+    if failed:
+        last = (f"{failed} thing{'' if failed == 1 else 's'} to fix before a run: the FAIL line{'' if failed == 1 else 's'} above. "
+                f"Then run `{again}` again.")
+        if warned:
+            last += f" ({warnings} besides: a run does not wait for {'it' if warned == 1 else 'them'}.)"
+    elif warned:
+        last = f"Ready, with {warnings} above that a run does not wait for. Try `{practice}`."
+    else:
+        last = f"Ready. Try `{practice}`."
+    lines.append(last)
+    return "\n".join(lines) + "\n", 1 if failed else 0
