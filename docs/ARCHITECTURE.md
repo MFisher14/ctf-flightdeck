@@ -755,7 +755,8 @@ Nothing of a plugin is imported, and no third-party code is loaded for one.
   no link), reads it back with `manual.load_challenge`, and renames it into the board. One
   that fails is left out and named. `plugin.json` (written atomically) maps board ids to the
   platform's refs and names the plugin and the address; `load_refs` refuses another plugin's
-  or another address's.
+  or another address's. A pull lands holding a lock on the board folder (flock), and reads
+  `plugin.json` again under it, so two pulls that overlap add no challenge twice.
 - **In a run** (`plugin_run.PluginLink`, built in `prepare_run` after `_plugin_first` pulled
   the board or loaded its refs and read the solved list once): the deck's submitter when the
   submit policy uses the platform. `work()` sends one flag at a time and applies the word

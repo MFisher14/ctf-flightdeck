@@ -14,7 +14,10 @@ and each board id's ref, the platform's own id for the challenge that a submit i
 
 A folder that holds another plugin's board, a board from another address, or challenges
 flightdeck did not pull through the plugin is refused: flags would go to the wrong place.
-A second pull adds only the refs the board does not have yet.
+A second pull adds only the refs the board does not have yet. Two pulls into one board (a
+run's and `flightdeck plugin pull` in another terminal, say) may overlap: each lands its
+challenges holding a lock on the board folder, and reads plugin.json again first, so a ref
+the other one added is not added twice and no ref is lost.
 
 The same writer serves the built-in http platform (platform/http.py), whose caller makes the
 three calls itself: its board's record says "plugin": "http", a name no plugin can take, and
@@ -28,6 +31,8 @@ made in a thread, so a run's console and lanes go on while a large board lands.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import fcntl  # POSIX only: macOS and Linux (Windows through WSL), as flightdeck supports
 import json
 import os
 import shutil
@@ -110,19 +115,42 @@ async def pull_into(caller: PlatformCaller, board: Path, *, plugin: str, url: st
         written.notes = list(reply.notes)
         written.problems = list(reply.problems)  # what the caller itself left out (a file it could not fetch), before the checks here
         # The folders are made in a thread: in a run this is awaited on the console's loop, which every lane shares
-        await asyncio.to_thread(_land, written, reply.challenges, root, files, built, refs, plugin, url, token)
+        await asyncio.to_thread(_land, written, reply.challenges, root, files, built, plugin, url, caller.label, token)
     finally:
         await asyncio.to_thread(shutil.rmtree, staging, ignore_errors=True)
     return written
 
 
-def _land(written: Written, challenges, root: Path, files: Path, built: Path, refs: dict[str, str], plugin: str, url: str,
+def _land(written: Written, challenges, root: Path, files: Path, built: Path, plugin: str, url: str, label: str,
           token: str | None) -> None:
     """Add a pull's new challenges to the board `root`, each built and read back in the staging
     area first (`files`: where the plugin put its downloads; `built`: where a folder is made).
-    `written` takes what was added and what was left out; `refs` the new refs, and plugin.json
-    is written as each folder lands, so a pull that is cut short leaves a board that knows
-    what it has. Blocking work on files: run in a thread (pull_into)."""
+    `written` takes what was added and what was left out. It holds the board's lock, and reads
+    the refs again under it: another pull may have landed while the plugin was pulling.
+    plugin.json is written as each folder lands, so a pull that is cut short leaves a board
+    that knows what it has. Blocking work on files: run in a thread (pull_into)."""
+    with _locked(root):
+        refs = _known(root, plugin, url, label)
+        _land_locked(written, challenges, root, files, built, refs, plugin, url, token)
+
+
+@contextlib.contextmanager
+def _locked(root: Path):
+    """An exclusive lock on the board folder itself (flock on the folder), so no file is added
+    to the board for it. It waits for a pull of another process or thread to land."""
+    try:
+        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        raise PluginError(f"{_show(root)}: cannot open it to lock it ({exc.strerror or exc})") from None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)  # the lock goes with it
+
+
+def _land_locked(written: Written, challenges, root: Path, files: Path, built: Path, refs: dict[str, str], plugin: str,
+                 url: str, token: str | None) -> None:
     _write_state(root, plugin, url, refs)  # the folder is this plugin's board from here on, with nothing in it too
     known = frozenset(refs.values())  # on the board before this pull
     seen = set(known)

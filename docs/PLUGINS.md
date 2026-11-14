@@ -116,7 +116,9 @@ its name starts with the plugin's name in capitals and a `_` (`MYCTF_TOKEN`, `MY
 `-` in the name is `_`). Any other name is refused (`CTFD_TOKEN`, `NPM_TOKEN`, another event's
 token), and so is a variable your config names for a secret of its own (a model key in `[api]`,
 `[fallback]` or `[light]`, the `[notify]` webhook) and a well-known key of another service
-(`OPENAI_API_KEY`), whatever its name.
+(`OPENAI_API_KEY`), whatever its name. A proxy setting is refused too (a plugin called `https`
+never gets `HTTPS_PROXY`), and so is a variable named for another plugin of your config whose
+name starts with this one's (`MY_CTF_TOKEN` is the `my-ctf` plugin's, not the `my` plugin's).
 
 The profile also names the address (`url`), as a CTFd profile does: the plugin is handed your
 token together with that address. flightdeck does not know which site a token is for, so
@@ -164,6 +166,7 @@ variables of yours, when they are set, and nothing else: `PATH`, `HOME`, `LANG`,
 
 Every request has `"api": 1`, the `op`, the event's `name` from the profile as `event`, and its
 `url`. Calls never overlap: a pull, a submit and a read of the solved list each wait their turn.
+A flag that waits for a pull to end says so on its lane; its 30 seconds start when it is sent.
 
 | Call | May take | Answer may be |
 |---|---|---|

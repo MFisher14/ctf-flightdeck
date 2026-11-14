@@ -183,6 +183,37 @@ def test_a_short_plugin_name_does_not_let_a_variable_through_that_only_has_its_l
     assert checked(tmp_path, config, platform="ai", token_env="AI_TOKEN", environ={"AI_TOKEN": "set"}) == ([], [])
 
 
+@pytest.mark.parametrize("plugin, variable", [("https", "HTTPS_PROXY"), ("all", "ALL_PROXY"), ("no", "NO_PROXY"),
+                                              ("https", "HTTPS_PROXY_PASSWORD"), ("ftp", "FTP_PROXY")])
+def test_a_proxy_setting_is_never_a_plugins_token_even_one_its_name_starts(tmp_path, plugin, variable):
+    """A proxy setting holds a proxy's address and often its password: a plugin called https
+    does not get HTTPS_PROXY from a teammate's profile."""
+    config = player_config(tmp_path, plugin)
+    refusals, _ = checked(tmp_path, config, platform=plugin, token_env=variable, environ={variable: "set"})
+    own = plugin.upper()
+    assert refusals == [f"event.token_env names {variable}, a proxy setting, whose value is a proxy's address and often the "
+                        f"password for it, not a token for this platform: flightdeck would hand its value to the {plugin} "
+                        f"plugin. Name the variable that holds your token for it, like {own}_TOKEN"]
+    assert checked(tmp_path, config, platform=plugin, token_env=f"{own}_TOKEN", environ={f"{own}_TOKEN": "set"}) == ([], [])
+
+
+def test_a_plugin_the_player_named_like_a_proxy_setting_still_takes_its_own_token(tmp_path):
+    config = player_config(tmp_path, "http_proxy")
+    assert checked(tmp_path, config, platform="http_proxy", token_env="HTTP_PROXY_TOKEN",
+                   environ={"HTTP_PROXY_TOKEN": "set"}) == ([], [])
+
+
+def test_a_plugins_token_is_never_handed_to_a_plugin_whose_name_is_the_start_of_its_name(tmp_path):
+    """MY_CTF_TOKEN starts with MY_, but it is the my-ctf plugin's token, not the my plugin's."""
+    config = player_config(tmp_path, "my", "my-ctf")
+    refusals, _ = checked(tmp_path, config, platform="my", token_env="MY_CTF_TOKEN", environ={"MY_CTF_TOKEN": "set"})
+    assert refusals == ["event.token_env names MY_CTF_TOKEN, a variable named for the my-ctf plugin of your config, not a token "
+                        "for this platform: flightdeck would hand its value to the my plugin. Name the variable that holds your "
+                        "token for it, like MY_TOKEN"]
+    assert checked(tmp_path, config, platform="my", token_env="MY_TOKEN", environ={"MY_TOKEN": "set"}) == ([], [])
+    assert checked(tmp_path, config, platform="my-ctf", token_env="MY_CTF_TOKEN", environ={"MY_CTF_TOKEN": "set"}) == ([], [])
+
+
 @pytest.mark.parametrize("table, where, what", [
     ('[fallback]\nbase_url = "http://127.0.0.1:11435/v1"\nkey_env = "{v}"\nladder = ["local-model"]\n', "fallback.key_env",
      "a variable for another service's key"),
@@ -534,6 +565,27 @@ def test_a_rate_limited_flag_is_sent_again_after_the_wait_the_plugin_gives(tmp_p
     assert lane.state is LaneState.SOLVED and warnings(deck) == [] and link.told == []
     assert ("the platform rate-limited the submission of t{c0} and did not check it; flightdeck sends it again in 8s "
             "(send 2 of 4)") in notes(lane)
+
+
+def test_a_flag_that_waits_behind_a_pull_says_so_on_the_lane(tmp_path):
+    """Calls to a plugin never overlap, and a pull may take minutes: the lane says why its flag
+    has not gone yet, and a flag that does not wait says nothing of a pull."""
+    deck, link, caller = linked(tmp_path, Verdict("correct"), Verdict("correct"))
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+
+    async def body():
+        caller.running = "pull"
+        deck.report(first.id, TurnReport(action="solve.py", flag="t{c0}"))
+        await settled(link, deck, "c0")
+        caller.running = None
+        deck.report(second.id, TurnReport(action="solve.py", flag="t{c1}"))
+        await settled(link, deck, "c1")
+
+    drive(link, body)
+    assert caller.submits == [("17", "t{c0}"), ("23", "t{c1}")]
+    assert ("the acme plugin is pulling the board; t{c0} goes to the platform when the pull ends (a pull may take up to 300 s, "
+            "and calls to a plugin never overlap)") in notes(first)
+    assert not any("pulling the board" in note for note in notes(second))
 
 
 def test_a_flag_rate_limited_every_time_goes_back_to_the_player_after_three_more_sends(tmp_path):
