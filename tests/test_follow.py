@@ -455,11 +455,12 @@ def test_the_simple_layouts_chat_box_names_the_lane_and_its_finished_line_says_l
         assert shown(app) == "L03" and chat_title(app) == "to L03 · D"
         await type_line(pilot, "/kill park")
         assert region_text(app, "#now").strip() == "killed: by the player; parked   this lane has ended; esc goes back to the lanes"
+        assert chat_title(app) == "L03 has finished"  # no message reaches it now: the box does not name it as one's reader
         await type_line(pilot, "/layout deck")
-        assert chat_title(app) == "to L03 · D" and chat(app).placeholder == BAR  # the same box in both layouts
+        assert chat_title(app) == "L03 has finished" and chat(app).placeholder == BAR  # the same box in both layouts
         assert region_text(app, "#now").strip() == "killed: by the player; parked   this lane has ended; esc goes back to the fleet"
         await type_line(pilot, "/layout simple")
-        assert chat_title(app) == "to L03 · D" and chat(app).placeholder == BAR
+        assert chat_title(app) == "L03 has finished" and chat(app).placeholder == BAR
 
     drive(app, script)
 
