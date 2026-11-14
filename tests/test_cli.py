@@ -666,7 +666,7 @@ def test_the_simple_shots_show_the_same_moments_in_the_simple_layout(default_run
     assert simple_alert.rstrip().splitlines()[-1].strip() == "1-9 answer  x dismiss  enter open  / commands  ? help  q quit"
     lane = screen_text(shot(out, "simple-focus"))
     assert f"─ {selected} · " in lane and "needs you now" in lane and "No other lane needs you" not in lane
-    assert lane.rstrip().splitlines()[-1].strip() == "1-9 answer  esc lanes  / commands  /help all keys  ctrl+o details"
+    assert lane.rstrip().splitlines()[-1].strip() == "1-9 answer  esc lanes  / commands  ? help  ctrl+o details"
     assert "o open  ? help" in screen_text(shot(out, "command-menu"))  # the shots after a simple one are the deck's again
 
 
@@ -703,7 +703,7 @@ def test_the_compact_shots_show_what_needs_you_the_answers_and_each_lanes_state_
         ("take-over", "Take over L"),
         ("challenge-card", "about"),
         ("help", "/redirect"),
-        ("help", "Keys (fleet)"),
+        ("help", "Keys in the lane list"),
     ],
 )
 def test_each_prompt_shot_shows_its_prompt(default_run, moment, shows):

@@ -943,7 +943,15 @@ class FlightdeckApp(App[None]):
         self.push_screen(ChallengeCard(ch, [lane.id for lane in lanes], own, deck.config.team), done)
 
     def action_help(self) -> None:
-        self.push_screen(HelpScreen(mock=self._ticker is not None))
+        """Help for where the player is (`?`, /help; P65): opened from a lane's view it starts
+        with that lane and that view's keys, from the lane list with the selected lane and the
+        list's keys (each view's help_now). The lane's challenge name is challenge text: made
+        safe here, and the dialog draws it as text, never as markup."""
+        where = self.screen if isinstance(self.screen, (FleetScreen, FocusScreen)) else self._fleet
+        lane, keys = where.help_now()
+        name = None if lane is None else f"{lane.id} · {untrusted(self.deck.challenges[lane.challenge_id].name, one_line=True)}"
+        self.push_screen(HelpScreen(mock=self._ticker is not None, view="lane" if isinstance(where, FocusScreen) else "list",
+                                    lane=name, now=keys))
 
     # ------------------------------------------------------------------ interventions
 

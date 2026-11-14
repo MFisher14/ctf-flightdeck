@@ -37,6 +37,11 @@ in it: the files pane once the lane changed a file, the strip on top while anoth
 you, the card while this one does. Its key line is short (SIMPLE_KEY_LABELS). The title is
 the same in both layouts: the lane's model, turns, tokens and idle time are there.
 
+`?` while the chat box is empty opens help, from any pane and in every layout; with text in
+the box it is a question mark (P65). Help then opens on this lane: the keys the simple key line
+has for it now, each with its sentence, and this view's keys before the lane list's
+(help_now, screens.HelpScreen).
+
 In every layout the chat box's border names the lane a message goes to (views.bar_title, P64):
 this lane, another one while a command names it (`/kill L07`), `the run` while a command
 that takes no lane is typed, and `L01 has finished` once the lane has ended and would refuse
@@ -73,10 +78,10 @@ KEY_LABELS = (
 )
 # The compact layout's key line: back, the answers, the commands, the next lane that needs you.
 COMPACT_KEY_LABELS = (("esc", "fleet"), ("1-9 0", "answer"), ("/", "cmd"), ("ctrl+n", "next"))
-# The simple layout's key line: back, the commands, where every key is listed (the chat box
-# takes what is typed, so no key opens help here) and the details switch, which the edge cuts
-# first; the answers lead while the lane has any.
-SIMPLE_KEY_LABELS = (("esc", "lanes"), ("/", "commands"), ("/help", "all keys"), ("ctrl+o", "details"))
+# The simple layout's key line: back, the commands, help (`?` on the empty chat box, P65) and
+# the details switch, which the edge would cut first; the answers lead while the lane has any.
+# These are also the keys help opens on from a lane, in every layout (FocusScreen.help_now).
+SIMPLE_KEY_LABELS = (("esc", "lanes"), ("/", "commands"), ("?", "help"), ("ctrl+o", "details"))
 SIMPLE_ANSWER_LABEL = ("1-9", "answer")
 KEY_MARGIN = 2  # the key line has a margin of one cell each side
 # What the status line says when the details switch is turned (ctrl+o, /details).
@@ -197,7 +202,8 @@ class FocusScreen(Screen, inherit_bindings=False):
 
     def on_mount(self) -> None:
         self._ready = True
-        self.query_one("#chat", CommandBar).field.quick = self._quick
+        field = self.query_one("#chat", CommandBar).field
+        field.quick, field.help = self._quick, self.fd.action_help
         self.query_one("#now", Static).border_title = "needs you now"  # drawn on the calm card's border (_show_card)
         self._fit_layout(self.size.width)
         self.show_lane(self.lane_id, self._first_file)
@@ -238,10 +244,18 @@ class FocusScreen(Screen, inherit_bindings=False):
         while the lane has any."""
         if self.compact:
             return COMPACT_KEY_LABELS
-        if not self.simple:
-            return KEY_LABELS
+        return self._simple_labels() if self.simple else KEY_LABELS
+
+    def _simple_labels(self) -> tuple[tuple[str, str], ...]:
+        """The simple layout's key line for this lane now: the answers first while it has any."""
         lane = self.fd.deck.lanes.get(self.lane_id)
         return ((SIMPLE_ANSWER_LABEL,) if lane is not None and views.quick_answers(lane) else ()) + SIMPLE_KEY_LABELS
+
+    def help_now(self) -> tuple[Lane | None, tuple[str, ...]]:
+        """What help opens on from this view (P65): the lane, and the keys the simple layout's
+        key line has for it now, as that line shows them. In every layout: the deck's and the
+        compact one's lines are not about the lane's state, and help's first rows are."""
+        return self.fd.deck.lanes.get(self.lane_id), tuple(key for key, _ in self._simple_labels())
 
     def _show_keys(self, *, again: bool = True) -> None:
         """Draw the key line; with `again` False, only if its keys changed."""
@@ -417,12 +431,16 @@ class FocusScreen(Screen, inherit_bindings=False):
             self.fd.run_command(event.value, self.lane_id)
 
     def on_key(self, event: events.Key) -> None:
-        """Typing goes to the chat box from any pane (the files list, the diff)."""
+        """Typing goes to the chat box from any pane (the files list, the diff). `?` while the
+        box is empty opens help from there too, as it does in the box (P65)."""
         chat = self.query_one("#chat", CommandBar)
         if event.is_printable and event.character and not chat.field.has_focus:
             event.stop()
             event.prevent_default()
-            chat.start(chat.field.value + event.character)
+            if event.character == "?" and not chat.field.value:
+                self.fd.action_help()
+            else:
+                chat.start(chat.field.value + event.character)
 
     def _quick(self, number: str) -> bool:
         """A digit typed into the empty chat box answers the lane, if it has that answer."""

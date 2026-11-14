@@ -39,17 +39,27 @@ BAR = "a message, or / for commands"
 
 
 class BarInput(Input):
-    """The bar's text field. While it is empty, a digit can answer the lane instead."""
+    """The bar's text field. While it is empty, a digit can answer the lane instead, and `?`
+    opens help (P65): the screen that hosts the bar says how (`quick`, `help`). With anything
+    in the field, a space too, both are text: a message can begin with a `?` typed after a
+    space (what is sent has no blanks at its ends), or pasted."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.quick: Callable[[str], bool] | None = None
+        self.quick: Callable[[str], bool] | None = None  # a digit: True if it answered the lane
+        self.help: Callable[[], None] | None = None  # `?`: open help for where the player is
 
     async def _on_key(self, event: events.Key) -> None:
-        if not self.value and event.character and event.character.isdigit() and self.quick and self.quick(event.character):
-            event.stop()
-            event.prevent_default()
-            return
+        if not self.value and event.character:
+            if event.character.isdigit() and self.quick and self.quick(event.character):
+                event.stop()
+                event.prevent_default()
+                return
+            if event.character == "?" and self.help:
+                event.stop()
+                event.prevent_default()
+                self.help()
+                return
         await super()._on_key(event)
 
 

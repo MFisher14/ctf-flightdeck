@@ -16,7 +16,8 @@ In the simple layout (FlightdeckApp.layout; `deck` is the view as described abov
 board: one list of lanes with fewer columns (views.SIMPLE_LANE_COLUMNS: under 74 columns the
 last action is left out, never the cost), a why line only for a
 lane that needs something, and a key line of the keys that apply to the selected lane now
-(context_keys). Every key still acts, and `?` lists them all. The compact layout wins over both.
+(context_keys). Every key still acts, and `?` lists them all, starting with the ones of that
+key line, each with its sentence (help_now, P65). The compact layout wins over both.
 
 At 64 columns or fewer (views.compact: a phone over SSH) the view is compact: each lane's
 row has what needs you, the lane, its challenge, state and cost; the why line has six rows,
@@ -188,6 +189,7 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     def on_mount(self) -> None:
         self._ready = True
+        self.query_one("#bar", CommandBar).field.help = self.fd.action_help  # `?` in the empty bar, as with no focus on it
         self._fit_layout(self.size.width)
         self._show_keys(self.size.width)
         self._fit_board(self.size.width)
@@ -530,6 +532,15 @@ class FleetScreen(Screen, inherit_bindings=False):
         if lane is None or not views.lane_matches(deck, lane, self.filter_text):
             return None
         return lane
+
+    def help_now(self) -> tuple[Lane | None, tuple[str, ...]]:
+        """What help opens on from this view (P65): the lane the keys act on, and the keys the
+        simple layout's key line has for it now (context_keys), as that line shows them. In
+        every layout: the deck's line has every key and the compact one's is fixed, and help's
+        first rows are the ones that apply to this lane. The lane is the key line's: the
+        selected one, or on the board (the deck layout) its challenge's only lane."""
+        lane = self.bar_lane() if self.board_focused else self.fd.deck.lanes.get(self.selected_lane or "")
+        return lane, tuple(shown for _, shown, _ in context_keys(lane, by_hand=self.fd.adder is not None))
 
     def target_lane(self) -> Lane | None:
         """The lane a key acts on: the selected lane, or the board challenge's only lane.

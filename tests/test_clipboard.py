@@ -25,7 +25,7 @@ from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.commands import BY_NAME
 from ctf_flightdeck.console.fleet import FleetScreen
 from ctf_flightdeck.console.lanelog import RowText
-from ctf_flightdeck.console.screens import KEY_HELP
+from ctf_flightdeck.console.screens import BOTH_KEY_HELP
 from ctf_flightdeck.core.deck import Deck
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Call, Lane
@@ -498,7 +498,7 @@ def test_the_chat_box_keeps_the_focus_through_a_drag_and_a_key_typed_next_lands_
 
 
 def test_help_says_how_to_select_and_copy():
-    keys = dict(KEY_HELP)
+    keys = dict(BOTH_KEY_HELP)  # the keys of both views: the lane list and a lane
     assert keys["mouse drag"] == "Select text: copied as you let go (double-click: a whole entry; triple-click: all)"
     assert keys["ctrl+c"] == "Copy the selected text again; esc takes the selection down. /copy copies with no mouse"
     deck, app, lane, clip = console("deck")
@@ -508,7 +508,7 @@ def test_help_says_how_to_select_and_copy():
         text = " ".join(screen_text(app).split())
         assert "mouse drag Select text: copied as you let go" in text and "ctrl+c Copy the selected text again" in text
 
-    drive(app, script, (160, 60))
+    drive(app, script, (160, 80))  # under the keys of the lane list and of a lane
 
 
 # ---------------------------------------------------------------------- the highlight
