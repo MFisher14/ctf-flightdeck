@@ -181,6 +181,36 @@ def test_closing_the_pair_closes_both_clients():
     asyncio.run(run())
 
 
+class TextOnly:
+    """A model client with chat() and aclose() and nothing that says it can carry an image."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+
+    async def chat(self, *args, **kwargs):
+        return await self.inner.chat(*args, **kwargs)
+
+    async def aclose(self) -> None:
+        await self.inner.aclose()
+
+
+def test_whether_a_session_can_carry_an_image_is_asked_of_the_api_it_is_on_now():
+    async def run():
+        primary = AnthropicClient(claude.base_url, KEY, max_retries=1, backoff=0.001)
+        spare = TextOnly(ModelClient(router.base_url, SPARE_KEY, max_retries=0))
+        client = FallbackClient(primary, spare, LADDER, primary_name="Anthropic", fallback_name="OpenRouter")
+        assert client.image_problem("claude-haiku-5-5", "s") is None  # on Anthropic, which takes one
+        await client.chat("claude-haiku-5-5", list(MESSAGES), [], session_id="s")  # 529 twice: the session moves
+        assert client.moved("s") == "anthropic/claude-haiku-5.5"
+        assert client.image_problem("claude-haiku-5-5", "s") == (
+            "flightdeck's client for OpenRouter (TextOnly) has no way to send an image")
+        assert client.image_problem("claude-haiku-5-5", "another lane") is None  # that one is still on Anthropic
+        await client.aclose()
+
+    with FakeAnthropicServer([OVERLOADED, OVERLOADED]) as claude, FakeModelServer([text_reply("ok")]) as router:
+        asyncio.run(run())
+
+
 def test_apis_are_named_for_the_player():
     assert api_name("anthropic", "https://api.anthropic.com") == "Anthropic"
     assert api_name("openai", "https://openrouter.ai/api/v1") == "OpenRouter"

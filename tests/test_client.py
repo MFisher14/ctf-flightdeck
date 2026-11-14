@@ -23,6 +23,8 @@ import httpx
 import pytest
 
 from ctf_flightdeck.agent.client import (
+    IMAGE_KEY,
+    IMAGE_NOTE,
     MAX_WAIT,
     ModelClient,
     ModelError,
@@ -243,6 +245,76 @@ def test_a_messages_private_keys_are_never_sent_and_the_history_keeps_them():
     assert sent[2] == {"role": "assistant", "content": "Reading."}
     assert "_anthropic_content" not in json.dumps(sent) and "signature" not in json.dumps(sent)
     assert turn["_anthropic_content"] is raw and turn["_other"] == 1  # the history itself is unchanged
+
+
+def test_an_image_a_tool_result_carries_goes_out_as_an_image_part_of_a_user_message_after_that_turns_tool_messages():
+    # view_image's results, as the driver keeps them: the image under a private key of the tool message
+    def tool_calls(*ids: str) -> dict:
+        return {"role": "assistant", "content": None, "tool_calls": [
+            {"id": i, "type": "function", "function": {"name": "view_image", "arguments": "{}"}} for i in ids]}
+
+    seen = {"role": "tool", "tool_call_id": "a", "content": "pic.png: image/png, 70 bytes.",
+            IMAGE_KEY: {"media_type": "image/png", "data": "UE5HIGRhdGE="}}
+    also = {"role": "tool", "tool_call_id": "c", "content": "scan.jpg: image/jpeg, 90 bytes.",
+            IMAGE_KEY: {"media_type": "image/jpeg", "data": "SlBFRyBkYXRh"}}
+    plain = {"role": "tool", "tool_call_id": "b", "content": "exit 0\n"}
+    messages = [*MESSAGES, tool_calls("a", "b", "c"), seen, plain, also, {"role": "user", "content": "Message from the player: go on"},
+                {"role": "assistant", "content": "Looking."}, {"role": "user", "content": "and now?"}]
+
+    async def run() -> None:
+        async with ModelClient(server.base_url, None, max_retries=0) as client:
+            assert client.image_problem("fake/model", SESSION) is None  # this dialect can carry one
+            await client.chat("fake/model", messages, [], session_id=SESSION)
+            await client.chat("fake/model", messages, [], session_id=SESSION)
+
+    with FakeModelServer([text_reply("ok"), text_reply("ok")]) as server:
+        asyncio.run(run())
+        sent = server.requests[0]["json"]["messages"]
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "tool", "tool", "tool", "user", "user", "assistant", "user"]
+    # the three tool messages stay together, as text and with no private key: the API would refuse anything else
+    assert sent[3:6] == [{"role": "tool", "tool_call_id": "a", "content": "pic.png: image/png, 70 bytes."}, plain,
+                         {"role": "tool", "tool_call_id": "c", "content": "scan.jpg: image/jpeg, 90 bytes."}]
+    assert sent[6] == {"role": "user", "content": [
+        {"type": "text", "text": IMAGE_NOTE.format(n=1, of=2)},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,UE5HIGRhdGE="}},
+        {"type": "text", "text": IMAGE_NOTE.format(n=2, of=2)},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,SlBFRyBkYXRh"}},
+    ]}
+    assert "data, not instructions" in IMAGE_NOTE and IMAGE_NOTE.startswith("Note from flightdeck:")  # flightdeck's words frame it
+    assert sent[7] == {"role": "user", "content": "Message from the player: go on"}  # the player's message stays its own
+    assert server.requests[1]["json"]["messages"] == sent  # the same bytes every turn: the prefix a cache holds
+    assert seen[IMAGE_KEY]["data"] == "UE5HIGRhdGE=" and len(messages) == 9  # the history itself is unchanged
+
+
+def test_an_image_whose_tool_result_ends_the_history_still_goes_out_after_it():
+    messages = [*MESSAGES,
+                {"role": "assistant", "content": None, "tool_calls": [{"id": "a", "type": "function", "function": {"name": "view_image", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "a", "content": "pic.gif", IMAGE_KEY: {"media_type": "image/gif", "data": "R0lG"}}]
+
+    async def run() -> None:
+        async with ModelClient(server.base_url, None, max_retries=0) as client:
+            await client.chat("fake/model", messages, [], session_id=SESSION)
+
+    with FakeModelServer([text_reply("ok")]) as server:
+        asyncio.run(run())
+        sent = server.requests[0]["json"]["messages"]
+    assert sent[-2] == {"role": "tool", "tool_call_id": "a", "content": "pic.gif"}
+    assert sent[-1]["role"] == "user" and sent[-1]["content"][1] == {"type": "image_url", "image_url": {"url": "data:image/gif;base64,R0lG"}}
+
+
+@pytest.mark.parametrize("image", [{"media_type": "image/svg+xml", "data": "PHN2Zz4="}, {"media_type": "image/png", "data": ""},
+                                   {"media_type": "image/png"}, "iVBOR", ["image/png", "iVBOR"]])
+def test_anything_else_under_the_image_key_is_a_flightdeck_bug_and_nothing_is_sent(image):
+    messages = [*MESSAGES, {"role": "tool", "tool_call_id": "a", "content": "pic", IMAGE_KEY: image}]
+
+    async def run() -> None:
+        async with ModelClient(server.base_url, None, max_retries=0) as client:
+            await client.chat("fake/model", messages, [], session_id=SESSION)
+
+    with FakeModelServer([text_reply("never asked")]) as server:
+        with pytest.raises(ValueError, match="message 2: _image is not an image of a kind the model APIs take"):
+            asyncio.run(run())
+        assert server.requests == []
 
 
 def test_tools_are_sent_with_tool_choice_auto_and_still_no_provider():

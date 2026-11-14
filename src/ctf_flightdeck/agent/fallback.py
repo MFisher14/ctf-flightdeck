@@ -90,6 +90,20 @@ class FallbackClient:
         moved = self._moved.get(session_id)
         return moved.model if moved is not None else None
 
+    def image_problem(self, model: str, session_id: str) -> str | None:
+        """Why a lane's call cannot carry an image, on the API its session is on now (the
+        fallback, on the model it moved to, once it moved); None when it can. An API whose
+        client does not say cannot."""
+        moved = self._moved.get(session_id)
+        if moved is not None:
+            client, name, model = self.fallback, self.fallback_name, moved.model
+        else:
+            client, name = self.primary, self.primary_name
+        ask = getattr(client, "image_problem", None)
+        if ask is None:
+            return f"flightdeck's client for {name} ({type(client).__name__}) has no way to send an image"
+        return ask(model, session_id)
+
     async def chat(
         self,
         model: str,
