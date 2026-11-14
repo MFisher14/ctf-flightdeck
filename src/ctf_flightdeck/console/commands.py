@@ -52,6 +52,20 @@ SORT_HELP = {
 }
 
 
+# What /copy takes, with the menu's words for each; alone it is the first (views.lane_copy).
+COPY_HELP = {
+    "output": "the last output (also /copy alone)",
+    "command": "that call's command, to paste in a shell",
+    "flag": "the flag that waits for you, else the newest",
+    "all": "the whole transcript, every line",
+}
+COPY_WHAT = tuple(COPY_HELP)
+
+
+def _copies(state: State) -> tuple[Word, ...]:
+    return tuple(Word(what, help) for what, help in COPY_HELP.items())
+
+
 def _layouts(state: State) -> tuple[Word, ...]:
     return tuple(Word(name, LAYOUT_HELP[name] + (" (in use)" if name == state.layout else "")) for name in LAYOUTS)
 
@@ -86,7 +100,8 @@ COMMANDS = (
     Command("pause", "", "pause or resume the lane"),
     Command("takeover", "", "a shell in the lane's workspace; exit it to hand the lane back"),
     Command("diff", "[file]", "show the files the lane changed"),
-    Command("copy", "[output|command|flag|all]", "copy from the lane with no mouse: its last output, that call's command, its flag, or all"),
+    Command("copy", "[output|command|flag|all]", "copy from the lane with no mouse: its last output, that call's command, its flag, or all",
+            words=_copies),
     Command("open", "<lane>", "open a lane in the focus view", words=lambda state: state.lanes),
     Command("note", "<text>", "a note for every lane: running ones read it on their next turn, later ones at their start", lane=False),
     Command("config", "[lanes N|unlimited | submit auto|confirm | file]", "this run's settings: lanes at once, auto approve (submit auto)", lane=False,

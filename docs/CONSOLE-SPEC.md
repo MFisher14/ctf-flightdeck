@@ -140,7 +140,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
     the lane's id, `l1` for L01, or by a word of its challenge's name), the parked and new
     challenges for `/queue` (by id or by a word of the name), the themes for `/theme` (built
     in, then yours, the one in use marked), `simple` and `deck` for `/layout` (the one in use
-    marked), the sort modes for `/sort`, `on` and `off` for `/autopilot`. A word typed whole is
+    marked), the sort modes for `/sort`, `on` and `off` for `/autopilot`, and `output`, `command`,
+    `flag` and `all` for `/copy`, each with what it copies. A word typed whole is
     not listed. While the menu is open it follows the deck: a lane that changes state, a
     challenge that is parked. Other commands list nothing after their name.
   - When what is typed names no command and nothing is listed, the menu stays open with one

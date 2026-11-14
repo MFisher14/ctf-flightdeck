@@ -1412,7 +1412,6 @@ def peek(deck: Deck, lane: Lane | None, rows: int) -> RenderableType:
 
 # ---------------------------------------------------------------------- /copy: a lane's text for the clipboard
 
-COPY_WHAT = ("output", "command", "flag", "all")  # what /copy takes; alone it is `output`
 SHELL_MARK = "$ "  # how every runtime starts the line of a shell call
 
 

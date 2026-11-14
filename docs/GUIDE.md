@@ -431,7 +431,8 @@ status line: what you dragged over is copied when you let go, and the status lin
 triple-click the whole transcript on screen. `ctrl+c` copies the selection again and `esc`
 takes it down. With no mouse, `/copy` copies the lane's last output with its line breaks,
 `/copy command` the command that printed it, `/copy flag` the lane's flag, and `/copy all` the
-whole transcript. A copy shows a credential's name and never its value, as the screen does.
+whole transcript; `/copy ` with a space lists the four, each with what it copies. A copy shows
+a credential's name and never its value, as the screen does.
 
 flightdeck copies through your system's clipboard tool (`pbcopy` on macOS; `wl-copy`, `xclip`
 or `xsel` on Linux) and through the terminal (OSC 52), which is what reaches your machine over
