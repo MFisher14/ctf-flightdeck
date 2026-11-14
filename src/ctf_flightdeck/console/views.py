@@ -1,5 +1,6 @@
 """Rendering for the console: header, board and lane rows, the fleet's "why" line, and the
-focus view's transcript, "needs you now" card, files and diff.
+focus view's transcript (every line: transcript_lines; calm: entries, entry_text), "needs you
+now" card, files and diff.
 
 The console has two layouts (config.LAYOUTS): `deck`, the whole dashboard, and `simple`, which
 shows what needs the player and little else. The functions here that draw differently in
@@ -45,6 +46,7 @@ from ..core.model import (
     Actor,
     Alert,
     AlertKind,
+    Call,
     Challenge,
     ChallengeStatus,
     Event,
@@ -57,7 +59,7 @@ from ..core.model import (
 from ..credentials import named_flags, redact
 from ..runrecord import L1 as BY_L1
 from ..runrecord import Credit, EventLine, Solve, accepted
-from ..text import untrusted
+from ..text import NEWLINE, untrusted
 from . import theme
 from .commands import KEY_COMMAND, lane_id
 
@@ -1139,6 +1141,127 @@ def transcript_lines(deck: Deck, lane: Lane, action: Action) -> list[Text]:
     if action.kind is ActionKind.APPROVAL:
         return [Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (text, theme.PURPLE))]
     return [Text.assemble(("· flightdeck  ", f"bold {theme.BLUE}"), (text, theme.MUTED))]
+
+
+# ---------------------------------------------------------------------- the calm transcript (details off)
+
+SAYS = "says: "  # how a step that is the model's own words starts (agent/driver.py: _step, agent/external.py: report_text)
+_ENTRY_KIND = {
+    ActionKind.MESSAGE: "message",
+    ActionKind.PLAYER: "player",
+    ActionKind.NOTE: "note",
+    ActionKind.ALERT: "alert",
+    ActionKind.APPROVAL: "approval",
+}
+
+
+@dataclass(frozen=True)
+class Entry:
+    """One entry of the calm transcript: one action of the lane's log, or a run of tool calls."""
+
+    first: int  # the index of its first action in the lane's log: its key, which stays as a run grows
+    kind: str  # calls | says | message | player | note | alert | approval
+    actions: tuple[Action, ...]
+
+
+def _is_call(action: Action) -> bool:
+    """A tool call: a step that is not the model's own words."""
+    return action.kind is ActionKind.STEP and not action.text.startswith(SAYS)
+
+
+def calls_of(action: Action) -> tuple[Call, ...]:
+    """The tool calls of a step: every call of its turn (flightdeck's own loop keeps them), or
+    the step itself as one call (a coding-agent CLI's lane reports each call as a step)."""
+    return action.calls or (Call(action.text, action.output),)
+
+
+def entries(actions: Sequence[Action]) -> list[Entry]:
+    """A lane's log as the entries the calm transcript shows, in order. Consecutive tool calls
+    are one entry (a run); anything else (the model's words, a note, an alert, an approval,
+    the player's message or intervention) is an entry of its own and ends the run."""
+    out: list[Entry] = []
+    i = 0
+    while i < len(actions):
+        action = actions[i]
+        if not _is_call(action):
+            kind = "says" if action.kind is ActionKind.STEP else _ENTRY_KIND[action.kind]
+            out.append(Entry(i, kind, (action,)))
+            i += 1
+            continue
+        end = i
+        while end < len(actions) and _is_call(actions[end]):
+            end += 1
+        out.append(Entry(i, "calls", tuple(actions[i:end])))
+        i = end
+    return out
+
+
+def _first_line(text: str) -> tuple[str, int]:
+    """The first line of a text folded to one (untrusted(one_line=True), by this console or by
+    the lane's runtime before it), and how many lines it has after that one. Blank lines at
+    either end are not lines of it."""
+    lines = [line.strip() for line in text.split(NEWLINE.strip())]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return (lines[0][:LINE_CHARS], len(lines) - 1) if lines else ("", 0)
+
+
+def _more_lines(count: int) -> str:
+    return f" …+{count} line{'' if count == 1 else 's'}"
+
+
+def _call_row(deck: Deck, lane: Lane, call: Call, out: Text) -> None:
+    """One tool call on one row: the first line of the call, then of its output, each with
+    how many lines more it has."""
+    first, more = _first_line(untrusted(lane_text(deck, lane, call.text), one_line=True))
+    out.append(first, "bold")
+    if more:
+        out.append(_more_lines(more), theme.MUTED)
+    first, more = _first_line(untrusted(lane_text(deck, lane, call.output), one_line=True))
+    if first:
+        out.append(f" → {first}", theme.MUTED)
+        if more:
+            out.append(_more_lines(more), theme.MUTED)
+
+
+def entry_text(deck: Deck, lane: Lane, entry: Entry) -> Text:
+    """One entry of the calm transcript, its text as the lane's transcript keeps it (lane_text).
+    Each line of it is one row, which the view cuts at its edge: a run of tool calls is two
+    (how many, and the last one, which is what the lane is doing now), anything else is one,
+    with how many lines more it has. The model's words are the exception: the view wraps them."""
+    action = entry.actions[0]
+    out = Text()
+    if entry.kind == "calls":
+        calls = [call for step in entry.actions for call in calls_of(step)]
+        out.append("⏺ ", theme.GREEN)
+        if len(calls) > 1:
+            out.append(f"{len(calls)} tool calls", "bold")
+            out.append("\n  ⎿ ", theme.MUTED)
+        _call_row(deck, lane, calls[-1], out)
+        return out
+    if entry.kind == "message":
+        return transcript_lines(deck, lane, action)[0]
+    if entry.kind == "player":
+        out = transcript_lines(deck, lane, action)[0]
+        more = len(action.output.splitlines())
+        if more:
+            out.append(_more_lines(more), theme.MUTED)
+        return out
+    text = untrusted(lane_text(deck, lane, action.text), one_line=True)
+    if entry.kind == "says":
+        return out.append("⏺ ", theme.TEXT).append(text.removeprefix(SAYS), theme.TEXT)
+    if entry.kind == "approval":
+        return out.append(f"◆ asked you · turn {action.turn}: {text}", theme.MUTED)
+    first, more = _first_line(text)
+    if entry.kind == "alert":
+        style = alert_style(action.alert)
+        return out.append("▲ ", style).append(first, style).append(f" alert · turn {action.turn}", theme.MUTED)
+    out.append("· ", f"bold {theme.BLUE}").append(first, theme.MUTED)  # flightdeck's note
+    if more:
+        out.append(_more_lines(more), theme.MUTED)
+    return out
 
 
 def suggestion_command(key: str, text: str, lane: str | None = None, *, show_lane: bool = True) -> str | None:
