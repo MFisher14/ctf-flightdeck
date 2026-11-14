@@ -3,11 +3,11 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: fourteen proposals, P51 to P64 (2026-11-14)
+## Built, not released: fifteen proposals, P51 to P65 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P51 to P64); the lines for players are under Unreleased in
-[CHANGELOG.md](../CHANGELOG.md). P54 to P62 and P64 were built from the list of what comes next (the
+[DECISIONS.md](DECISIONS.md) (P51 to P65); the lines for players are under Unreleased in
+[CHANGELOG.md](../CHANGELOG.md). P54 to P62, P64 and P65 were built from the list of what comes next (the
 [milestones](https://github.com/MFisher14/ctf-flightdeck/milestones) have the rest).
 
 - **The simple layout** (P51). The console opens on one list of lanes, a short header and the
@@ -89,6 +89,13 @@ Proposals built and waiting for a release, in the order of their numbers in
   the lane a command names while it is typed, and `L04 has finished` or `L04 takes no more
   turns` for a lane that would refuse what is typed. The empty bar reads `a message, or / for
   commands` in both views. Not built: a border colour of its own for each of the three.
+- **`?` opens help for where you are** (P65,
+  [#41](https://github.com/MFisher14/ctf-flightdeck/issues/41)). In a lane, `?` on the empty
+  chat box opens help; with text in the box it is a question mark, and the simple key line
+  there reads `esc lanes  / commands  ? help  ctrl+o details`. Help opens on the lane in front
+  of the player: the keys its key line has, each with its sentence, then the keys of the view
+  it was opened from, the other view's and the ones both have. Not built: `? help` on the
+  deck's and the compact layout's key lines in a lane.
 
 Known limits, each said where it applies:
 
