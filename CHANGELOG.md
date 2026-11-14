@@ -13,6 +13,23 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   `flightdeck http pull` writes the board outside a run. `flightdeck preflight` prints every
   request such a profile makes and where your token goes. The preset has met a stand-in only,
   not a real rCTF yet. A plugin can no longer be named `http`.
+- Instances on demand work with two more CTFd container plugins: `plugin = "ctfd_owl"` and
+  `plugin = "chall_manager"` under `[instances]` in the event profile. Both were built from the
+  plugins' source and have not been run against a real site yet, so try one on a practice
+  challenge first ([BOARDS.md](docs/BOARDS.md#which-plugin)).
+- For a container plugin flightdeck has no name for, `[instances]` can now say which keys of
+  the plugin's answer hold the address, the port and the end (`address_key`, `port_key`,
+  `expires_key`); the end may be a timestamp. A start that answers "done" with no address is
+  followed by a look at the status instead of an error, and a refusal the plugin words as
+  `msg` shows its reason instead of "HTTP 200". A route with `{id}` in its path no longer also
+  sends the number in a body.
+- `plugin = "ctfd_docker"` under `[instances]` is refused: it was a guess that matched no
+  plugin. Write `docker_per_team` for CTFd-Docker-Plugin and its forks.
+- An instance whose start got no answer in time, and that is up when flightdeck asks again
+  within ten minutes, is now taken as the one flightdeck started: it is used and stopped when
+  the challenge is done. Before, it was taken for a teammate's and never stopped, which held
+  one of the team's slots until the site ended it
+  ([BOARDS.md](docs/BOARDS.md#instances-on-demand)).
 - A lane can look at a picture: flightdeck's own lanes have a `view_image` tool that shows the
   model a PNG, JPEG, GIF or WebP file in the lane's workspace, as it is (at most 4.5 MB, never
   scaled down). When your model's API will not take a picture, or the `[fallback]` model a lane

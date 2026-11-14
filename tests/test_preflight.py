@@ -71,7 +71,7 @@ EVENT_CTFD = {
     "team": "true",
 }
 RULES_OPEN = {"ai_allowed": "true", "platform_automation": "true", "live_targets": '"allowed"'}
-INSTANCES = '\n[instances]\nplugin = "ctfd_docker"\n'  # a CTFd container plugin's table, as a profile writes it
+INSTANCES = '\n[instances]\nplugin = "docker_per_team"\n'  # a CTFd container plugin's table, as a profile writes it
 
 
 def toml(event=None, rules=None, policies=None, extra: str = "") -> str:
