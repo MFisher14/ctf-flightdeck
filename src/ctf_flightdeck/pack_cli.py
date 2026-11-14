@@ -70,8 +70,7 @@ def install(
     except packs.PackError as exc:
         _fail(str(exc))
     typer.echo(f"pack: {_show(info.name)}" + (f" {_show(info.version)}" if info.version else "") + f" at {root} ({how})")
-    if info.description:
-        typer.echo(f"  {_show(info.description)}")
+    _echo_about(info)
 
     config_path = None
     loaded = None
@@ -184,8 +183,7 @@ def info_command(
     except (packs.PackError, ManifestError) as exc:
         _fail(str(exc))
     typer.echo(f"pack: {_show(info.name)}" + (f" {_show(info.version)}" if info.version else "") + f" at {info.root}")
-    if info.description:
-        typer.echo(f"  {_show(info.description)}")
+    _echo_about(info)
     typer.echo(f"engines: {len(engines)}")
     typer.echo("setup: " + (" ".join(_show(word) for word in info.setup) if info.setup else "none needed"))
     if info.image is None:
@@ -250,6 +248,16 @@ def _agreed(yes: bool, question: str) -> bool:
 
 def _show(value: object) -> str:
     return untrusted(str(value), one_line=True)
+
+
+def _echo_about(info) -> None:
+    """The pack's description and the flightdeck it needs, under its name."""
+    if info.description:
+        typer.echo(f"  {_show(info.description)}")
+    if info.flightdeck:
+        from . import __version__
+
+        typer.echo(f"  needs flightdeck {info.flightdeck} (you have {_show(__version__)})")
 
 
 def _fail(message: str, *, status: int = 2):

@@ -249,7 +249,8 @@ def engines_folder(pack: Path) -> Path:
     pack.toml names (`engines = "flightdeck"`). A pack that carries files of another tool
     named *.manifest.toml keeps its flightdeck manifests in a folder of their own that way.
     The rest of the pack is still the pack: mounted in an engine's container, and where a
-    manifest's paths may point."""
+    manifest's paths may point. A pack.toml whose `flightdeck` requirement this flightdeck
+    does not meet is a ManifestError (pack.needs_flightdeck), so no engine of it is found."""
     path = pack / PACK_FILE
     if not path.is_file() or path.is_symlink():
         return pack
@@ -259,6 +260,13 @@ def engines_folder(pack: Path) -> Path:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ManifestError(path, None, f"cannot be read as TOML ({untrusted(str(exc), one_line=True)})") from None
+    if "flightdeck" in data:  # a pack made for another flightdeck is not searched: its engines may not run here
+        from ..pack import PackError, needs_flightdeck
+
+        try:
+            needs_flightdeck(data["flightdeck"])
+        except PackError as exc:
+            raise ManifestError(path, None, str(exc)) from None
     name = data.get("engines")
     if name is None:
         return pack
