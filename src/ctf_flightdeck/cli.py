@@ -696,30 +696,27 @@ def init(
         raise typer.Exit(2) from None
     from .agent.workspace import docker_unavailable
     from .config import ConfigError, default_config_path
-    from .keys import KeysError, keys_path, source
+    from .keys import KeysError, keys_path, load_keys, source, value_problem
     from .setup import (
         ANTHROPIC,
         ANTHROPIC_LADDER,
-        BENCHMARK,
-        LOCAL_PROVIDERS,
         PROVIDERS,
         RUNTIME_QUESTION,
         SUGGESTED_LADDERS,
         AnswerError,
-        Answers,
+        answers_for,
         anthropic_fallback,
-        anthropic_prices,
         base_url_answer,
         image_present,
         key_env_answer,
         light_model_answer,
-        mlx_server_command,
         models_answer,
         PROVIDER_MENU,
         provider_answer,
         providers_answer,
         runtime_answer,
-        write_config,
+        server_lines,
+        write_setup,
     )
 
     from .lane import IMAGE as LANE_IMAGE
@@ -754,6 +751,29 @@ def init(
             return source(variable) is not None
         except KeysError:
             return False  # doctor reports the keys file
+
+    def ask_key(variable: str) -> str:
+        """The key for `variable`, pasted at a hidden prompt ("" when the player skips it, or
+        when the keys file could not take it: said, and never asked for then). It is checked
+        as it is given and kept only once the config is (write_setup)."""
+        try:
+            load_keys()
+        except KeysError as exc:
+            typer.echo(f"note: {exc}; so {variable} is not asked for here")
+            return ""
+
+        def proc(typed: str) -> str:
+            if not typed.strip():
+                return ""
+            problem = value_problem(typed)
+            if problem is not None:
+                typer.echo(f"That key {problem}.")  # said here: a hidden prompt's own error gives no reason
+                raise typer.BadParameter(f"the key {problem}")
+            return typed.strip()
+
+        return typer.prompt(f"Paste your key for {variable} (nothing shows as you paste; it goes to your keys file, never "
+                            "into the config; Enter alone skips it for now)",
+                            default="", hide_input=True, show_default=False, value_proc=proc)
 
     target = _path(path or default_config_path())
     if target.exists() and not force:  # said before any question, so no answer is lost
@@ -825,7 +845,6 @@ def init(
         if suggested is not None:
             typer.echo(f"Suggested: {suggested}, {why}. Press Enter to take it, or give your own.")
         ladder = ask(question, models_answer, suggested)
-    prices = anthropic_prices(ladder) if dialect == "anthropic" else {}  # the refusal fallback's models too
     spare, offer = None, ""
     if dialect == "anthropic":
         candidate = anthropic_fallback(ladder)
@@ -852,25 +871,31 @@ def init(
         suggested, why = SUGGESTED_LIGHT[light_choice]
         typer.echo(f"Suggested light model: {suggested}, {why}. Press Enter to take it, or give your own.")
         light_table = light_answers(light_choice, ask("Light model, as your server names it", light_model_answer, suggested))
-    # A local model costs nothing and reports no cost: a dollar cap would only make every lane
-    # stop once to ask whether to carry on without it.
-    dollar_cap = None if provider in LOCAL_PROVIDERS else 2.0
-    from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
     from .light import on_this_machine
 
-    here = dialect == "openai" and on_this_machine(base_url)  # a server on this machine: its replies can take minutes
     mlx_here = provider == "mlx" and on_this_machine(base_url)  # the lanes' MLX server, at whatever port it was given
     if light_table is not None and light_choice == "mlx" and mlx_here and light_table.model == ladder[0]:
         from dataclasses import replace
 
         light_table = replace(light_table, base_url=base_url)  # the one server the player starts serves both
-    answers = Answers(base_url, key_env or "", ladder, lanes_at, max_lanes, dollar_cap=dollar_cap,
-                      provider=dialect, prices=prices, fallback=spare, light=light_table,
-                      timeout=LOCAL_TIMEOUT if here else None, max_tokens=LOCAL_MAX_TOKENS if here else None)
+    answers = answers_for(provider, ladder, lanes_at, base_url=base_url, key_env=key_env or "", max_lanes=max_lanes,
+                          fallback=spare, light=light_table)
+    # The keys the config names that are not set yet (the API's, and the fallback's): asked for
+    # at a terminal, last, so that nothing typed after a key can be taken for one.
+    pasted: dict[str, str] = {}
+    if interactive:
+        for variable in dict.fromkeys(name for name in (answers.key_env, spare.key_env if spare is not None else "") if name):
+            if not known(variable):
+                key = ask_key(variable)
+                if key:
+                    pasted[variable] = key
     try:
-        written = write_config(answers, target, force=force)
+        written = write_setup(answers, target, keys=pasted, force=force)
     except (ConfigError, FileExistsError) as exc:
         fail(str(exc))
+    except KeysError as exc:
+        fail(f"{exc}. No config was written: fix that and run `flightdeck init` again, or skip the key there (Enter) and "
+             "export it instead")
     except OSError as exc:
         fail(f"cannot write {target}: {exc.strerror or type(exc).__name__}")
     typer.echo(f"wrote {written}")
@@ -880,18 +905,8 @@ def init(
         typer.echo(f"warning: {host_warning()}")
     if spare is not None:
         typer.echo(f"with OpenRouter as the fallback ({', '.join(spare.ladder)})")
-    if here:
-        typer.echo(f"lane calls: {LOCAL_TIMEOUT} s per try and replies of up to {LOCAL_MAX_TOKENS} tokens, for a server "
-                   "on this machine: a local model can take minutes for one reply (the default 180 s gave up on Gemma 4 "
-                   f"12B's replies {BENCHMARK}); change timeout and max_tokens under [api]")
-    from .setup import OLLAMA_CONTEXT_NOTE, is_ollama
-
-    if dialect == "openai" and is_ollama(base_url):
-        typer.echo(f"context: {OLLAMA_CONTEXT_NOTE}")
-    if provider == "mlx":
-        typer.echo(f"next: start the MLX server: {mlx_server_command(ladder[0], base_url)}   (thinking off, and a reply cap of "
-                   "8192 tokens instead of its 512: with these, Qwen3.5 9B solved 2 of 4 practice challenges on MLX "
-                   f"{BENCHMARK})")
+    for line in server_lines(answers, provider):  # a server on this machine: its lane calls, Ollama's context, the MLX command
+        typer.echo(line)
     if light_table is not None and light_choice == "mlx":
         import shlex
         from urllib.parse import urlsplit
@@ -916,12 +931,14 @@ def init(
             where = source(variable)
         except KeysError:
             where = None  # a keys file flightdeck refuses to read: doctor says why
-        if where is not None:
+        if variable in pasted:
+            typer.echo(f"key: {variable} is saved in {keys_file}, which only you can read (never shown, never in the config)")
+        elif where is not None:
             shown = keys_file if where == "keys file" else "your environment"
             typer.echo(f"key: {variable} is set in {shown} (its value is never shown or stored)")
         else:
             typer.echo(f"next: put {variable}=<your key> in {keys_file} (chmod 600), or export {variable}=<your key>  "
-                       "(flightdeck never stores it)")
+                       "(the config never holds it)")
     if offer:
         typer.echo(offer)
     if lanes_at == "docker" and not image_present(LANE_IMAGE):  # the image init wrote; a built one needs no step
