@@ -647,7 +647,12 @@ class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
     config) the dialog has no `s` row, and `s` says why instead of doing nothing.
 
     The keys are always on screen: the title and the rows under the list are docked, and the
-    list between them scrolls when the terminal is too short for it (FittedModal)."""
+    list between them scrolls when the terminal is too short for it (FittedModal).
+
+    It answers once (`answered`), and from then on tries nothing and answers nothing: a key
+    typed ahead reaches the dialog after the one that closed it. A cursor key's row is told to
+    the dialog in a message queued behind an esc that was acted on at once, and would be drawn
+    over what the opener put back; a second Enter would close the screen under the dialog."""
 
     DEFAULT_CSS = MODAL_CSS.format(name="Picker") + """
     Picker { align: right middle; background: $background 0%; }
@@ -676,6 +681,7 @@ class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
         drawn in now, where the cursor starts. `note`: one muted line under the list."""
         super().__init__()
         self.what, self.choices, self.in_use, self.preview, self.save_to, self.note = what, choices, in_use, preview, save_to, note
+        self.answered = False
 
     def _row(self, choice: Choice) -> Text:
         text = Text()
@@ -735,9 +741,9 @@ class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
 
     @on(OptionList.OptionHighlighted)
     def _tried(self, event: OptionList.OptionHighlighted) -> None:
-        if not self.query(OptionList) or event.option is not event.option_list.highlighted_option:
-            # the dialog is closing, or the cursor has moved on since: the list starts on its first row, before
-            # on_mount puts it where it belongs
+        if self.answered or not self.query(OptionList) or event.option is not event.option_list.highlighted_option:
+            # the dialog has answered or is closing, or the cursor has moved on since: the list starts on its first
+            # row, before on_mount puts it where it belongs
             return
         self._say("")
         self.preview(str(event.option.id))
@@ -745,19 +751,28 @@ class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
 
     @on(OptionList.OptionSelected)
     def _kept(self, event: OptionList.OptionSelected) -> None:
-        self.dismiss((str(event.option.id), False))
+        self._answer((str(event.option.id), False))
+
+    def _answer(self, answer: tuple[str, bool] | None) -> None:
+        """Close with `answer`, the first time only: dismissing a dialog that is closed already
+        closes the screen under it (and with none under that, stops the console)."""
+        if not self.answered:
+            self.answered = True
+            self.dismiss(answer)
 
     def action_save(self) -> None:
+        if self.answered:
+            return
         option = self.query_one(OptionList).highlighted_option
         if not self.save_to:
             self._say(f"Nothing to save it in: this console has no config file. Enter keeps the {self.what} for this run.")
         elif option is None:
             self._say(f"No {self.what} is chosen yet: move to one with ↑ or ↓.")
         else:
-            self.dismiss((str(option.id), True))
+            self._answer((str(option.id), True))
 
     def action_cancel(self) -> None:
-        self.dismiss(None)
+        self._answer(None)
 
 
 class KillPrompt(ModalScreen[str | None]):

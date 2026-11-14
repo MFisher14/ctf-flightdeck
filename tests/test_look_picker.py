@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 import pytest
+from textual import events
 from textual.widgets import OptionList
 
 from ctf_flightdeck import themes
@@ -45,6 +46,16 @@ async def typed(pilot, app, text: str) -> None:
     app.run_command(text, app.screen.lane_id if isinstance(app.screen, FocusScreen) else None)
     await pilot.pause()
     await pilot.pause()
+
+
+async def at_once(pilot, app, *keys: str) -> None:
+    """Hand the console `keys` with no wait between them, as a terminal does with a held arrow key or with keys typed
+    while a repaint is slow: each is queued before the one before it was acted on. (pilot.press waits after every key,
+    so it never shows what a queued key does to a dialog that has closed.)"""
+    for key in keys:
+        app.post_message(events.Key(key, key if len(key) == 1 else None))
+    for _ in range(4):
+        await pilot.pause()
 
 
 def picker(app) -> Picker:
@@ -166,6 +177,45 @@ def test_the_cursor_draws_the_console_behind_the_list_in_the_theme_it_is_on_and_
             assert app._status == said and config.read_text() == CONFIG  # nothing said, nothing written
 
     asyncio.run(main())
+
+
+@pytest.mark.parametrize("over_a_lane", [False, True], ids=["over the lanes", "over a lane's view"])
+@pytest.mark.parametrize("keys", [("down", "escape"), ("down", "down", "down", "escape"), ("end", "up", "escape")], ids=" ".join)
+def test_esc_typed_right_after_a_cursor_key_still_puts_the_old_theme_back(tmp_path, keys, over_a_lane):
+    """The row the cursor reached is told to the list after esc has closed it: it is not drawn."""
+    config = a_config(tmp_path)
+    deck, app = three_lanes("simple", themes_folder=own_themes(tmp_path), config_path=str(config))
+
+    async def script(pilot):
+        under = await open_focus(pilot, app, "L01") if over_a_lane else app.screen
+        said, before, lines = app._status, screen_colors(app), screen_lines(app)
+        await typed(pilot, app, "/theme")
+        assert cursor(app) == "flightdeck"
+        await at_once(pilot, app, *keys)
+        assert app.screen is under and theme.active() is DEFAULT and app.theme == "fd-flightdeck"
+        assert screen_colors(app) == before and screen_lines(app) == lines  # as it was, to the last cell
+        assert app._status == said and config.read_text() == CONFIG  # nothing said, nothing written
+
+    drive(app, script, SIZE)
+
+
+def test_a_key_typed_right_after_enter_or_s_does_not_change_the_theme_kept(tmp_path):
+    config = a_config(tmp_path)
+    deck, app = three_lanes("simple", themes_folder=own_themes(tmp_path), config_path=str(config))
+
+    async def script(pilot):
+        focus = await open_focus(pilot, app, "L01")
+        await typed(pilot, app, "/theme")
+        await at_once(pilot, app, "down", "enter", "enter")  # the second Enter is for a list that has answered: it closes nothing more
+        assert app.screen is focus and theme.active() is themes.BUILTIN["light"]
+        assert app._status[:2] == ("theme light for this run. To keep it: /theme, then s", "information") and config.read_text() == CONFIG
+        await typed(pilot, app, "/theme")
+        assert cursor(app) == "light"
+        await at_once(pilot, app, "down", "down", "s")
+        assert app.screen is focus and theme.active() is themes.BUILTIN["gruvbox"] and load_console(config).theme == "gruvbox"
+        assert app._status[:2] == (f"theme gruvbox, saved in your config file: {config}", "information")
+
+    drive(app, script, SIZE)
 
 
 def test_enter_keeps_the_theme_for_this_run_and_writes_nothing(tmp_path):
@@ -495,6 +545,27 @@ def test_layout_alone_lists_both_layouts_tries_the_one_under_the_cursor_and_esc_
     drive(app, script, SIZE)
 
 
+@pytest.mark.parametrize("over_a_lane", [False, True], ids=["over the lanes", "over a lane's view"])
+@pytest.mark.parametrize("layout, other", [("simple", "deck"), ("deck", "simple")])
+def test_esc_typed_right_after_a_cursor_key_still_puts_the_old_layout_back(tmp_path, layout, other, over_a_lane):
+    config = a_config(tmp_path)
+    deck, app = three_lanes(layout, config_path=str(config))
+
+    async def script(pilot):
+        under = await open_focus(pilot, app, "L01") if over_a_lane else app.screen
+        said, lines = app._status, screen_lines(app)
+        await typed(pilot, app, "/layout")
+        assert cursor(app) == layout
+        await at_once(pilot, app, "down" if layout == "simple" else "up", "escape")
+        assert app.screen is under and app.layout == layout and screen_lines(app) == lines
+        assert app._status == said and config.read_text() == CONFIG
+        await typed(pilot, app, "/layout")  # and the cursor does still try a layout, when esc does not follow it at once
+        await at_once(pilot, app, "down" if layout == "simple" else "up")
+        assert cursor(app) == other and app.layout == other and screen_lines(app) != lines
+
+    drive(app, script, SIZE)
+
+
 def test_enter_keeps_the_layout_for_this_run_and_s_saves_it(tmp_path):
     config = a_config(tmp_path, CONFIG + '\n[console]\n# layout = "simple"\ntheme = "nord"\n')
     deck, app = three_lanes("simple", config_path=str(config))
@@ -594,6 +665,47 @@ def test_a_picker_hands_each_row_the_cursor_reaches_to_preview_and_answers_with_
         shown = "\n".join(dialog(app))
         assert "Thing" in shown and "one  the first, in use" in shown and "try a thing on the console behind this" in shown
         assert "cannot be used: two.toml: is not a theme^[[2J" in shown and "\x1b" not in shown  # a problem's text is made safe to show
+
+    drive(app, script, SIZE)
+
+
+@pytest.mark.parametrize("keys, answer", [
+    (("down", "escape"), None), (("down", "down", "escape"), None), (("down", "s"), ("three", True)),
+    (("enter", "enter"), ("one", False)), (("down", "enter", "enter"), ("three", False)), (("down", "enter", "up"), ("three", False)),
+    (("down", "s", "enter"), ("three", True)),
+], ids=lambda value: " ".join(map(str, value or ("esc",))))
+def test_a_picker_answers_once_and_tries_nothing_after_it_whatever_keys_were_typed_ahead(keys, answer):
+    """Keys queued with no wait between them: the row a cursor key reached is told to the dialog after the key that
+    closed it was acted on, and a second Enter finds a dialog that has answered. Neither may draw a row over what
+    the opener did with the answer, answer again, or close the screen the dialog was over."""
+    deck, app = three_lanes("simple")
+    seen = []
+    choices = [Choice("one", "the first"), Choice("two", "", "two.toml: is not a theme"), Choice("three", "the third")]
+
+    async def script(pilot):
+        focus = await open_focus(pilot, app, "L01")  # a lane's view: Enter and a cursor key that reach it change no screen
+        app.push_screen(Picker("thing", choices, in_use="one", preview=lambda name: seen.append(("tried", name)),
+                               save_to="/somewhere/config.toml"), lambda given: seen.append(("answer", given)))
+        await pilot.pause()
+        assert seen == [("tried", "one")]
+        await at_once(pilot, app, *keys)
+        assert seen[-1] == ("answer", answer) and [what for what, _ in seen].count("answer") == 1, seen
+        assert app.screen_stack == [app.fleet, focus]  # only the dialog closed
+
+    drive(app, script, SIZE)
+
+
+def test_enter_and_esc_typed_in_one_go_give_a_picker_one_answer_and_close_nothing_else():
+    """Enter's answer comes through the list and esc's does not, so esc may be acted on first: one of them answers."""
+    deck, app = three_lanes("simple")
+    answers = []
+
+    async def script(pilot):
+        app.push_screen(Picker("thing", [Choice("one", "the first"), Choice("two", "the second")], in_use="one", preview=lambda name: None),
+                        answers.append)
+        await pilot.pause()
+        await at_once(pilot, app, "enter", "escape")
+        assert answers in ([None], [("one", False)]) and app.screen_stack == [app.fleet]
 
     drive(app, script, SIZE)
 
