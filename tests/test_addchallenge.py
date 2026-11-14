@@ -572,6 +572,31 @@ def test_an_image_the_model_cannot_read_is_a_warning_and_the_challenge_is_added_
     asyncio.run(main())
 
 
+def test_a_challenge_with_an_image_is_checked_before_the_model_is_asked_to_read_it(tmp_path):
+    """The refusal comes back while the form is open, not as a warning after "reading 1
+    image..." closed it."""
+    shot, twin = tmp_path / "clip.png", tmp_path / "other" / "clip.png"
+    twin.parent.mkdir()
+    for file in (shot, twin):
+        file.write_bytes(PNG)
+
+    async def main():
+        with FakeModelServer([]) as server:
+            run = prepare_run(options(tmp_path, server))
+            run.release()
+            for new, why in [(NewChallenge(name="N" * 121, files=(shot,)), "at most 120 characters"),
+                             (NewChallenge(name="Twins", files=(shot, twin)), "two files named clip.png"),
+                             (NewChallenge(name="Odd", files=(shot,), urls=("http://chal.example.org:1337.",)), "not an address")]:
+                ok, told = await run.add_challenge(new)
+                assert not ok and why in told
+            await asyncio.sleep(0.1)
+            await run.shutdown()
+            run.close()
+            assert server.chats() == [] and not run.deck.challenges and list(run.options.board.iterdir()) == []
+
+    asyncio.run(main())
+
+
 def test_a_path_in_the_middle_of_a_line_stays_in_the_text_quoted_or_escaped_or_bare(tmp_path):
     plain, spaced = tmp_path / "matryoshka.bin", tmp_path / "Screenshot 2026 at 4.38 PM.png"
     plain.write_bytes(b"1")
