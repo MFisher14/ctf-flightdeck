@@ -1553,6 +1553,39 @@ def test_a_file_that_is_gone_after_it_was_dropped_is_still_added_and_still_attac
     in_console(tmp_path, body, busy_lanes())
 
 
+def test_what_the_player_is_told_does_not_wait_for_a_drops_copy_to_be_removed(tmp_path, monkeypatch):
+    import threading
+
+    handout = tmp_path / "disk.img"
+    handout.write_bytes(b"big")
+    go, started, unstage = threading.Event(), threading.Event(), addchallenge.unstage
+
+    def slow(folder, files):  # removing a big folder takes its time
+        started.set()
+        go.wait(5)
+        unstage(folder, files)
+
+    monkeypatch.setattr(addchallenge, "unstage", slow)
+
+    async def body(run, app, pilot):
+        try:
+            await pilot.press(*"/new Disk", "enter")
+            await pilot.pause()
+            form = app.screen
+            await app.on_event(events.Paste(f"{handout} "))
+            await until(pilot, lambda: form.files == [copy_of(run, "disk.img")])
+            await pilot.press("ctrl+s")
+            await until(pilot, lambda: app._status is not None and "added disk: 1 file" in app._status[0])  # said, and the form closed
+            await until(pilot, started.is_set)
+            assert app.screen is not form and copy_of(run, "disk.img").is_file()  # while the copy is still there
+            go.set()
+            await until(pilot, lambda: not copy_of(run, "disk.img").parent.exists())
+        finally:
+            go.set()
+
+    in_console(tmp_path, body, busy_lanes())
+
+
 def test_a_drop_is_copied_off_the_ui_thread_and_ctrl_s_waits_for_it(tmp_path):
     import threading
 

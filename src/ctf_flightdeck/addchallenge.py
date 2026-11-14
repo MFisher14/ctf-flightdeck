@@ -481,14 +481,18 @@ def stage(folder: Path, files: Sequence[Path]) -> list[Path]:
     return copies
 
 
+def staged(folder: Path, files: Sequence[Path]) -> list[Path]:
+    """Those of `files` that are copies `stage` made in `folder`: a file in a numbered folder directly in it."""
+    return [file for file in files if file.parent.parent == folder and file.parent.name.isdigit()]
+
+
 def unstage(folder: Path, files: Sequence[Path]) -> None:
     """Remove the copies among `files` that `stage` made in `folder`, each with its numbered
     folder. Any other path is left alone: only a numbered folder directly in `folder` is
     ever removed, so a file of the player's own that was attached from where it is stays."""
-    for file in files:
-        slot = file.parent
-        if slot.parent == folder and slot.name.isdigit() and not slot.is_symlink():
-            shutil.rmtree(slot, ignore_errors=True)
+    for file in staged(folder, files):
+        if not file.parent.is_symlink():
+            shutil.rmtree(file.parent, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------- the text

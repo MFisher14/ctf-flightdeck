@@ -752,7 +752,7 @@ class Run:
             item = load_challenge(handout)
         except (AddError, BoardError) as exc:
             return False, str(exc)
-        await asyncio.to_thread(self.unstage_files, files)  # the challenge has them: a drop's copies in the run folder go
+        self._attached(files)
         self._folders[handout.name] = _mtime(handout)
         self.driver.files[challenge_id] = item.challenge.files
         self.deck.challenges[challenge_id].files = item.challenge.files
@@ -799,6 +799,16 @@ class Run:
 
         unstage(self.dir / "dropped", files)
 
+    def _attached(self, files: Sequence[Path]) -> None:
+        """The board has `files` now: the copies of a drop among them go from the run folder.
+        In a thread that nothing waits for (a folder may be big, and what the player is told
+        must not wait for it); with no such copy, nothing is started."""
+        from .addchallenge import staged
+
+        copies = staged(self.dir / "dropped", files)
+        if copies:
+            asyncio.get_running_loop().run_in_executor(None, self.unstage_files, copies)
+
     async def _add_now(self, new) -> tuple[bool, str]:
         from .addchallenge import AddError, create
 
@@ -809,7 +819,7 @@ class Run:
         # the folder watch may have released it while this waited for the loop: on the board either way
         if folder.name not in self.scan_board() and self._handouts.get(folder.name) != folder:
             return False, f"{_show(folder)} was written but could not be added: the warning above says why"
-        await asyncio.to_thread(self.unstage_files, new.files)  # the board has them: a drop's copies in the run folder go
+        self._attached(new.files)
         files = len(self.driver.files.get(folder.name, ()))
         if not files and not new.urls:  # the lane has the description and nothing else: said, so it is no surprise
             return True, (f"added {folder.name} with NO file and no target: its lane has only the description. "
