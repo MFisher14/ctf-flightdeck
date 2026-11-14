@@ -9,7 +9,8 @@ problem: report it privately, never in a public issue.
 ## What counts
 
 - **Challenge or platform text that steers flightdeck.** Text from a challenge, a platform (CTFd's
-  challenge data and its answers) or a teammate's synced folder that changes a setting, reaches a
+  challenge data and its answers, and what a plugin says the platform said) or a teammate's
+  synced folder that changes a setting, reaches a
   system prompt, reaches the model as anything but fenced data, is read by a coding-agent CLI as
   its own configuration, or reaches your terminal as an escape sequence.
 - **A lane out of its fence.** A lane or an L1 engine getting out of its Docker container onto
@@ -23,6 +24,14 @@ problem: report it privately, never in a public issue.
 - **A key or token where it should not be**: in the run log (`events.jsonl`), a transcript, a
   report, a writeup draft, the console, or a lane (its commands' environment, its model's
   context). That is every model API key, the CTFd token and everything in your keys file.
+- **A plugin run, or given more, than you allowed** ([docs/PLUGINS.md](docs/PLUGINS.md)). A
+  plugin's program running when your config has no `[plugins.NAME]` table for it, or because an
+  event profile, a board or a challenge named it; flightdeck fetching, installing or updating
+  one; a model API key, or anything of your environment outside the short list that page gives,
+  in the program's environment; an event's token given to another event's plugin; a plugin's
+  output steering flightdeck (a file written outside the board's challenge folders, a path that
+  leaves the staging folder, a link followed, a reply that is taken as a verdict when it is not
+  one of the five words); the token's value shown or logged from something a plugin printed.
 - **A flag sent without your approval when it should have waited.** Every flag waits under
   `submit = "confirm"`, and nothing reaches the platform while an event's submit stage is
   `manual` or `off`. Under auto submit a flag still waits when the platform counts the challenge's
@@ -51,6 +60,13 @@ problem: report it privately, never in a public issue.
 - **A coding-agent CLI's own credential.** The commands `--agent claude` or `--agent codex` runs
   can read that CLI's credential, in Docker too. Give it a key you can revoke, with a low
   spending limit.
+- **What a plugin you added does.** A plugin is a program you chose to run: `flightdeck plugin
+  add` shows what it runs and what it gets, says that it is not sandboxed, and asks. It runs on
+  your machine as you, so it can read your files and use the network, and what it does with the
+  event's token and the flags it is handed is its own work. flightdeck keeps your keys out of
+  its environment; that is not a fence around a program that runs as you. Read a plugin before
+  you add it. A report that a plugin you enabled read or sent something of yours is not a
+  vulnerability report; a plugin that ran without your yes is (above).
 - **What a lane was allowed to reach.** A Docker lane that may reach its challenge's instance
   reaches the hosts and ports in the challenge's `urls`, and a coding-agent lane its CLI's API
   as well. What it does there is its work, and so is what those hosts do with what it sends: an
