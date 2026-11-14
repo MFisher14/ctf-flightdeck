@@ -11,7 +11,7 @@ from ctf_flightdeck.platform.instances import (
     InstanceRefused, Routes, _address, _ends, _within, parse_config,
 )
 
-from fake_ctfd import TOKEN, FakeChallenge, FakeCTFd, Reply
+from fake_ctfd import HANG_UP, TOKEN, FakeChallenge, FakeCTFd, Reply
 
 PLUGIN = {"plugin": "docker_per_team", "types": ["container"]}
 REQUEST = "/containers/api/request"
@@ -254,9 +254,41 @@ def test_no_answer_in_time_says_so_and_that_it_may_have_been_done():
         held.hold = gate
         fake.script("POST", REQUEST, held)
         slow = InstanceClient(fake.base_url, TOKEN, {"boxed": 1}, parse_config(PLUGIN), timeout=0.3)
-        with pytest.raises(InstanceError, match="no answer from the platform to instance start for challenge 1 .*; it may have been done"):
+        with pytest.raises(InstanceError, match="no answer from the platform to instance start for challenge 1 .*; it may have been done") as caught:
             slow.start("boxed")
         gate.set()
+    assert caught.value.maybe_done  # for a run: an instance of this challenge that turns up next is its own
+
+
+@pytest.mark.parametrize(("start", "status", "maybe"), [
+    (HANG_UP, None, True),  # the request went out and the line dropped: done or not, nobody said
+    (Reply(200, "<html>a proxy's page</html>"), None, True),  # an answer, and not the plugin's: the plugin may have acted
+    (Reply(200, {"success": True}), Reply(200, {"status": "Challenge not started"}), True),  # taken, and no address yet
+    (Reply(200, {"success": True}), Reply(403, {"message": "not now"}), True),  # taken, and the status refuses
+    (Reply(400, {"error": "image build failed"}), None, False),  # the plugin said no
+    (Reply(200, {"success": False, "msg": "You have boot Second before."}), None, False),
+    (Reply(302, "<html>log in</html>"), None, False),  # sent to the login page: the plugin was never asked
+    (Reply(200, {"hostname": "h.example.test", "port": 70000}), None, False),  # it runs, at an address flightdeck will not use
+])
+def test_a_failed_start_says_whether_the_platform_may_have_done_it(start, status, maybe):
+    with FakeCTFd(board()) as fake:
+        fake.script("POST", REQUEST, start)
+        if status is not None:
+            fake.script("POST", STATUS, status, status, status)
+        with pytest.raises(InstanceError) as caught:
+            client(fake).start("boxed")
+        assert caught.value.maybe_done is maybe, str(caught.value)
+
+
+def test_a_start_that_never_left_was_not_done():
+    with FakeCTFd(board()) as fake:
+        ours = client(fake)
+    with pytest.raises(InstanceError, match="no answer from the platform to instance start for challenge 1") as caught:
+        ours.start("boxed")  # the site is gone: nothing connects
+    assert not caught.value.maybe_done and "it may have been done" not in str(caught.value)
+    with pytest.raises(InstanceError) as caught:
+        ours.start("not-on-the-board")
+    assert not caught.value.maybe_done
 
 
 @pytest.mark.parametrize(("text", "parts"), [

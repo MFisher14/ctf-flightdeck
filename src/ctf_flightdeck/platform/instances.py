@@ -97,7 +97,18 @@ _PATH = re.compile(r"/[A-Za-z0-9_./{}?=&-]*")
 
 
 class InstanceError(Exception):
-    """An instance could not be started, read, renewed or stopped. One line, safe to show."""
+    """An instance could not be started, read, renewed or stopped. One line, safe to show.
+
+    `maybe_done`: the request that changes something went out and the platform may have done
+    it all the same: no answer came in time, the line dropped, the answer was not the
+    plugin's, or a start was taken and its status then gave no address. False when the
+    platform said no, when nothing was sent, and for an instance that runs at an address
+    flightdeck will not use. A run reads it after a start (instancerun.py): an instance of
+    that challenge that turns up next is then its own, not a teammate's."""
+
+    def __init__(self, message: str, *, maybe_done: bool = False) -> None:
+        super().__init__(message)
+        self.maybe_done = maybe_done
 
 
 class InstanceRefused(InstanceError):
@@ -339,17 +350,22 @@ class InstanceClient:
         assert doc is not None
         if self._names_address(doc):
             return self._instance(challenge_id, doc)
-        for asked in range(STATUS_TRIES):
-            if asked:
-                self._sleep(STATUS_GAP)
-            found = self.status(challenge_id)
-            if found is not None:
-                return found
+        try:
+            for asked in range(STATUS_TRIES):
+                if asked:
+                    self._sleep(STATUS_GAP)
+                found = self.status(challenge_id)
+                if found is not None:
+                    return found
+        except InstanceError as exc:
+            exc.maybe_done = True  # the start was taken: whatever the status said, an instance may run
+            raise
         said = _dig(doc, ERROR_KEYS)
         words = f" ({self._site.short(str(said))})" if said is not None else ""
         raise InstanceError(
             f"the platform took the start for {_show(challenge_id)}, but neither its answer nor its status names an address{words}; "
-            "is [instances] right for this site's plugin (address_key)?"
+            "is [instances] right for this site's plugin (address_key)?",
+            maybe_done=True,
         )
 
     def status(self, challenge_id: str) -> Instance | None:
@@ -407,13 +423,15 @@ class InstanceClient:
         if changes:
             self._changed_at = self._monotonic()  # counted from the answer: the plugin's own clock started no later
         if outcome is _LATE:
-            raise InstanceError(f"no answer from the platform to {what} within {self.timeout:g} s; it may have been done: look at the challenge on the site")
+            raise InstanceError(f"no answer from the platform to {what} within {self.timeout:g} s; it may have been done: look at the challenge on the site",
+                                maybe_done=changes)
         if not isinstance(outcome, tuple):
             done = "; it may have been done: look at the challenge on the site" if outcome.sent else ""
-            raise InstanceError(f"no answer from the platform to {what} ({self._site.short(outcome.what)}){done}")
+            raise InstanceError(f"no answer from the platform to {what} ({self._site.short(outcome.what)}){done}", maybe_done=changes and outcome.sent)
         status, body = outcome
+        acted = changes and 200 <= status < 300  # an answer that is not the plugin's own (a proxy's page, one cut short): it may have acted
         if not isinstance(body, bytes):
-            raise InstanceError(f"{what}: the platform's answer was too long or never ended (HTTP {status})")
+            raise InstanceError(f"{what}: the platform's answer was too long or never ended (HTTP {status})", maybe_done=acted)
         doc = _parse(body)
         said = _dig(doc, ERROR_KEYS) if isinstance(doc, dict) else None
         failed = isinstance(doc, dict) and (doc.get("success") is False or doc.get("error") not in (None, "", False))
@@ -423,7 +441,8 @@ class InstanceClient:
             words = self._site.short(str(said)) if said is not None else f"HTTP {status}"
             raise InstanceRefused(f"the platform refused {what}: {words}", full=bool(said is not None and _FULL.search(str(said))))
         if not isinstance(doc, dict):
-            raise InstanceError(f"{what}: the platform's answer is not JSON (HTTP {status}); is [instances] right for this site's plugin?")
+            raise InstanceError(f"{what}: the platform's answer is not JSON (HTTP {status}); is [instances] right for this site's plugin?",
+                                maybe_done=acted)
         return doc
 
     def _names_address(self, doc: dict | None) -> bool:
