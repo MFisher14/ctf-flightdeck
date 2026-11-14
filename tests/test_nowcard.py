@@ -21,6 +21,7 @@ from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Alert, AlertKind, Challenge, DeckConfig, FileChange, Lane, LaneState, Pending, PendingKind
+from ctf_flightdeck.credentials import redact
 from ctf_flightdeck.detect import DetectConfig, LoopDetector, Watch
 from ctf_flightdeck.detect.base import suggestions
 from ctf_flightdeck.detect.detectors import default_detectors
@@ -218,6 +219,50 @@ def test_a_hint_answer_quotes_the_first_48_characters_of_what_it_sends_without_c
     assert "\x1b" not in text.plain and not any(span.style and "click" in str(span.style) for span in text.spans)  # text, not markup
 
 
+TOKEN = "ab12cd34" * 4  # the value of a credential: no card shows it
+JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzeW50aGV0aWMifQ.c3ludGhldGljLXNpZ25hdHVyZQ"  # synthetic
+BOX = f"curl the live box with CTFD_TOKEN={TOKEN} Authorization: Bearer {JWT}"  # an approval a lane asks for, in the lane's own words
+BOX_SHOWN = "curl the live box with CTFD_TOKEN=[redacted] Authorization: Bearer [redacted]"
+
+
+def test_the_calm_cards_approval_shows_no_credential_as_the_transcript_shows_none_and_draws_its_detail_literally():
+    """An approval's detail is the lane's own text (a live-box approval quotes what it wants to
+    run). The card's question shows it as the transcript's row for the same approval does."""
+    deck, _, lane = one_lane()
+    deck.report("L01", TurnReport(action="ls", pending=Pending(PendingKind.LIVE_BOX, BOX)))
+    assert lane.pending is not None and TOKEN in lane.pending.detail and JWT in lane.pending.detail  # the deck's own, as the lane asked
+    asked = views.entry_text(deck, lane, views.entries(lane.actions)[-1]).plain
+    assert asked == f"◆ asked you · turn 1: {BOX_SHOWN}"  # the transcript's row
+    assert calm(deck, lane) == [f"◆ waiting for you: {BOX_SHOWN}", "  1 use the live box   0 stay off it"]
+    assert views.now_card(deck, lane, simple=True, calm=True).plain.split("\n")[0] == f"◆ waiting for you: {BOX_SHOWN}"
+
+    deck, _, lane = one_lane()
+    deck.report("L01", TurnReport(action="ls", pending=Pending(PendingKind.LIVE_BOX, f"{osc('pwned')}[@click=app.quit]x[/]")))
+    text = views.calm_card(deck, lane)
+    assert text.plain.split("\n")[0] == f"◆ waiting for you: {shown_osc('pwned')}^[\\[@click=app.quit]x[/]"
+    assert "\x1b" not in text.plain and not any(span.style and "click" in str(span.style) for span in text.spans)  # text, not markup
+
+
+def test_a_credential_cut_by_the_longest_row_the_calm_card_draws_leaves_no_part_of_itself():
+    deck, _, lane = one_lane()
+    lead = "x" * (views.LINE_CHARS - len(" CTFD_TOKEN=[redacted]")) + " "  # the cut falls 10 characters into the value
+    deck.report("L01", TurnReport(action="ls", pending=Pending(PendingKind.LIVE_BOX, f"{lead}CTFD_TOKEN={TOKEN} and more")))
+    row = calm(deck, lane)[0]
+    assert row == f"◆ waiting for you: {lead}CTFD_TOKEN=[redacted]" and TOKEN[:10] not in row  # cut after the value is out
+
+
+def test_a_flag_shaped_like_a_credential_is_whole_on_the_card_that_asks_whether_to_submit_it():
+    """What the card takes out is a credential, never the flag the run knows: the player reads
+    the flag before answering 1."""
+    deck, _, lane = one_lane()
+    flag = "flag{" + "sk-" + "ant-" + "ab12cd34" * 5 + "}"
+    deck.report("L01", TurnReport(action="cat flag.txt", flag=flag))
+    assert lane.pending is not None and lane.pending.kind is PendingKind.SUBMIT
+    assert redact(lane.pending.detail) != lane.pending.detail  # on its own it reads as a key
+    assert calm(deck, lane) == [f"◆ waiting for you: submit {flag}", "  1 submit it   0 do not submit"]
+    assert full(deck, lane)[0] == f"◆ waiting for you: submit {flag}"
+
+
 def test_an_answer_that_only_opens_a_prompt_quotes_nothing_and_more_than_three_answers_are_counted():
     deck, _, lane = one_lane()
     raise_alerts(deck, alert(AlertKind.BUDGET, "At 85% of its cap.", ("a", "Approve 50% more budget now"), ("e", "Escalate to a stronger model"),
@@ -325,6 +370,35 @@ def test_the_full_card_keeps_further_approvals_under_the_first_and_messages_last
         "› sent, not read yet: try the header",
         "press a number to answer (chat box empty), / to pick a command, or write a message",
     ]
+
+
+@pytest.mark.parametrize("how", [{}, {"compact": True}], ids=["full", "compact"])
+def test_the_full_cards_approval_and_the_approvals_after_it_show_no_credential(how):
+    deck, _, lane = one_lane()
+    deck.report("L01", TurnReport(action="ls", pending=Pending(PendingKind.LIVE_BOX, BOX)))
+    deck.report("L01", TurnReport(turn=False, pending=Pending(PendingKind.LIVE_BOX, f"log in with CTFD_TOKEN={TOKEN}")))
+    assert TOKEN in lane.waiting[0].detail  # the deck's own
+    rows = full(deck, lane, **how)
+    assert rows[0] == f"◆ waiting for you: {BOX_SHOWN}" and rows[3] == "then: log in with CTFD_TOKEN=[redacted]"
+    assert TOKEN not in "\n".join(rows) and JWT not in "\n".join(rows)
+
+
+def test_the_card_on_the_screen_shows_no_credential_of_an_approval_calm_or_full():
+    deck, app, lane = one_lane("simple")
+    deck.report("L01", TurnReport(action="ls", pending=Pending(PendingKind.LIVE_BOX, BOX)))
+    deck.report("L01", TurnReport(turn=False, pending=Pending(PendingKind.LIVE_BOX, f"log in with CTFD_TOKEN={TOKEN}")))
+
+    async def script(pilot):
+        view = await open_focus(pilot, app, "L01")
+        assert inside(app)[0] == f"◆ waiting for you: {BOX_SHOWN}"
+        assert TOKEN not in "\n".join(screen_lines(app)) and JWT not in "\n".join(screen_lines(app))
+        await press(pilot, "ctrl+o")
+        assert view.details
+        shown = one_line(card(app))
+        assert f"◆ waiting for you: {BOX_SHOWN} 1 /approve" in shown and "then: log in with CTFD_TOKEN=[redacted]" in shown
+        assert TOKEN not in "\n".join(screen_lines(app)) and JWT not in "\n".join(screen_lines(app))
+
+    drive(app, script, BIG)
 
 
 # ---------------------------------------------------------------------- the card on the screen

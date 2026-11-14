@@ -1317,12 +1317,12 @@ def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = Fa
     top = top_answerable(lane)
     if lane.pending is not None:  # first: its numbers are the ones a digit answers, and the first rows are never the ones cut
         yes, no = PENDING_ANSWERS[lane.pending.kind]
-        rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (untrusted(lane.pending.detail, one_line=True), theme.TEXT)))
+        rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (untrusted(lane_text(deck, lane, lane.pending.detail), one_line=True), theme.TEXT)))
         indent = " " if compact else "   "
         rows.append(Text.assemble((indent, ""), _number("1"), ("/approve", f"bold {theme.ACCENT}"), (f"   {yes}", theme.MUTED), **one_row))
         rows.append(Text.assemble((indent, ""), _number("0"), ("/decline", f"bold {theme.ACCENT}"), (f"   {no}", theme.MUTED), **one_row))
         for later in lane.waiting:
-            rows.append(Text.assemble(("   then: ", theme.MUTED), (untrusted(later.detail, one_line=True), theme.MUTED)))
+            rows.append(Text.assemble(("   then: ", theme.MUTED), (untrusted(lane_text(deck, lane, later.detail), one_line=True), theme.MUTED)))
     for alert in sorted(lane.alerts, key=lambda a: ALERT_URGENCY[a.kind]):
         label = Text.assemble(("▲ ", alert_style(alert.kind)), (alert.kind.label, alert_style(alert.kind)), ("  ", ""))
         if alert.kind in INFORMATIONAL_ALERTS:
@@ -1406,7 +1406,10 @@ def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
 
     With no question (no approval, no alert that wants an answer): an alert that needs no
     answer as the full card shows it, and the message not read yet, or how many there are.
-    Empty when nothing is open on the lane."""
+    Empty when nothing is open on the lane.
+
+    Every text of the lane's on it (the approval's detail too, which a lane words itself) is as
+    the lane's transcript keeps it: lane_line."""
     pending, top = lane.pending, top_answerable(lane)
     alerts = sorted(lane.alerts, key=lambda a: ALERT_URGENCY[a.kind])
     rows: list[Text] = []
@@ -1423,7 +1426,7 @@ def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
     answers = Text()
     if pending is not None:
         asked = _ASKED_BY.get(pending.kind)
-        rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (untrusted(pending.detail, one_line=True)[:LINE_CHARS], theme.TEXT)))
+        rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (lane_line(deck, lane, pending.detail), theme.TEXT)))
         # in the approval's own words: a flag's answer in quick_answers is the detail, which row 1 has
         for answer, label in zip(quick_answers(lane), PENDING_ANSWERS[pending.kind]):
             answers.append("   " if answers else "  ")
