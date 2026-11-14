@@ -235,7 +235,7 @@ class Auth:
     header: str | None = None  # kind "header": the header's name
     cookie: str | None = None  # kind "cookie": the cookie's name
     request: Route | None = None  # kind "exchange": the request that turns the token into a session token
-    body: Mapping[str, object] | None = None  # its JSON body, with {token} in it
+    body: Mapping[str, object] | None = field(default=None, hash=False)  # its JSON body, with {token} in it
     token_path: JsonPath | None = None  # where its answer holds the session token
     scheme: str = "Bearer"  # kind "exchange": the session token goes as Authorization: SCHEME TOKEN
 
@@ -247,7 +247,7 @@ class Listing:
     request: Route
     items: JsonPath  # one match per challenge
     ref: JsonPath  # from here on, paths are relative to one item
-    fields: Mapping[str, JsonPath]  # FIELDS -> path; `name` is always there
+    fields: Mapping[str, JsonPath] = field(hash=False)  # FIELDS -> path; `name` is always there
 
 
 @dataclass(frozen=True)
@@ -255,7 +255,7 @@ class Detail:
     """[http.detail]: one more request per new challenge, for what the list leaves out."""
 
     request: Route
-    fields: Mapping[str, JsonPath]  # relative to the answer; a field here wins over the list's
+    fields: Mapping[str, JsonPath] = field(hash=False)  # relative to the answer; a field here wins over the list's
 
 
 @dataclass(frozen=True)
@@ -275,14 +275,14 @@ class Submit:
     """[http.submit]: the request that sends a flag, and how its answer is read."""
 
     request: Route
-    body: Mapping[str, object]
+    body: Mapping[str, object] = field(hash=False)
     verdict_path: JsonPath | None = None
     detail_path: JsonPath | None = None
     retry_after_path: JsonPath | None = None
     retry_after_unit: str = "s"
     tries_left_path: JsonPath | None = None
-    verdicts: Mapping[str, str] = field(default_factory=dict)  # the value at verdict_path -> one of VERDICTS
-    status: Mapping[int, str] = field(default_factory=dict)  # an HTTP status -> one of VERDICTS, when no value decided
+    verdicts: Mapping[str, str] = field(default_factory=dict, hash=False)  # the value at verdict_path -> one of VERDICTS
+    status: Mapping[int, str] = field(default_factory=dict, hash=False)  # an HTTP status -> one of VERDICTS, when no value decided
     poll: Poll | None = None
 
 
