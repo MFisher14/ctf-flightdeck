@@ -3,10 +3,12 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: a calmer console, themes, plugins (2026-11-14)
+## Built, not released: thirteen proposals, P51 to P63 (2026-11-14)
 
-Proposals built and waiting for a release (P51 to P53 and P56 in [DECISIONS.md](DECISIONS.md);
-the lines for players are under Unreleased in [CHANGELOG.md](../CHANGELOG.md)).
+Proposals built and waiting for a release, in the order of their numbers in
+[DECISIONS.md](DECISIONS.md) (P51 to P63); the lines for players are under Unreleased in
+[CHANGELOG.md](../CHANGELOG.md). P54 to P62 were built from the list of what comes next (the
+[milestones](https://github.com/MFisher14/ctf-flightdeck/milestones) have the rest).
 
 - **The simple layout** (P51). The console opens on one list of lanes, a short header and the
   keys that apply to the selected lane now; `/layout deck`, or `layout = "deck"` under
@@ -18,15 +20,6 @@ the lines for players are under Unreleased in [CHANGELOG.md](../CHANGELOG.md)).
 - **Plugins** (P53). An event on a platform flightdeck does not know, through an adapter of the
   player's own that flightdeck runs out of process: `flightdeck plugin new`, `add` and `pull`,
   and `platform = "NAME"` in the event profile ([PLUGINS.md](PLUGINS.md)).
-
-- **The http platform** (P56). An event on a platform with a JSON API, played from a table of
-  routes in the event profile with no code of the player's: `platform = "http"`, an `[http]`
-  table, rCTF as its first preset, and `flightdeck http example`, `check` and `pull`
-  ([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)).
-
-Built since, from the list of what comes next (the
-[milestones](https://github.com/MFisher14/ctf-flightdeck/milestones) have the rest):
-
 - **The first five minutes in words** (P54,
   [#36](https://github.com/MFisher14/ctf-flightdeck/issues/36)). The README's quickstart is
   three commands and follows the first run (the mock, `uv tool install`, `flightdeck` and its
@@ -44,13 +37,10 @@ Built since, from the list of what comes next (the
   machine says why; and an empty paste in the `/new` form pastes the clipboard's image. None
   of it was tried in a real terminal: each format is from that terminal's own source or
   documentation, and Terminal.app's and tmux's are not known.
-- **The need-you count in the terminal's title, and a bell** (P61,
-  [#38](https://github.com/MFisher14/ctf-flightdeck/issues/38)). The terminal's title says how
-  many lanes need the player and whether the queue is held, in a count and fixed words; the
-  bell rings once each time the count goes up; the title the terminal had comes back when the
-  console leaves. Both are on, each with a switch under `[console]`. Inside tmux the bell
-  marks the window with nothing set up, so it is what reaches a phone over SSH. Tested on a
-  pseudo-terminal; not yet looked at in each terminal program or in tmux.
+- **The http platform** (P56). An event on a platform with a JSON API, played from a table of
+  routes in the event profile with no code of the player's: `platform = "http"`, an `[http]`
+  table, rCTF as its first preset, and `flightdeck http example`, `check` and `pull`
+  ([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)).
 - **Two more CTFd container plugins** (P57). `plugin = "ctfd_owl"` and `plugin = "chall_manager"`
   in `[instances]`, the keys of a plugin's answer by name (`address_key`, `port_key`,
   `expires_key`), a start that answers without an address followed by a look at the status,
@@ -61,6 +51,9 @@ Built since, from the list of what comes next (the
   label the team declared to the event (`declared_label`: said before a run, on the flight
   card). `flightdeck records` writes a record of each solve for an event's organisers: the
   lanes' transcripts, the player's interventions, who let each flag go.
+- **A debugger and a decompiler in every Docker lane** (P59). The lane image and the solver
+  pack's image have `gdb` and radare2 with the Ghidra decompiler, and a lane's brief says how to
+  run them without a terminal ([the guide](GUIDE.md#what-a-lanes-shell-has)).
 - **A one-minute demo at the top of the README** (P60,
   [#43](https://github.com/MFisher14/ctf-flightdeck/issues/43)). `scripts/demo.py` plays the
   mock key by key with no terminal and writes `docs/screenshots/demo.gif`; the tests play it on
@@ -68,12 +61,27 @@ Built since, from the list of what comes next (the
   the console's own screenshots joined into a GIF, not a recording of a terminal. Still open
   from the same issue: what the 14-challenge practice set costs. Nothing prints a figure until
   one full run has been measured.
+- **The need-you count in the terminal's title, and a bell** (P61,
+  [#38](https://github.com/MFisher14/ctf-flightdeck/issues/38)). The terminal's title says how
+  many lanes need the player and whether the queue is held, in a count and fixed words; the
+  bell rings once each time the count goes up; the title the terminal had comes back when the
+  console leaves. Both are on, each with a switch under `[console]`. Inside tmux the bell
+  marks the window with nothing set up, so it is what reaches a phone over SSH. Tested on a
+  pseudo-terminal; not yet looked at in each terminal program or in tmux.
 - **A `/` that forgives** (P62, [#40](https://github.com/MFisher14/ctf-flightdeck/issues/40)).
   The command menu finds a command from the second word of its name or from an alias (`/q`,
   `/exit`, `/settings`, `/lanes`), lists what a command takes after its name (lanes, challenges,
   themes, layouts, sort modes, `on` and `off`), and says `No commands match "/x"` when nothing
   does. What Enter runs is as strict as it was. Not built: a lane offered after every lane
   command, `park` after `/kill`, and a search of the commands' descriptions.
+- **A calm lane view** (P63). In the simple layout a lane's view is one row for each thing
+  the lane did, a run of tool calls on two, and a needs-you card of three rows at most;
+  `ctrl+o` or `/details` shows every line and the full card, which is what the deck layout
+  opens with. Text selects with the mouse and is copied when the button comes up, and `/copy`
+  copies a lane's last output, its command, its flag or its whole transcript with no mouse. A
+  lane restarted by `/attach` or `/kill` from its own view takes the view to the fresh lane.
+  Not built: selecting in the full card, the diff and the tables (the terminal's own selection
+  reaches them), and a calm card in the compact layout.
 
 Known limits, each said where it applies:
 
@@ -84,6 +92,9 @@ Known limits, each said where it applies:
   screen's form do not offer it.
 - `ctfd_owl` and `chall_manager` were built from the two plugins' public source, against fakes
   of that source. Neither has met a real site, a fork or an older release of its plugin.
+- gdb runs only binaries of the lane image's own architecture (no emulator in the image), its
+  tracing was run on arm64 only, and no run has yet measured what gdb and radare2 change in
+  solves.
 - No plugin has met a real platform: the plugin path was built against synthetic plugins and a
   stand-in on 127.0.0.1.
 - A plugin is not sandboxed: it runs as the player, and `plugin add` says so before it asks.
@@ -95,13 +106,6 @@ Known limits, each said where it applies:
 - The five built-in palettes were checked for contrast, not judged by eye on many terminals.
 - The gallery has no picture of the compact layout or of autopilot yet
   ([SCREENSHOTS.md](SCREENSHOTS.md)).
-
-Also built and waiting for that release: **a debugger and a decompiler in every Docker lane**
-(P59). The lane image and the solver pack's image have `gdb` and radare2 with the Ghidra
-decompiler, and a lane's brief says how to run them without a terminal
-([the guide](GUIDE.md#what-a-lanes-shell-has)). Its limits: gdb runs only binaries of the
-image's own architecture (no emulator in the image), gdb's tracing was run on arm64 only, and
-no run has yet measured what the two tools change in solves.
 
 ## Released: 0.4.0, M6 the solver pack and the first run (2026-11-13)
 
