@@ -24,6 +24,11 @@ What an answer means is the caller's business: a CallFailed is never a verdict.
 Everything a plugin says is untrusted. scrub() cuts the token's value out of a string and
 makes it safe to show; every string of an answer has the token cut out before anything else
 sees it, and every reason in a CallFailed is scrubbed.
+
+PlatformCaller is what the board writer (plugins/board.py) and a run's link
+(platform/plugin_run.py) ask of whatever makes the three calls: Caller here, which runs a
+plugin's program, and platform.http.HttpCaller, which makes them itself from an event
+profile's table of routes.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ import signal
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from ..text import untrusted
 from .manifest import Plugin
@@ -90,6 +96,36 @@ class Verdict:
 class PullReply:
     challenges: tuple[dict, ...]  # as the plugin listed them, the token cut out: untrusted, checked by plugins.board
     notes: tuple[str, ...]  # what the plugin wants the player to know, made safe
+    problems: tuple[str, ...] = ()  # "<name or ref>: <why it was left out>", made safe: challenges the caller itself left out
+
+
+class PlatformCaller(Protocol):
+    """What makes the three calls for one event: a plugin's program (Caller), or flightdeck
+    itself from a table of routes (platform.http.HttpCaller). Every string it gives back is
+    made safe and has the token cut out; a call it cannot answer is a CallFailed."""
+
+    url: str  # the event's address
+    token: str  # the event's token; "" when it takes none
+    label: str  # how messages name it: "the acme plugin", "the http adapter"
+    pull_command: str  # the command that pulls its board outside a run: "flightdeck plugin pull"
+    source: str  # the "source" of its warnings in the event log: "plugin", "http"
+
+    async def pull(self, files_dir: Path, known: Sequence[str] = ()) -> PullReply:
+        """The platform's challenges, their files downloaded into `files_dir`; the refs in `known` are on the board already."""
+
+    async def submit(self, ref: str, flag: str) -> Verdict:
+        """Send one flag for the challenge the platform calls `ref`; what the platform said."""
+
+    async def solved(self) -> set[str]:
+        """The refs of the challenges the platform lists as solved for this account."""
+
+
+PLUGIN_PULL = "flightdeck plugin pull"
+
+
+def plugin_label(name: str) -> str:
+    """How messages name the plugin `name`."""
+    return f"the {name} plugin"
 
 
 def child_env(token: str | None, environ: Mapping[str, str] = os.environ, *, api: int = 1) -> dict[str, str]:
@@ -121,9 +157,13 @@ class Caller:
     """Runs one plugin for one event: pull(), submit() and solved(), one process per call and
     one call at a time. `token` is the event's token ("" or None: the plugin takes none)."""
 
+    pull_command = PLUGIN_PULL
+    source = "plugin"
+
     def __init__(self, plugin: Plugin, url: str, event: str, token: str | None, *,
                  seconds: Mapping[str, float] | None = None, environ: Mapping[str, str] | None = None) -> None:
         self.plugin = plugin
+        self.label = plugin_label(plugin.name)
         self.url = url
         self.event = event
         self.token = token or ""

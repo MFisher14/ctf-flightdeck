@@ -47,7 +47,7 @@ The components, in one line each:
 
 | Component | Job |
 |---|---|
-| Platform adapter | Board, challenge download, submit: `manual` (a folder board), `ctfd`, a Game Master, and any other platform through a plugin: the player's own program, run out of process. |
+| Platform adapter | Board, challenge download, submit: `manual` (a folder board), `ctfd`, a Game Master, `http` (a platform with a JSON API, by the routes the event profile writes; rCTF is a preset), and any other platform through a plugin: the player's own program, run out of process. |
 | Order | Fewest points first, then most solves, then by name: rules, not a model. With the light model's `route` job, a lane's opening brief also carries a guess at the challenge's category, where the board names none, and the specialist family it suits; neither changes the order. |
 | L1 runner | Routes a challenge to the player's no-model solvers and collects their `SolverResult`s. Each engine runs in its own copy of the handout, with an allowlisted environment, its own process group and a timeout: in a container when lanes run in Docker, as you on the host. The results go into the lane's opening context. |
 | Lane manager | Starts, queues (`max_lanes`), pauses, forks, kills lanes; Docker or host per `[lanes] runtime`. |
@@ -533,6 +533,7 @@ coding-agent lane's file changes hold nothing an engine wrote.
 | Game Master | `platform/gamemaster.py`, `platform/gamemaster_run.py` | Pulls a Game Master's started attempts into a folder board, submits answers, and reads its solved list. [More](#game-master). |
 | Instances on demand | `platform/instances.py`, `instancerun.py` | A CTFd container plugin's client (start, status, renew, stop: named plugin shapes or the profile's own routes, scoped to the board's challenges, each request sent once), and the run's scheduler: no lane starts on an on-demand challenge before its instance is up (`Deck.wait_for` / `ready`, which `_fill` passes over), `plan()` stops what nobody works and starts what is wanted in the queue's order up to `max_running`, an instance found running is adopted and never stopped, a full cap is retried, instances are renewed before their end and stopped at the run's. The address becomes the challenge's `urls` in the maps lanes and L1 read. |
 | Plugins | `plugins/`, `plugin_cli.py`, `platform/plugin_run.py`, `platform/link.py` | A platform flightdeck does not know, through a program of the player's own: one process per call (`pull`, `submit`, `solved`), allowed only by the player's config. [More](#plugins). |
+| http platform | `platform/http.py`, `platform/http_presets/`, `http_cli.py` | A platform with a JSON API, asked by the routes in the event profile's `[http]` table (rCTF is a preset): data, not code, so a profile may carry it. It makes a plugin's three calls in process. [More](#http-platform). |
 | Event runs | `run.py` | `play --event`: the profile's policies, CTFd pulls and waves, submits off the console's loop, the team folder. [More](#event-runs). |
 | Team channel | `team.py` | Claims, live-box holds and solves shared through a synced folder (no server); everything in it is untrusted. |
 
@@ -624,6 +625,61 @@ Nothing of a plugin is imported, and no third-party code is loaded for one.
   of the event's platform, or none, and the run's start, release, shutdown and close loop over
   it. `Run.by_hand` (the player fills the board: `/new`, `/attach`, `flightdeck add`) is split
   from `Run.watches_folder` (folders that appear are released), which a plugin's board also is.
+
+### http platform
+
+Where: `platform/http.py`, `platform/http_presets/rctf.toml`, `http_cli.py`, `preflight.py`,
+`run.py` (P56; [BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api) is the player's
+page).
+
+A built-in platform, not a plugin: a plugin is code only the player's config can allow, and a
+table of routes is data, so the profile carries it and nothing of the player's or a teammate's
+runs. It reuses the plugin's run side whole through one protocol.
+
+- **`plugins.call.PlatformCaller`** is what `plugins.board.pull_into` and `PluginLink` ask of
+  whatever makes the three calls: `pull`, `submit`, `solved`, the `url`, the `token`, and how
+  messages name it (`label`, `pull_command`, `source`). `Caller` (a plugin's program) and
+  `http.HttpCaller` both fit. A `PullReply` may carry `problems`: challenges the caller itself
+  left out. The board's `plugin.json` says `"plugin": "http"`, a name `config` reserves.
+- **The table** (`http.parse_config`): a preset's file (`http_presets/NAME.toml`) under the
+  profile's own keys, then strict checks that name the key and never show a string of the
+  profile: a route is `[METHOD, PATH]` with a path of a closed alphabet under `event.url` (no
+  scheme, no host, no `..`); placeholders are a closed set, each allowed only in the requests
+  and places `_PATH_PLACEHOLDERS` and `_BODY_PLACEHOLDERS` list (`{token}` only in the
+  sign-in body, `{flag}` only in a body); the auth header's name may not be one that means
+  something else to a server; `auth.link_param` names the query parameter of the platform's
+  login link that holds the token (`_token_from`: the variable may hold the link, whose host
+  must be `event.url`'s, or the token percent-encoded as the link writes it); verdict rules map to `plugins.call.VERDICTS` only. Keys another
+  platform would want and the engine lacks are refused by what they stand for (`NOT_BUILT`).
+- **Paths** (`http.JsonPath`): `$`, `.name`, `['name']`, `[n]`, `[*]`, `.*`. `shaped()` tells a
+  list that is missing (the wrong answer: a `CallFailed`) from one that is empty (nothing
+  listed).
+- **The wire** (`HttpCaller._request`): one `httpx` client per call for the event's origin and
+  one bare client for files elsewhere, so a caller serves any event loop; redirects are never
+  followed by the clients. The address is built from `event.url` and the route with each
+  placeholder percent-encoded whole, and checked to be on the origin before it leaves. The
+  token header is added per request (`_auth`), never as a client default. An exchanged session
+  is kept for the caller's life and asked for again, at most every `RELOGIN_SECONDS`, after a
+  401. Every answer is read up to a size limit, parsed, and has the token (also as a link writes it), and the session, cut
+  out of every string (`_cut`); HTML where JSON is expected is a `CallFailed` (`_refuse_page`).
+- **Pull**: the list, each item read by the table's paths (`_challenge`; one that cannot be
+  read is left out and named), an optional detail request for each ref not on the board, and
+  the files (`_fetch`: the origin with the token only under `files_auth`; another host over
+  https with the bare client; redirects followed by hand, and once off the origin never back
+  to the token). A request that gets no answer stops the pull with what was read.
+- **Submit**: one request, never sent again; the verdict from `verdict_path` and the
+  `verdicts` table whatever the status, else the `status` table, else `unjudged`; an optional
+  poll of the submission while its value is one of `pending`. A failure after the request left
+  is a `CallFailed` with `timed_out`, which the link words as "it may have reached the
+  platform".
+- **Pre-flight** (`preflight._check_http`, `http_token_env`, `describe`): no leave from the
+  config is needed; the token variable must be `HTTP_TOKEN`, start with `HTTP_TOKEN_` or start with
+  the preset's name (never `HTTP_PROXY` or another `HTTP_...` setting), and is never one the
+  config names for a secret; the board folder is inside the profile's own;
+  `describe()` prints `http.plan()`: each request and where the token goes.
+- **In a run**: `run._adapter` makes the caller for a plugin or for http, and everything after
+  it (`_plugin_first`, `PluginLink`, the by-hand rules) is shared. `flightdeck http check` is
+  `HttpCaller.check()`: the sign-in, the list and the solved list, and what each path matched.
 
 ### Event runs
 
@@ -1114,3 +1170,8 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
 - **More from a plugin than a platform.** A plugin pulls, submits and reads the solved list
   ([Plugins](#plugins)); console commands, detectors, notification sinks and instances from a
   plugin are not built, and neither is a plugin's platform in `flightdeck start`.
+- **More of the http platform.** Pages of a listing, a download route per challenge,
+  form-encoded bodies and a CSRF header are refused by name ([http platform](#http-platform));
+  instances on an http platform (rCTF v2 has them) are not started; `flightdeck start` and the
+  home screen's form do not offer `http` or `rctf`; and the rctf preset has met a stand-in
+  only, never a real rCTF.

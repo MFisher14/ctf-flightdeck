@@ -242,8 +242,9 @@ event profile whose platform is `gamemaster` (below), flightdeck submits them.
 
 ## A board from a plugin
 
-For a platform that is neither CTFd nor a Game Master, a plugin of your own does the talking
-([PLUGINS.md](PLUGINS.md)): flightdeck runs its program to list the challenges and download
+For a platform that is neither CTFd nor a Game Master, and that an `[http]` table cannot
+describe ([the next section](#a-board-from-a-platform-with-a-json-api)), a plugin of your own
+does the talking ([PLUGINS.md](PLUGINS.md)): flightdeck runs its program to list the challenges and download
 their files, and writes the board itself.
 
 ```sh
@@ -269,6 +270,168 @@ not start or the plugin's call failed.
 You rarely need it before a run: with `pull = "auto"` or `"confirm"` in the profile, `flightdeck
 play --event event.toml` pulls the board itself. A plugin's board has no answers file, since the
 platform checks the flags.
+
+## A board from a platform with a JSON API
+
+Many platforms have no adapter in flightdeck, but their own web page talks JSON to the site.
+For those, the event profile can say how that API is asked, and flightdeck does the talking
+itself: `platform = "http"` and an `[http]` table. No program of yours runs and there is no
+plugin to trust. rCTF ships as a preset.
+
+```sh
+flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset (--routes: every route written out)
+export RCTF_TOKEN='https://ctf.example.org/login?token=...'   # rCTF: your team's login link, whole (or the token alone)
+flightdeck preflight ~/ctf/quals/event.toml         # every request a run would make, and where your token goes
+flightdeck http check ~/ctf/quals/event.toml        # signs in, lists, reads the solved list; submits nothing
+flightdeck play --event ~/ctf/quals/event.toml
+```
+
+```toml
+[event]
+name = "Example Quals"
+platform = "http"
+url = "https://ctf.example.org"     # the platform's address: every route is a path under it
+token_env = "RCTF_TOKEN"            # the NAME of the variable that holds your token
+board = "board"                     # the folder the challenges are pulled into, beside this file
+
+[http]
+preset = "rctf"                     # rCTF's routes; a key you write under [http] wins over the preset's
+```
+
+It plays as a plugin's platform does. Under `pull = "auto"` flightdeck pulls the board before
+the console opens and again every 5 minutes; under `"confirm"`, once, after your yes; under
+`manual` or `off` the run pulls nothing and plays what `flightdeck http pull EVENT.toml
+[FOLDER]` wrote. Under `submit = "confirm"` or `"auto"` flags go to the platform, one at a
+time, and a rate-limited flag is sent again after the wait the platform names. Whenever the
+run uses the platform it reads the solved list each minute. The board is the same folder
+format, with a `plugin.json` beside the challenges that says `"plugin": "http"`, the address
+and each folder's id on the platform; `/new` and `/attach` are off on it.
+
+`preset = "rctf"` covers rCTF as its own source has it (`/api/v1`, which its successor keeps):
+a sign-in that turns the team token into a session token, the challenge list, files, submit
+and the team's solves. Your token there is the one in your team's login link (the "Team
+Invite" link on rCTF's profile page, `/login?token=...`). Put the whole link in the variable,
+in quotes: the link writes the token percent-encoded (`%2B` for `+`, `%2F` for `/`, `%3D` for
+`=`) and rCTF's sign-in takes it only decoded, so flightdeck takes the `token` out of the link
+and decodes it. The token copied out of the link works too, encoded or not. A link to another
+site than `event.url` is refused: its token is that site's. The preset was built against a
+stand-in that answers in rCTF's shape; nobody has played a real rCTF event through it yet, so
+run `http check` first. flightdeck does not start
+an rCTF instance (start it on the site), and counts no tries there: rCTF has none.
+
+### The `[http]` table
+
+For another platform, write the routes yourself: its browser's network tab shows them.
+`flightdeck http example --routes` prints rCTF's table to edit. A request is `[METHOD, PATH]`;
+a path into an answer is `$` followed by `.name`, `['name']`, `[n]`, `[*]` or `.*`.
+
+```toml
+[http]
+# game = "12"                           # the value of {game} in a route, for a platform with an id per event
+# files_auth = false                    # true: a file on the event's own address is asked for with the token
+
+[http.auth]
+kind = "exchange"                       # "bearer", "token", "header", "cookie" or "exchange"
+request = ["POST", "/api/v1/auth/login"]
+body = { teamToken = "{token}" }
+token_path = "$.data.authToken"
+scheme = "Bearer"
+link_param = "token"                    # the token is handed out in a link, as this query parameter
+
+[http.list]
+request = ["GET", "/api/v1/challs"]
+items = "$.data[*]"                     # one match per challenge
+ref = "$.id"                            # from here on, relative to one challenge
+name = "$.name"
+category = "$.category"
+points = "$.points"
+description = "$.description"
+file_urls = "$.files[*].url"
+file_names = "$.files[*].name"
+
+[http.submit]
+request = ["POST", "/api/v1/challs/{ref}/submit"]
+body = { flag = "{flag}" }
+verdict_path = "$.kind"
+detail_path = "$.message"
+retry_after_path = "$.data.timeLeft"
+retry_after_unit = "ms"
+
+[http.submit.verdicts]                  # a value this table does not name is no verdict
+goodFlag = "correct"
+badFlag = "incorrect"
+badAlreadySolvedChallenge = "already_solved"
+badRateLimit = "rate_limited"
+
+[http.solved]
+request = ["GET", "/api/v1/users/me"]
+refs = "$.data.solves[*].id"
+```
+
+| Key | What it is |
+|---|---|
+| `auth.kind` | `bearer`: `Authorization: Bearer TOKEN`. `token`: `Authorization: Token TOKEN`. `header`, with `header = "X-Api-Key"`: the token in that header. `cookie`, with `cookie = "session"`: the token as that cookie's value. `exchange`: one sign-in request (`request`, a `body` with `{token}` in it), whose answer holds a session token at `token_path`; that is then sent as `Authorization: SCHEME TOKEN` (`scheme`: `Bearer` or `Token`). |
+| `auth.link_param` | Optional, for a platform that hands the token out in a link (rCTF's `/login?token=...`): the name of that query parameter. The token variable may then hold the whole link, whose host must be `event.url`'s, or the token as the link writes it: flightdeck takes the parameter's value and percent-decodes it (`%2B` is read as `+`; a `+` stays a `+`). Without the key the variable's value is the token as it stands. |
+| `list.request`, `items`, `ref`, `name` | Required. `items` matches one value per challenge; `ref` is the platform's id for it (a string or a whole number), which a submit is sent with. |
+| `list.category`, `points`, `solves`, `description`, `max_attempts` | Optional, as in [`challenge.json`](#challengejson). `max_attempts` makes the challenge one whose tries are counted. |
+| `list.file_urls`, `file_names` | Each file's address, and optionally its name (else the last part of the address). Both must match the same number of values. |
+| `[http.detail]` | Optional: `request` with `{ref}` in it and any of the fields above, read from one more request for each new challenge. A field here wins over the list's. |
+| `submit.request`, `body` | Required for flightdeck to submit. The body is JSON; `{flag}` must be in it, and `{ref}` in the path or the body (`"{ref:int}"` as a whole value sends the ref as a number). |
+| `submit.verdict_path`, `[http.submit.verdicts]` | Where the answer holds the platform's word, and which verdict each word means: `correct`, `incorrect`, `already_solved`, `rate_limited` or `unjudged`. The answer is read whatever its HTTP status (rCTF answers a wrong flag with 400). `true` and `false` and numbers are matched as those words. |
+| `[http.submit.status]` | An HTTP status to a verdict (`429 = "rate_limited"`), used when no word decided. |
+| `submit.detail_path`, `tries_left_path` | The platform's own sentence, and the tries it says are left. |
+| `submit.retry_after_path`, `retry_after_unit` | How long a rate limit asks to wait, in `"s"` or `"ms"`; without it, the `Retry-After` header. |
+| `[http.submit.poll]` | For a platform that judges later: `id_path` (the submission's id in the submit's answer), `request` with `{submission}` in it, `pending` (the words that mean "not yet"), `every` (seconds, default 1) and `at_most` (looks, default 10), and optionally its own `verdict_path`. |
+| `solved.request`, `refs` | Required. `refs` matches the refs of the challenges your account or team has solved. |
+
+`flightdeck http check EVENT.toml` is how a table gets written: it makes the sign-in, the list
+and the solved-list requests, and for the first challenges (`--show N`) prints each path and
+what it matched. It submits nothing and downloads nothing. It exits with status 1 when a path
+a pull needs matched nothing or the wrong kind of value, and 2 when a request failed.
+
+### What a table can and cannot make flightdeck do
+
+A profile may be a teammate's, and an `[http]` table is data, not code, so flightdeck takes it
+from the profile. These limits are what make that safe, and `flightdeck preflight` prints every
+request with where the token goes before anything runs:
+
+- **One address.** A route is a path under `event.url`: no scheme, no host, no `..`. Your token
+  and the session token go to that address and nowhere else, and a redirect is never followed
+  with them.
+- **A token variable named for the platform.** `token_env` must be `HTTP_TOKEN`, a name that
+  starts with `HTTP_TOKEN_` (`HTTP_TOKEN_QUALS`) or, with a preset, a name that starts with the
+  preset's (`RCTF_TOKEN`, `RCTF_TOKEN_QUALS`). `HTTP_` alone is not enough: other programs name
+  their own settings that way, and `HTTP_PROXY` holds a proxy's address, often with its
+  password. A profile cannot name your CTFd token, a model key, a proxy setting, a variable
+  your config names for a secret, or anything else. The profile still names the address, so
+  read `preflight`'s `token` line before you play a profile you did not write.
+- **A token out of a link, for the link's own site.** `auth.link_param` only says which part of
+  your variable's value is the token. When the variable holds a link, its host must be
+  `event.url`'s, or nothing is sent: a link to another site holds that site's token.
+- **Five placeholders and no more:** `{ref}`, `{flag}`, `{game}`, `{submission}` and, in the
+  sign-in body only, `{token}`. A challenge's name, text or file names can never be put into a
+  request. A placeholder in a path is percent-encoded whole; in a body it is a JSON string.
+- **No headers of the table's choosing** except the one that carries the token.
+- **Files.** A file on the event's own address is fetched without the token unless
+  `files_auth = true`. A file on another host (a storage bucket) is fetched over https only,
+  with no token, no cookie and nothing else of the platform's; so is a redirect that leaves
+  the event's address. Each file is at most 1 GiB and must have a plain file name.
+- **One send per flag.** A request that fails is never sent again. Only a flag the platform
+  rate-limited is: after the wait it names plus a second (at most 5 minutes), or 65 seconds
+  when it names none, up to 3 more times, and never where tries are counted.
+- **No rule, no verdict.** An answer no rule of the table matches is `unjudged`: the flag comes
+  back to you to submit by hand and is never recorded as wrong. `incorrect` is reached only
+  through a rule you can read in the table.
+- **A web page is a stop.** HTML where JSON is expected (a login page, a "checking your
+  browser" page) is never read as an answer and never worked around.
+- **The answer is untrusted**: a size limit on every answer and 30 seconds for the whole of it
+  (10 minutes for a file), the tokens cut out of every string, everything shown made safe, and
+  every challenge folder read back as any board ([A board is untrusted](#a-board-is-untrusted)).
+
+Not built, and refused by name when a table asks for them: pages of a listing, a download
+route per challenge, form-encoded bodies, a CSRF header, HTML scraping, passwords and
+captchas, encrypted requests. A [plugin](PLUGINS.md) can do those. flightdeck starts instances
+only on CTFd.
 
 ## The event profile: `event.toml`
 
@@ -317,10 +480,15 @@ pull policy does nothing there. Under `submit = "confirm"` or `"auto"` flightdec
 to the Game Master and reads its solved list; under `manual` or `off` it contacts the Game Master
 not at all. Set `flag_format` in the profile only to override the board's.
 
+An event on a platform with a JSON API says `platform = "http"`, with the platform's `url`, a
+`token_env` named `HTTP_TOKEN` or `HTTP_TOKEN_...` (or, with a preset, `RCTF_...`), the `board` folder
+and an `[http]` table: a preset, or the platform's routes
+([A board from a platform with a JSON API](#a-board-from-a-platform-with-a-json-api)).
+
 An event on any other platform says `platform = "NAME"`, the name of a plugin you added with
 `flightdeck plugin add` ([PLUGINS.md](PLUGINS.md)), with the platform's `url`, the `token_env`
 of your token there (unless the plugin takes none) and the `board` folder its challenges are
-pulled into. `platform` is `ctfd`, `manual`, `gamemaster` or such a name: a name that is no
+pulled into. `platform` is `ctfd`, `manual`, `gamemaster`, `http` or such a name: a name that is no
 plugin in your own config is refused, never played as a folder board, and a profile cannot add
 a plugin. Under `pull = "auto"` flightdeck pulls the board through the plugin before the
 console opens and again every 5 minutes; under `"confirm"`, once, after your yes; under

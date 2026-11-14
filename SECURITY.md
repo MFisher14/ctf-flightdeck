@@ -35,6 +35,18 @@ problem: report it privately, never in a public issue.
   output steering flightdeck (a file written outside the board's challenge folders, a path that
   leaves the staging folder, a link followed, a reply that is taken as a verdict when it is not
   one of the five words); the token's value shown or logged from something a plugin printed.
+- **An `[http]` table that makes flightdeck do more than a table may**
+  ([docs/BOARDS.md](docs/BOARDS.md#what-a-table-can-and-cannot-make-flightdeck-do)). An event
+  profile may be a teammate's, and its table of routes is taken from it without asking your
+  config, so these count: your token or the session token sent anywhere but the event's own
+  address (a request to another host, a redirect followed with it, a file fetched from another
+  host with it); the token of a login link in your variable sent to another site than the
+  link's; a token variable taken that is not named for the platform (`HTTP_TOKEN`,
+  `HTTP_TOKEN_...`, or the preset's `RCTF_...`), such as `HTTP_PROXY`, or that your config
+  names for a secret of its own; anything of a
+  challenge but its id and the flag put into a request; a header of the table's choosing; a
+  flag sent twice by flightdeck itself, or recorded as wrong when no rule of the table says so;
+  a web page read as an answer; a file written outside the board's challenge folders.
 - **A flag sent without your approval when it should have waited.** Every flag waits under
   `submit = "confirm"`, and nothing reaches the platform while an event's submit stage is
   `manual` or `off`. Under auto submit a flag still waits when the platform counts the challenge's

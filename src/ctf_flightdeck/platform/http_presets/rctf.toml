@@ -1,0 +1,53 @@
+# rCTF, as a table of routes for platform = "http" (docs/BOARDS.md). A profile that says
+# preset = "rctf" under [http] gets every key below; a key it writes itself wins.
+#
+# Read from rCTF's own source (github.com/redpwn/rctf, server/api) and from the API reference
+# of its successor (github.com/otter-sec/rctf), which keeps these /api/v1 routes. Nobody has
+# played a real event through this table yet: `flightdeck http check EVENT.toml` shows what
+# each path matches on the site in front of you, and submits nothing.
+#
+# The token is the team token. rCTF shows it as the team's login link (/login?token=...), where
+# the token is percent-encoded (it is base64: its + / = stand there as %2B %2F %3D), and its
+# sign-in takes it only decoded. link_param lets the player's variable hold the whole link, the
+# token as the link writes it, or the token itself.
+
+[auth]
+kind = "exchange"
+link_param = "token"  # the variable may hold the login link (/login?token=...): its token is taken and decoded
+request = ["POST", "/api/v1/auth/login"]
+body = { teamToken = "{token}" }
+token_path = "$.data.authToken"
+scheme = "Bearer"
+
+[list]
+request = ["GET", "/api/v1/challs"]
+items = "$.data[*]"
+ref = "$.id"
+name = "$.name"
+category = "$.category"
+points = "$.points"
+solves = "$.solves"
+description = "$.description"
+file_urls = "$.files[*].url"
+file_names = "$.files[*].name"
+
+[submit]
+request = ["POST", "/api/v1/challs/{ref}/submit"]
+body = { flag = "{flag}" }
+verdict_path = "$.kind"
+detail_path = "$.message"
+retry_after_path = "$.data.timeLeft"
+retry_after_unit = "ms"
+
+# rCTF answers a wrong flag with HTTP 400 and a solved challenge with 409: the verdict is the
+# answer's "kind", whatever the status. A kind this table does not name (badNotStarted,
+# badEnded, badChallenge, badToken, ...) is no verdict: the flag comes back to the player.
+[submit.verdicts]
+goodFlag = "correct"
+badFlag = "incorrect"
+badAlreadySolvedChallenge = "already_solved"
+badRateLimit = "rate_limited"
+
+[solved]
+request = ["GET", "/api/v1/users/me"]
+refs = "$.data.solves[*].id"

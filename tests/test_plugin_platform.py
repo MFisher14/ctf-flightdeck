@@ -48,7 +48,7 @@ from test_platform_submit import asked, chall, notes, platform_deck
 
 CONFIG = '[api]\nbase_url = "http://127.0.0.1:11434/v1"\nkey_env = "{key_env}"\n\n[models]\nladder = ["local-model"]\n\n[lanes]\nruntime = "host"\n'
 TOKEN_SET = {"ACME_TOKEN": "set"}
-NO_TABLE = ('event.platform is not "ctfd", "manual" or "gamemaster", and names no plugin in your config ({has}). '
+NO_TABLE = ('event.platform is not "ctfd", "manual", "gamemaster" or "http", and names no plugin in your config ({has}). '
             "`flightdeck plugin add FOLDER` adds one, after showing you what it runs")
 
 
@@ -133,7 +133,7 @@ def test_a_platform_value_shaped_like_a_token_is_refused_when_the_profile_loads_
     with pytest.raises(ProfileError) as refused:
         load_profile(profile_file(tmp_path, platform=shaped))
     assert shaped not in str(refused.value)
-    assert str(refused.value) == (f'{tmp_path / "event.toml"}: event.platform must be "ctfd", "manual", "gamemaster" or the name '
+    assert str(refused.value) == (f'{tmp_path / "event.toml"}: event.platform must be "ctfd", "manual", "gamemaster", "http" or the name '
                                   "of a plugin you added (lower-case letters, digits, - and _)")
 
 

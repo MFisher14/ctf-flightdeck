@@ -372,6 +372,7 @@ def test_no_switch_shows_a_bool_placeholder_and_every_argument_is_named_in_capit
         ("vpn up", "target"): "FOLDER", ("vpn status", "target"): "FOLDER", ("vpn down", "target"): "FOLDER",
         ("plugin new", "name"): "NAME", ("plugin add", "folder"): "FOLDER",
         ("plugin pull", "event"): "EVENT.toml", ("plugin pull", "folder"): "FOLDER",
+        ("http check", "event"): "EVENT.toml", ("http pull", "event"): "EVENT.toml", ("http pull", "folder"): "FOLDER",
         ("report", "run_dir"): "RUN_DIR", ("writeups", "run_dir"): "RUN_DIR", ("score", "run_dir"): "RUN_DIR", ("gaps", "run_dir"): "RUN_DIR", ("share", "run_dir"): "RUN_DIR",
         ("models", "entry"): "ID", ("preflight", "event"): "EVENT.toml",
         ("ctfd pull", "url"): "URL", ("ctfd pull", "dest"): "DEST",
@@ -813,7 +814,7 @@ def test_the_root_help_shows_the_panels_in_the_order_a_player_meets_them():
     assert list(panels.items()) == [
         ("Set up", ["init", "doctor", "config", "models", "image"]),  # what a new player sets up, and nothing to measure with
         ("Play", ["mock", "play", "practice", "start"]),
-        ("Before and during an event", ["add", "preflight", "ctfd", "gm", "team", "vpn", "plugin"]),
+        ("Before and during an event", ["add", "preflight", "ctfd", "gm", "team", "vpn", "http", "plugin"]),
         ("After a run", ["report", "writeups", "score", "gaps", "share"]),  # gaps reads a run folder, like the three before it
         ("Solvers (L1)", ["l1", "pack", "build"]),
         ("Measure a model", ["eval-local"]),  # for the light model, an optional feature: last

@@ -957,9 +957,20 @@ export CTFD_TOKEN=...                             # the variable event.toml name
 flightdeck play ~/ctf/event-board --event event.toml
 ```
 
-flightdeck talks to CTFd and to a Game Master. For any other platform there are two ways. By
+flightdeck talks to CTFd and to a Game Master. For any other platform there are three ways. By
 hand: a folder board (`platform = "manual"` in `event.toml`), and you submit the flags on the
-site. Or through a **plugin**: a small adapter of your own, which flightdeck runs to pull the
+site. By a table of routes, when the platform's own web page talks JSON to the site:
+`platform = "http"` and an `[http]` table in `event.toml`, with rCTF as a ready preset
+([Boards](BOARDS.md#a-board-from-a-platform-with-a-json-api)); no code runs, and `flightdeck
+preflight` shows every request and where your token goes:
+
+```sh
+flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset, to edit
+flightdeck http check ~/ctf/quals/event.toml       # tries it: signs in, lists, reads the solved list; submits nothing
+flightdeck play --event ~/ctf/quals/event.toml
+```
+
+Or through a **plugin**: a small adapter of your own, which flightdeck runs to pull the
 board, submit the flags you approve and read the solved list:
 
 ```sh

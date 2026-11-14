@@ -32,6 +32,11 @@ plugin is one run of its program, out of process (plugins/call.py: Caller), one 
 
 Everything the plugin says is untrusted: the Caller cuts the token out of every string and
 makes each reason safe; what is shown here of a flag or a name is made safe again.
+
+The built-in http platform (platform/http.py) plays through this same link: its caller makes
+the three calls itself, in process, from the event profile's table of routes. The link asks
+only what plugins.call.PlatformCaller promises, and names the caller in its messages by the
+caller's own label ("the acme plugin", "the http adapter").
 """
 
 from __future__ import annotations
@@ -44,7 +49,7 @@ from pathlib import Path
 from ..core.deck import Deck
 from ..core.model import PendingKind
 from ..plugins.board import load_refs, pull_into
-from ..plugins.call import CallFailed, Caller, Verdict
+from ..plugins.call import CallFailed, PlatformCaller, Verdict, plugin_label
 from ..plugins.manifest import PluginError
 from ..text import untrusted
 
@@ -52,7 +57,7 @@ WHO = "your account"  # who solved what the plugin lists as solved: it does not 
 SOLVES_SECONDS = 60.0  # the plugin's solved list is read this often
 PULL_SECONDS = 300.0  # under the pull policy "auto" the plugin's pull is asked again this often
 PLATFORM_FAILURES = 3  # the same read failing this many times in a row is the platform failing: autopilot is told
-SOURCE = {"source": "plugin"}  # on every warning from here
+SOURCE = {"source": "plugin"}  # on every warning of a plugin's link (the http platform's say "http")
 MAYBE_SENT = "; it may have reached the platform: check the challenge there before you submit it again"
 
 
@@ -66,7 +71,7 @@ class PluginLink:
 
     def __init__(
         self,
-        caller: Caller,
+        caller: PlatformCaller,
         name: str,
         board: Path,
         refs: Mapping[str, str],
@@ -79,7 +84,11 @@ class PluginLink:
         if not solves_seconds > 0 or not pull_seconds > 0:
             raise ValueError("solves_seconds and pull_seconds must be positive numbers of seconds")
         self.caller = caller
-        self.name = name  # the plugin's name: the player's own word for it ([plugins.NAME] in their config)
+        self.name = name  # the plugin's name: the player's own word for it ([plugins.NAME] in their config); "http" for the built-in
+        self.label = getattr(caller, "label", None) or plugin_label(name)  # how messages name it: "the acme plugin", "the http adapter"
+        self.mark = self.label.removeprefix("the ")  # at the start of a line: "acme plugin: ..."
+        self.command = getattr(caller, "pull_command", None) or "flightdeck plugin pull"
+        self.source = {"source": getattr(caller, "source", None) or "plugin"}  # on every warning from here
         self.board = Path(board)  # the board folder, with its plugin.json
         self.refs = dict(refs)  # board id -> the platform's own id for the challenge
         self.solved = set(solved)  # the refs the plugin last listed as solved, and those it answered already_solved for
@@ -104,11 +113,11 @@ class PluginLink:
     def tasks(self) -> list[asyncio.Task]:
         """The link's background tasks, started on the running loop: the run cancels them at its end."""
         tasks = [
-            asyncio.create_task(self.work(), name=f"flightdeck {self.name} plugin submits"),
-            asyncio.create_task(self.watch(), name=f"flightdeck {self.name} plugin solves"),
+            asyncio.create_task(self.work(), name=f"flightdeck {self.mark} submits"),
+            asyncio.create_task(self.watch(), name=f"flightdeck {self.mark} solves"),
         ]
         if self.pulls:
-            tasks.append(asyncio.create_task(self.repull(), name=f"flightdeck {self.name} plugin pulls"))
+            tasks.append(asyncio.create_task(self.repull(), name=f"flightdeck {self.mark} pulls"))
         return tasks
 
     def held(self) -> set[str]:
@@ -130,10 +139,10 @@ class PluginLink:
             try:
                 self.answer(lane_id, challenge_id, flag, outcome)
             except Exception as exc:  # a bug: said now and at the end, and the next flag still goes
-                problem = f"{self.name} plugin: could not apply its answer to {_show(flag)}: {type(exc).__name__}: {exc}"
+                problem = f"{self.mark}: could not apply its answer to {_show(flag)}: {type(exc).__name__}: {exc}"
                 self.errors.append(problem)
                 with contextlib.suppress(Exception):
-                    self.deck.warn(problem, challenge=challenge_id, data=SOURCE)
+                    self.deck.warn(problem, challenge=challenge_id, data=self.source)
             self.sending = None
 
     def reload(self) -> None:
@@ -141,11 +150,11 @@ class PluginLink:
         this run's, or `flightdeck plugin pull` in another terminal. One that cannot be read
         is a warning, once while it lasts; a challenge with no ref gets no flag sent."""
         try:
-            self.refs.update(load_refs(self.board, plugin=self.name, url=self.caller.url))
+            self.refs.update(load_refs(self.board, plugin=self.name, url=self.caller.url, label=self.label, command=self.command))
         except PluginError as exc:
             if self.deck is not None and self._said.get("refs") != str(exc):
                 self._said["refs"] = str(exc)
-                self.deck.warn(f"{exc}; flags of challenges added since the last read are not sent", data=SOURCE)
+                self.deck.warn(f"{exc}; flags of challenges added since the last read are not sent", data=self.source)
         else:
             self._said.pop("refs", None)
 
@@ -160,7 +169,8 @@ class PluginLink:
         assert self.deck is not None
         ref = self._ref(challenge_id)
         if ref is None:
-            return (f"{_show(challenge_id)} was not pulled through the plugin, so flightdeck has nowhere to send its flag: "
+            through = "through the plugin" if self.source == SOURCE else "from the platform"
+            return (f"{_show(challenge_id)} was not pulled {through}, so flightdeck has nowhere to send its flag: "
                     "submit it by hand, then say whether it was accepted")
         sends = 0
         while True:
@@ -225,10 +235,10 @@ class PluginLink:
             why, tries = outcome, None
         ch = deck.challenges.get(challenge_id)
         name = _show(ch.name if ch is not None else challenge_id)
-        deck.warn(f"the {self.name} plugin did not judge {_show(flag)} for {name}: {why}", challenge=challenge_id, data=SOURCE)
+        deck.warn(f"{self.label} did not judge {_show(flag)} for {name}: {why}", challenge=challenge_id, data=self.source)
         deck.platform_verdict(lane_id, flag, None, why, tries_left=tries)
         if self.needs_human is not None:
-            self.needs_human(f"the {self.name} plugin did not judge a flag: {why}")  # after the deck has it back with the player
+            self.needs_human(f"{self.label} did not judge a flag: {why}")  # after the deck has it back with the player
 
     def unsent(self) -> list[str]:
         """After the worker has stopped: the flags on their way to the platform when the run
@@ -236,7 +246,7 @@ class PluginLink:
         it; the others did not leave flightdeck."""
         deck = self.deck
         out: list[str] = list(self.errors)
-        mark = f"{self.name} plugin"
+        mark = self.mark
 
         def named(lane_id: str, challenge_id: str, flag: str) -> str:
             ch = deck.challenges.get(challenge_id) if deck is not None else None
@@ -269,7 +279,7 @@ class PluginLink:
             try:
                 refs = await self.caller.solved()
             except Exception as exc:  # CallFailed, or a bug: say so, and read again later
-                self._failed("solved", exc, f"could not read the solved list from the {self.name} plugin",
+                self._failed("solved", exc, f"could not read the solved list from {self.label}",
                              f"flightdeck reads it again in {self.solves_seconds:g} s", "reading the solved list from")
                 continue
             self._worked("solved")
@@ -280,7 +290,7 @@ class PluginLink:
         try:
             self.apply_solved()
         except Exception as exc:  # a bug
-            problem = f"{self.name} plugin: could not apply {what}: {type(exc).__name__}: {exc}"
+            problem = f"{self.mark}: could not apply {what}: {type(exc).__name__}: {exc}"
             if problem not in self.errors:
                 self.errors.append(problem)
 
@@ -295,9 +305,9 @@ class PluginLink:
         self._failures[kind] = count = self._failures.get(kind, 0) + 1
         if self.deck is not None and why != self._said.get(kind):
             self._said[kind] = why
-            self.deck.warn(f"{what}: {why}; {then}", data=SOURCE)
+            self.deck.warn(f"{what}: {why}; {then}", data=self.source)
         if count == PLATFORM_FAILURES and self.needs_human is not None:
-            self.needs_human(f"{doing} the {self.name} plugin has failed {count} times in a row: {why}")
+            self.needs_human(f"{doing} {self.label} has failed {count} times in a row: {why}")
 
     def apply_solved(self, *, before_run: bool = False) -> None:
         """Close each board challenge the plugin lists as solved (or answered already_solved
@@ -333,14 +343,14 @@ class PluginLink:
             try:
                 written = await pull_into(self.caller, self.board, plugin=self.name, url=self.caller.url)
             except Exception as exc:  # CallFailed, PluginError, or a bug: say so, and pull again later
-                self._failed("pull", exc, f"the {self.name} plugin could not pull new challenges",
+                self._failed("pull", exc, f"{self.label} could not pull new challenges",
                              f"flightdeck pulls again in {self.pull_seconds:g} s", "pulling new challenges through")
                 continue
             self._worked("pull")
             try:
                 self.pulled(written)
             except Exception as exc:  # a bug
-                problem = f"{self.name} plugin: could not release what its pull added: {type(exc).__name__}: {exc}"
+                problem = f"{self.mark}: could not release what its pull added: {type(exc).__name__}: {exc}"
                 if problem not in self.errors:
                     self.errors.append(problem)
 
@@ -353,7 +363,7 @@ class PluginLink:
         for line in [f"{self.name}: not added: {problem}" for problem in written.problems] + [f"{self.name}: {note}" for note in written.notes]:
             if line not in self.reported:
                 self.reported.add(line)
-                deck.warn(line, data=SOURCE)
+                deck.warn(line, data=self.source)
         if not written.added:
             return
         self.reload()
