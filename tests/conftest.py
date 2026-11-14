@@ -36,6 +36,19 @@ def own_state_folder(tmp_path_factory, monkeypatch):
     (state / "ctf-flightdeck" / "welcomed").write_text("")
 
 
+@pytest.fixture
+def one_docker_run_at_a_time(tmp_path_factory):
+    """For a test that starts a real run in Docker (`flightdeck play` with runtime = "docker"):
+    it holds the Docker-run turn for its whole length, so no other test of this run, in this
+    process or another worker's (`pytest -n`), has such a run going beside it. A lane's
+    container is named after the second its run started, so two such runs started in the same
+    second ask Docker for one name, and the second one's lane never starts (turns.py)."""
+    from turns import docker_run
+
+    with docker_run(tmp_path_factory):
+        yield
+
+
 @pytest.fixture(autouse=True)
 def calm_host(monkeypatch):
     """No test depends on this machine's load, RAM or disk: what a run's host governor and
