@@ -4,6 +4,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- A lane notices when its model server drops its oldest messages. Ollama does this past the
+  context it gives a model, with no error, and a lane with no `context` under `[api]` then went
+  on without its brief. Now, when the context grew but the server counted no more prompt
+  tokens than the call before, the lane says so, tells you once to set `OLLAMA_CONTEXT_LENGTH`
+  and `[api] context`, and goes on at once in a fresh context with a summary. For the rest of
+  the run, lanes on that model are refreshed before they reach that size again
+  ([details](docs/MODEL-APIS.md#context-on-a-server-on-your-machine)).
 - `space` peeks at the selected lane. A panel opens under the lane list with the lane's last
   six steps, each on one row (a command and the first line of its output, the model's words,
   your messages, an alert, the question it waits on), over the line that says why the lane is

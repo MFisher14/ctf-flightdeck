@@ -115,6 +115,12 @@ Proposals built and waiting for a release, in the order of their numbers in
   the command bar still talks to that lane. `space` or `esc` closes it. On a short terminal,
   and beside the `/` menu or a status line of several rows, it gives up its oldest rows first.
   In the mock, `,` freezes the clock.
+- **A lane notices a server that drops its oldest messages** (P73,
+  [#10](https://github.com/MFisher14/ctf-flightdeck/issues/10)). A run on Ollama 0.34.2 showed
+  that past its window it leaves out a chat's oldest messages with no error and holds the
+  prompt count under the window, so a lane with no `[api] context` never refreshed. The
+  driver now sees a context that grew while the count did not, says so on the lane, refreshes
+  it at once, and refreshes later contexts on that model at the count known to fit.
 
 Known limits, each said where it applies:
 
