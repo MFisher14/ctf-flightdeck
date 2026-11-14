@@ -1233,7 +1233,8 @@ def test_layout_is_a_command_that_acts_on_no_lane_listed_beside_the_runs_other_s
     parsed = parse("/layout deck")
     assert (parsed.command.name, parsed.lane, parsed.arg) == ("layout", None, "deck")
     assert parse("/layout").arg == "" and not needs_lane(parse("/layout")) and not needs_lane(parsed)
-    assert [c.text for c in complete("/la")] == ["/layout "]
+    assert [c.text for c in complete("/la")] == ["/layout ", "/back "]  # /back: its alias /lanes starts with it
+    assert [c.text for c in complete("/lay")] == ["/layout "]
     names = [c.name for c in COMMANDS]
     assert names.index("layout") == names.index("theme") + 1 == names.index("config") + 2
     assert BY_NAME["layout"].args == "[simple|deck]"
