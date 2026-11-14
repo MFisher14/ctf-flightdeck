@@ -74,8 +74,19 @@ corner in any font). The header's segments are solid blocks with a `╱` between
     the peek has fewer than six rows, and under 18 (20) it has none: `space` then opens
     nothing and the status line says how tall the terminal must be. An open peek that a
     resize leaves no room for is hidden until there is room again.
+  - Those heights are with a status line of one row and the `/` menu closed. Both take their
+    rows from the lanes panel, and the peek is sized for what the panel has left: it gives up
+    one row for each of theirs, the oldest first (its last row is always the lane's last
+    step), and is hidden when not one is left; only then does the list go under three lane
+    rows, and it keeps the selected lane in view. The whole `/` menu is ten rows: the peek
+    stays beside it from 28 lines (30 in the compact layout) and keeps all six rows from 33
+    (35). On 24 lines the whole menu hides the peek, and it is back as the command is typed
+    (the menu lists fewer) or the menu closes. On a terminal tall enough, `space` under a
+    status line of several rows that has the room opens the peek hidden: what the status line
+    says stays, and the peek shows once there is room.
   - The lanes panel's bottom border carries the hint: `space peek`, `space closes the peek`
-    while it is open, `no room for the peek` while it is open and hidden. No key line names
+    while it is open, `no room for the peek` while it is open and hidden (a short terminal,
+    the `/` menu, a status line of several rows). No key line names
     it; `?` does.
   - The peek draws the same in every layout and changes nothing while it is closed.
     `flightdeck doctor` measures the lane list with the peek closed.

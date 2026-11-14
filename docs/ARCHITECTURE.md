@@ -169,7 +169,7 @@ each redraw and when the lane list comes back from under the form. While the boa
 challenge the fleet shows a page of its own in place of the tables (`fleet.EMPTY_BY_HAND`,
 `EMPTY_PLATFORM`). The peek (P68, `space`) is one widget between the lane list and the why
 line, the same in every layout: `views.peek()` draws the lane `FleetScreen.bar_lane()` gives,
-in the rows `fleet.peek_rows()` finds for the terminal's height. `console/room.py` measures a terminal in the layout it is given
+in the rows the lanes panel has for it as laid out (`fleet.LanesPane`, `FleetScreen.peek_room()`, `fleet.peek_rows_in()`: the `/` menu and a status line of several rows take theirs first; `fleet.peek_rows()` is the count for a terminal's height without them). `console/room.py` measures a terminal in the layout it is given
 (`room(..., layout=)`).
 
 **The lane's transcript** (P63). `FocusScreen.details` is the view's one switch: as the player

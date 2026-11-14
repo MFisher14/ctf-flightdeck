@@ -10,8 +10,10 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   flagged. It follows the selection as you move, and a message typed in the bar still goes to
   that lane, so you can read what a lane did and answer it without opening it. `space` or `esc`
   closes it; it stays as you left it for the run. On a short terminal it shows fewer rows and
-  the list keeps three; under 18 lines it says there is no room. It works in both layouts and
-  on a phone, and the lanes panel's bottom border says `space peek`.
+  the list keeps three; under 18 lines it says there is no room. The `/` menu and a status
+  message of several rows take their rows from the peek's oldest, never from its newest or
+  from the list's three: where they leave it none it is hidden until they go. It works in both
+  layouts and on a phone, and the lanes panel's bottom border says `space peek`.
 - In `flightdeck mock`, `,` freezes the clock, since `space` is the peek now; `.` still steps
   it.
 - The `/` menu forgives. It finds a command from the second word of its name (`/over` lists

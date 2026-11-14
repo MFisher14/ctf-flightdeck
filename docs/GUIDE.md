@@ -385,7 +385,10 @@ the list and the peek follows; what you type in the command bar still goes to th
 peek names, so you can read what a lane did, then hint or redirect it, and never open it.
 `space` or `esc` closes the peek, and it stays open or closed for the rest of the run. Its
 rows come from the list, which keeps at least three lanes and scrolls; on a terminal too short
-for one row of it (under 18 lines, or 20 on a phone) it says so.
+for one row of it (under 18 lines, or 20 on a phone) it says so. The `/` menu and a long
+status message need rows too, and the peek gives them its oldest: on a 24-line terminal the
+whole menu hides it (the panel's border says `no room for the peek`), and it is back as you
+type the command's name or close the menu.
 
 **Enter** opens a lane full screen: its transcript, the files it changed with diffs, and a chat
 box (plain text is a message to the lane; `/redirect`, `/approve`, `/diff` and the rest are
