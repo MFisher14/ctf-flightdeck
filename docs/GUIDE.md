@@ -156,8 +156,8 @@ a model API charges for. A **setting** is a line of your config.
   name, text, files and live instance (handed over as data, never as instructions) and the flag
   format.
 - **Command bar**: the line at the bottom of the console. `/` opens it for a command (`/new`,
-  `/theme`); plain text typed in it is a message to the selected lane, which reads it on its
-  next turn.
+  `/theme`) and lists the commands as you type ([The command bar](#the-command-bar)); plain
+  text typed in it is a message to the selected lane, which reads it on its next turn.
 - **Ladder**: your models, weakest first (`[models] ladder`). Lanes start on the first.
   **Escalate** (`e`) restarts a lane on the next one, with a summary of what it did.
 - **Fork** (`f`): a second lane on the same challenge. **Take over** (`t`): the lane's shell is
@@ -427,6 +427,31 @@ The lane list's keys act on the selected lane: `p` pause, `h` hint, `r` redirect
 approves every waiting flag; **Enter** opens the lane full screen. They act in both layouts; the
 simple layout's key line shows only the ones that apply now. The whole design is in the
 [console spec](CONSOLE-SPEC.md).
+
+### The command bar
+
+`/` opens a menu of the commands, and typing narrows it. You do not need a command's exact
+name to find it:
+
+- A few letters from the start of the name, or of the second word in it: `/over` finds
+  `/takeover`, `/hold` finds `/unhold`, `/pilot` finds `/autopilot`.
+- An alias: `/q` and `/exit` are `/quit`, `/settings` is `/config`, `/lanes` is `/back`. The
+  menu shows them beside the name.
+- After the name and a space, the menu lists what the command takes: the lanes with their
+  challenge and state after `/open` (type `l2`, or part of the challenge's name), the parked
+  and new challenges after `/queue`, your themes after `/theme`, `simple` and `deck` after
+  `/layout`, the sort modes after `/sort`, `on` and `off` after `/autopilot`.
+- When nothing matches, the menu says `No commands match "/x"` and stays open, so you can
+  correct what you typed.
+
+**Tab** puts the highlighted row into the bar (the first row when none is highlighted), and the
+arrow keys move through the rows. **Enter** does the same while the name is not finished, or
+once you moved to a row with the arrow keys; otherwise it sends what you typed.
+
+The menu never runs anything for you. A command runs only when its whole name or alias is in
+the bar and you press Enter: `/over` sent as it is gets `Unknown command /over`, and
+`/approve 2` is refused instead of approving lane 2 (write `/approve L02`). `/approve` has no
+short form, because approving a flag can spend one of a challenge's tries.
 
 ### Layouts
 

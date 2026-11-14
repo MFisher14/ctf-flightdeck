@@ -4,6 +4,14 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- The `/` menu forgives. It finds a command from the second word of its name (`/over` lists
+  `/takeover`) and from an alias (`/q` and `/exit` for `/quit`, `/settings` for `/config`,
+  `/lanes` for `/back`, each shown beside the name). After a command's name it lists what the
+  command takes: the lanes with their challenge and state for `/open`, the parked and new
+  challenges for `/queue`, your themes for `/theme`, and the words of `/layout`, `/sort` and
+  `/autopilot`. When nothing matches it says `No commands match "/x"` instead of closing.
+  What runs is as strict as before: only a whole name or alias, and `/approve 2` is still
+  refused. Enter on a row you chose with the arrow keys now puts that row in the bar.
 - A platform with a JSON API, with no code of yours: `platform = "http"` and an `[http]` table
   in `event.toml` say how the platform's API is asked, and flightdeck pulls the board, submits
   the flags you approve and reads the solved list itself. rCTF ships as a preset (`preset =

@@ -61,6 +61,12 @@ Built since, from the list of what comes next (the
   the console's own screenshots joined into a GIF, not a recording of a terminal. Still open
   from the same issue: what the 14-challenge practice set costs. Nothing prints a figure until
   one full run has been measured.
+- **A `/` that forgives** (P62, [#40](https://github.com/MFisher14/ctf-flightdeck/issues/40)).
+  The command menu finds a command from the second word of its name or from an alias (`/q`,
+  `/exit`, `/settings`, `/lanes`), lists what a command takes after its name (lanes, challenges,
+  themes, layouts, sort modes, `on` and `off`), and says `No commands match "/x"` when nothing
+  does. What Enter runs is as strict as it was. Not built: a lane offered after every lane
+  command, `park` after `/kill`, and a search of the commands' descriptions.
 
 Known limits, each said where it applies:
 

@@ -72,6 +72,32 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 - **The `/` menu**: every command that matches what is typed, eight rows at a time; the arrow
   keys scroll to the rest. A lane's suggested answers come first; with no lane to act on,
   `/new`, `/help`, `/config` and `/queue` come first, then the rest in their usual order.
+  The list is loose and what runs is not (P62):
+  - A command is listed when what is typed starts its name, one of its aliases, or the second
+    word of its name: `/over` lists `/takeover`, `/hold` `/unhold`, `/pilot` `/autopilot`,
+    `/direct` `/redirect`. A name that starts with what is typed comes before a command found
+    another way; a name or an alias typed whole comes first (`/q` lists `/quit`, then `/queue`).
+  - The aliases are `/q` and `/exit` for `/quit`, `/settings` for `/config` and `/lanes` for
+    `/back`; the menu and the help show them beside the name, as `/quit (/q, /exit)`. No other
+    command has one: `/approve` is typed whole.
+  - After a command's name and a space, the menu lists the words that command takes that
+    start with what follows: every lane with its challenge and state for `/open` (found by
+    the lane's id, `l1` for L01, or by a word of its challenge's name), the parked and new
+    challenges for `/queue` (by id or by a word of the name), the themes for `/theme` (built
+    in, then yours, the one in use marked), `simple` and `deck` for `/layout` (the one in use
+    marked), the sort modes for `/sort`, `on` and `off` for `/autopilot`. A word typed whole is
+    not listed. While the menu is open it follows the deck: a lane that changes state, a
+    challenge that is parked. Other commands list nothing after their name.
+  - When what is typed names no command and nothing is listed, the menu stays open with one
+    muted row: `No commands match "/x"`.
+  - The menu only fills the bar. Tab takes the highlighted row, or the first when none is.
+    Enter takes the highlighted row while the name is not yet a command, and once the arrow
+    keys moved to a row; anything else it sends as typed. The first row is highlighted only
+    while the name is being typed: the rows after a name are not, since Enter there sends
+    what is typed (`/open` and Enter still opens the selected lane).
+  - What is sent runs only as a whole name or a whole alias with words the command knows:
+    `/over` sent as typed is `Unknown command /over`, and `/approve 2` is refused, never read
+    as L02.
 
 ## Focus view (enter on a lane)
 
@@ -235,9 +261,9 @@ more, as it does at 100%; escalate is offered at 80% only.
 | `d`, `0` | `/decline` | Say no: the flag is not submitted (or, after a hand submit, was rejected), or the live box stays off, and the lane carries on; refusing more budget stops the lane |
 | `1`-`9` | | Quick answers: the numbers in the why line and the needs-you card; one key, no enter (focus view: only while the chat box is empty) |
 | `c` | `/claim [challenge]` | Team mode: claim or release a challenge |
-| enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back` returns) |
+| enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back`, also typed `/lanes`, returns) |
 |  | `/diff [file]` | Show the files the lane changed |
-|  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` | Alone: a dialog with this run's settings (lanes at once, what happens to a flag); Enter applies, esc cancels. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run. |
+|  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` (also `/settings`) | Alone: a dialog with this run's settings (lanes at once, what happens to a flag); Enter applies, esc cancels. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run. |
 |  | `/layout [simple\|deck]` | The console's layout for the rest of this run: `simple` (one list of lanes, what needs you, the keys that apply now) or `deck` (the board and every column); alone, the other one. The status line says the config line that keeps it (`layout = "deck"` under `[console]`), and that the compact layout shows when the terminal is narrow. Any other word is refused: `/layout takes simple or deck`. |
 |  | `/theme [name]` | Alone: the themes there are, the one in use marked. With a name: the console's colours for the rest of this run, and the status line says the config line that keeps it. A name that is no theme, or a theme file that cannot be used, is a warning with the reason, and the theme in use stays. |
 |  | `/note <text>` | A note for every lane (an organizer's ruling, a replaced handout): each running lane reads it on its next turn, and every lane started later in this run reads it at its start. At most 12 stand at once. |
@@ -248,7 +274,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: the challenges an API outage parked are queued again, and queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
 | `?` | `/help` | Help: every key and command, each alert chip, `sending`, `queue held`, the `+` and `…` after dollars, and the board's marks |
-| `q`, `ctrl+q` | `/quit` | Quit; it asks first while lanes are open or a flag is on its way (Quitting and signals, below) |
+| `q`, `ctrl+q` | `/quit` (also `/q`, `/exit`) | Quit; it asks first while lanes are open or a flag is on its way (Quitting and signals, below) |
 
 `h`, `r` and `e` are refused on a lane that gave up and stays open only for its flag's answer (it
 takes no more turns): fork it (`f`), or answer its flag or wait for the platform's answer.
