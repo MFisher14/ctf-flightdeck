@@ -720,12 +720,25 @@ def test_cancelling_the_stoppable_docker_check_kills_docker_at_once_and_waits_fo
 
 
 def test_the_stoppable_docker_check_gives_up_on_a_daemon_that_does_not_answer_and_kills_docker(monkeypatch, tmp_path):
-    folder = stand_in_docker(tmp_path, monkeypatch, NEVER_ANSWERS)
+    # the process started is the one that must die. Its id is taken from the start itself, not
+    # from the file the stand-in writes: on a loaded machine half a second can run out before
+    # the stand-in's shell has written it (it was killed first, and no file was left to read)
+    stand_in_docker(tmp_path, monkeypatch, NEVER_ANSWERS)
     monkeypatch.setattr(workspace_module, "DOCKER_VERSION_TIMEOUT", 0.5)
+    started: list[int] = []
+    real_start = asyncio.create_subprocess_exec
+
+    async def noted(*args, **kw):
+        proc = await real_start(*args, **kw)
+        started.append(proc.pid)
+        return proc
+
+    monkeypatch.setattr(workspace_module.asyncio, "create_subprocess_exec", noted)
     began = time.monotonic()
     assert run(docker_unavailable_stoppable()) == "docker daemon not answering (docker version took over 20 s)"
     assert time.monotonic() - began < 5
-    assert_dies(int((folder / "pid").read_text()), within=1.0)
+    assert len(started) == 1
+    assert_dies(started[0], within=1.0)
 
 
 def test_a_docker_lane_without_docker_fails_loudly_and_writes_nothing(monkeypatch, tmp_path, handout):
