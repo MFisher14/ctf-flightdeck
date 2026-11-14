@@ -169,6 +169,33 @@ def test_a_player_typing_in_the_bar_goes_on_typing_when_the_first_challenge_arri
     drive(app, script, SIZE)
 
 
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_command_typed_while_the_board_fills_acts_on_the_lane_the_list_selects(layout):
+    """An empty board is not a board the player is on: once it fills, the bar, the why line
+    and a command act on the lane selected in the lane list, as on a board that was never empty."""
+    deck, app = console(by_hand=False, layout=layout)
+
+    async def script(pilot):
+        assert not app.fleet.board_focused  # nothing is shown that could have the focus
+        await press(pilot, "slash", *"kill")
+        # the board lists Web one first (by category), the lane list L01 on Zed
+        deck.release([Challenge("zed", "Zed", "pwn", 100), Challenge("web-one", "Web one", "web", 100)],
+                     [QueueEntry("zed", "glm"), QueueEntry("web-one", "glm")])
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.fleet
+        assert deck.lanes["L01"].challenge_id == "zed" and deck.lanes["L02"].challenge_id == "web-one"
+        assert bar(app).field.has_focus and bar(app).field.value == "/kill"
+        assert screen.selected_lane == "L01" and cursor_key(app) == "L01"
+        assert not screen.board_focused and screen.bar_lane() is deck.lanes["L01"]
+        await press(pilot, "enter")
+        assert "Killed L01" in status_line(app), status_line(app)
+        assert deck.lanes["L01"].state is LaneState.KILLED and deck.lanes["L02"].state is LaneState.RUNNING
+        assert isinstance(app.focused, DataTable) and app.focused.id == "lanes"  # back in the lane list, not on the board
+
+    drive(app, script, SIZE)
+
+
 # ---------------------------------------------------------------------- the command menu
 
 

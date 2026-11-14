@@ -311,6 +311,7 @@ class FleetScreen(Screen, inherit_bindings=False):
             page.update(empty_text(by_hand))
             if self.focused is not None and self.focused.id in ("board", "lanes"):
                 self.set_focus(None)  # a table that is not shown takes no keys: the screen's own keys act all the same
+            self.board_focused = False  # nor is the player on a board that is not shown: see on_descendant_focus
         if empty == self._empty:
             return
         self._empty = empty
@@ -471,9 +472,15 @@ class FleetScreen(Screen, inherit_bindings=False):
             self.fd.open_challenge(cid)
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """The player is on the board while it has the focus, and only a board that is shown:
+        on an empty board, or in a layout with none, Textual may still hand the board's table
+        the focus as the screen opens. Counted, it would stay "on the board" after the focus
+        went, and the bar, the why line and the keys would act on the board's first challenge
+        instead of the lane selected in the lane list."""
         if event.widget.id == "board":
-            self.board_focused = True
-            self.selected_challenge = self.selected_challenge or _cursor_key(event.widget)
+            self.board_focused = bool(self.fd.deck.challenges) and not self.board_hidden
+            if self.board_focused:
+                self.selected_challenge = self.selected_challenge or _cursor_key(event.widget)
         elif event.widget.id == "lanes":
             self.board_focused = False
         self._render_why()
