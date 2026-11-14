@@ -801,8 +801,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         if self.compact:
             return compact_keys_text()
         if self.simple:
-            lane = self.fd.deck.lanes.get(self.selected_lane or "")  # the lane the why line is about
-            return keys_text(context_keys(lane, by_hand=self.fd.adder is not None))
+            # the lane the keys act on (bar_lane), as help's "now" and the bar's title have it:
+            # none while the filter hides the selected lane, since every key refuses it then
+            return keys_text(context_keys(self.bar_lane(), by_hand=self.fd.adder is not None))
         shown = [b for b in self.BINDINGS if b.show and self._allowed(b.action)]
         return self._keys_text(fit_keys(shown, width)[0])
 

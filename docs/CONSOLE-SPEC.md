@@ -369,6 +369,7 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   |---|---|
   | none, on a board the player fills | `/new add a challenge  ? help  q quit` |
   | none, on a platform's board | `? help  q quit` |
+  | hidden by the filter | as for none: every key refuses it, and the bar's title says `no lane` |
   | needs nothing, or has finished | `enter open  / commands  ? help  q quit` |
   | waits for an approval | `a approve  d decline  enter open  / commands  ? help  q quit` |
   | has an alert with numbered answers | `1-9 answer`, and `x dismiss` when the alert is about its course, then `enter open  / commands  ? help  q quit` |
