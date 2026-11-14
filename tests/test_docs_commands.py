@@ -517,3 +517,27 @@ def test_the_guide_offers_the_deb_a_release_builds_and_no_homebrew_tap_while_the
     assert not [line for line in shown if line.split()[:1] == ["brew"]], "a brew command in a code block is one a player copies"
     assert "**Homebrew:** not yet. flightdeck's tap does not exist yet" in flat(section)
     assert "PyPI only" not in section  # 0.2.0 is long past: no release is "the first with a .deb" still to come
+
+
+def test_the_guide_says_ctrl_o_chooses_a_file_only_in_the_new_form_where_it_does():
+    """`ctrl+o` opens the file window in the `/new` form and nowhere else: the lane list has no
+    `ctrl+o`, and in a lane's view it is details. So each passage of the guide that sends a
+    player to `ctrl+o` for a file (a drop that did not land) says it is the form's, and what
+    works elsewhere: `/attach` with no file."""
+    from ctf_flightdeck.console.fleet import FleetScreen
+    from ctf_flightdeck.console.focus import FocusScreen
+    from ctf_flightdeck.console.screens import NewChallengePrompt
+
+    def action(screen, key: str) -> str | None:
+        return next((binding.action for binding in screen.BINDINGS if key in binding.key.split(",")), None)
+
+    assert action(NewChallengePrompt, "ctrl+o") == "choose_files"
+    assert action(FleetScreen, "ctrl+o") is None and action(FocusScreen, "ctrl+o") == "details"
+    about_files = re.compile(r"file window|choose|drop", re.I)
+    passages = [flat(part) for part in re.split(r"\n\s*\n|\n- ", _FENCE.sub("", read(GUIDE)))]  # paragraphs and list items
+    sent = [part for part in passages if "`ctrl+o`" in part and about_files.search(part)]
+    assert len(sent) >= 4, sent  # the /new form's own paragraphs, and the drops that did not land
+    for part in sent:
+        assert "form" in part, part
+    nothing_landed = [part for part in sent if "nothing at all happens" in part]
+    assert len(nothing_landed) == 1 and "`/attach <challenge>` with no file" in nothing_landed[0], nothing_landed
