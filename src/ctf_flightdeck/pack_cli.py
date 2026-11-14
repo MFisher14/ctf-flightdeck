@@ -27,6 +27,8 @@ app = typer.Typer(
 )
 
 ConfigOpt = Annotated[Path | None, typer.Option("--config", dir_okay=False, help="The config file to write the pack into (default: your config).")]
+# `info` writes nothing: it only looks in the config for the pack's place
+ReadConfigOpt = Annotated[Path | None, typer.Option("--config", dir_okay=False, help="The config file that names the pack when PACK is left out (default: your config). Only read: info writes nothing.")]
 
 
 @app.command("install")
@@ -161,7 +163,7 @@ def image_command(
 @app.command("info")
 def info_command(
     pack: Annotated[Path | None, typer.Argument(metavar="PACK", show_default=False, exists=True, file_okay=False, help="The pack's folder (default: your config's [l1] pack).")] = None,
-    config: ConfigOpt = None,
+    config: ReadConfigOpt = None,
 ) -> None:
     """Show what a pack is: its name, engines, setup command and image, and the programs it calls that are missing."""
     from . import pack as packs

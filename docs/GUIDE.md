@@ -54,12 +54,10 @@ pack, run `flightdeck pack install` again after an upgrade so the pack matches t
 
 ### Install with Homebrew or apt
 
-Not yet: 0.2.0 is on PyPI only. Both arrive with the first release after 0.2.0, and until then
-the commands below find nothing.
+**apt:** from 0.3.0 on, each release's page has a `.deb` for amd64 and for arm64, with a
+`SHA256SUMS` file to check it against.
 
 ```sh
-brew install mfisher14/tap/ctf-flightdeck        # macOS or Linux, from flightdeck's own tap
-
 # Debian or Ubuntu: the .deb for your machine (amd64 or arm64) from the release's page,
 # https://github.com/MFisher14/ctf-flightdeck/releases
 sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb
@@ -68,7 +66,11 @@ sudo apt install ./ctf-flightdeck_X.Y.Z_amd64.deb
 The `.deb` brings a Python of its own under `/opt/ctf-flightdeck` (Debian 12 has 3.11, and
 flightdeck needs 3.12), so it needs no Python from your system and changes none. There is no apt
 repository yet, so `apt upgrade` does not find a new release: install the next `.deb` over the
-old one. Neither way installs Docker.
+old one. It does not install Docker.
+
+**Homebrew:** not yet. flightdeck's tap does not exist yet, so
+`brew install mfisher14/tap/ctf-flightdeck` finds nothing: on macOS, install with `pipx` or `uv`
+as above.
 
 ## What a run costs
 
