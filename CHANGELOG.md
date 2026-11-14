@@ -18,8 +18,16 @@ screen, `flightdeck start` sets an event up, and `/new` hands a challenge to a l
 
 - `/config` alone opens a settings dialog: lanes at once and what happens to a flag.
 - In `/new`, `ctrl+v` pastes a screenshot from the clipboard, and the lanes' model reads the
-  text of a challenge's images into its description. The form says what is attached, and takes
-  a file dropped anywhere. `/attach` adds files to a challenge afterwards and restarts its lane.
+  text of a challenge's images into its description. The form says what is attached. `/attach`
+  adds files to a challenge afterwards and restarts its lane.
+- A challenge's description is kept exactly as you give it, in `/new` and in `flightdeck add
+  --text`: a path in it is text and never attaches a file. Files are attached only by handing
+  them over (`--file`, `ctrl+o`, `ctrl+v`, `/attach`, or a drop), and each one is shown
+  (`flightdeck add` prints it with its size). A device, your home folder itself and flightdeck's
+  own config folder or keys file are refused, with the reason.
+- `/new` stays open, with everything you typed, when the challenge cannot be added, and says
+  why. Big files are copied in the background while the console goes on, and a path pasted on
+  the command bar never replaces what you had typed there.
 - A challenge with no file and no target says so when added, and its lane is told to say what
   is missing and stop instead of spending its budget waiting.
 - `flightdeck vpn add|up|status|down` keeps an event's WireGuard or OpenVPN file and connects
