@@ -338,13 +338,14 @@ class FlightdeckApp(App[None]):
         """Whether `event` is held as part of a burst of typed text that may be a dropped
         path. A burst starts at a key a path starts with (PATH_STARTS) that no key came just
         before (a path in the middle of text that arrives all at once is text), and takes
-        every key of text that comes within BURST_GAP of the one before. When no more come it is a drop
-        only if all of it together is paths of files that exist (addchallenge.dropped) and it
-        is at least BURST_MIN characters. A burst that reads as dropped files of which one is
-        not there is said (say_not_there) and is a paste of that text: no key of it acts. Any
-        other burst is typed, in order, as if it had never been held (at most BURST_GAP late). A key that is not text (Enter, an arrow)
-        ends a burst as typing. Nothing a player types is read for paths: no one types a path
-        that exists at 50 keys a second."""
+        every key of text that comes within BURST_GAP of the one before. When no more come
+        it is a drop only if all of it together is paths of files that exist
+        (addchallenge.dropped) and it is at least BURST_MIN characters. A burst that reads
+        as dropped files of which one is not there is said (say_not_there) and is a paste of
+        that text: no key of it acts. Any other burst is typed, in order, as if it had never
+        been held (at most BURST_GAP late). A key that is not text (Enter, an arrow) ends a
+        burst as typing. Nothing a player types is read for paths: no one types a path that
+        exists at 50 keys a second."""
         from ..addchallenge import MAX_DROP
 
         if not (self.key_drops if self.key_drops is not None else not self.is_headless):

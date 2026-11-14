@@ -1553,6 +1553,30 @@ def test_a_file_that_is_gone_after_it_was_dropped_is_still_added_and_still_attac
     in_console(tmp_path, body, busy_lanes())
 
 
+def test_three_files_that_arrive_as_three_pastes_are_one_attach_in_the_order_they_came(tmp_path):
+    """Alacritty sends each dropped file as a paste of its own, one straight after the other."""
+    files = [tmp_path / name for name in ("a.bin", "b.bin", "c.bin")]
+    for file in files:
+        file.write_bytes(b"x")
+
+    async def body(run, app, pilot):
+        for file in files:
+            await app.on_event(events.Paste(f"{file} "))  # the next before the first one's copy is made
+        await on_bar(pilot, "/attach " + " ".join(f"'{copy_of(run, file.name, n)}'" for n, file in enumerate(files, 1)) + " ")
+        assert app._status[0] == "got c.bin (1 B): added to the /attach in the command bar, Enter attaches"
+        app.screen.query_one("#bar-input").value = ""
+        await pilot.press(*"/new Three", "enter")
+        await pilot.pause()
+        form = app.screen
+        for file in files:
+            await app.on_event(events.Paste(f"{file} "))
+        await until(pilot, lambda: form.files == [copy_of(run, file.name, n) for n, file in enumerate(files, 4)])
+        assert str(form.query_one("#new-attached").render()) == "3 files attached: a.bin (1 B), b.bin (1 B), c.bin (1 B)"
+        await pilot.press("escape")
+
+    in_console(tmp_path, body)
+
+
 def test_what_the_player_is_told_does_not_wait_for_a_drops_copy_to_be_removed(tmp_path, monkeypatch):
     import threading
 
