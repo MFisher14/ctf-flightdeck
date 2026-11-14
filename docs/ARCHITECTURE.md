@@ -199,8 +199,10 @@ full form is a Rich panel: the approval's rows first, then every open alert with
 suggestions as commands. With `calm=True` (details off, and never in the compact layout) it
 returns the rows of `views.calm_card()` as Text: the question, its numbered answers in the
 order of `views.quick_answers()`, and what else is open (`ALSO_WORDS`). `calm_card` takes the
-width a row has and shortens the quotes of the answers row to it, so the edge cuts no numbered
-answer away. `FocusScreen._show_card()` puts the card in a Static (`#now`), which for the calm
+width a row has and fits to it what a digit answers, since the view cuts a row at the card's
+edge: an approval's question folds onto further rows, the quotes of the answers shorten and
+then the answers take further rows, and the last row counts the names it has no room for and
+keeps `ctrl+o shows all`. `FocusScreen._show_card()` puts the card in a Static (`#now`), which for the calm
 card has a border in `views.card_border()`'s colour, the title "needs you now" and rows that
 never wrap; the Static is inside `CardScroll` (`#now-scroll`), which carries the card's share
 of the pane and scrolls a card taller than that. The box tells the view when its width changes

@@ -134,8 +134,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   taller than that scrolls in its half (the mouse wheel), from its first rows: the approval and
   its two answers are the ones in view.
 
-  With details off the card is calm: three rows at most, each cut at the card's edge with `…`,
-  and never a list of commands. Not in the compact layout, whose card keeps its own form.
+  With details off the card is calm: three rows where the card is wide enough for them, and
+  never a list of commands. Not in the compact layout, whose card keeps its own form.
 
   | Row | Drawn as, with details off |
   |---|---|
@@ -143,11 +143,22 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   | 2, its answers | `  1 more budget   0 stop the lane` for an approval (a flag: `  1 submit it   0 do not submit`). For an alert, `  1 hint "You are repeating python3 solve.py: it gives the…"   2 kill and re-queue fresh   /dismiss not a problem`: the numbers a digit answers, each with its label; an answer that sends its text at once (a hint, a new plan, a fork's approach) quotes the first 48 characters of it; three answers, then `+2 more`; `/dismiss not a problem` for an alert about the lane's course |
   | 3, only when something else is open | `  also: looping · past its effort budget · stalled   ctrl+o shows all`: each other alert in a word or two (`looping`, `past its effort budget`, `ignores the hint`, `wrong direction`, `stalled`, `near its cap`, `a flag to check`, `teammate`), then `1 more approval after this one` and `2 messages it has not read yet`. The alert an approval is about (its budget, its flag) is not named beside it |
 
-  In a card too narrow for row 2, the quotes shorten together until the row fits, down to 12
-  characters, and then there are none: the edge never cuts a numbered answer away to keep a
-  quote. With no question (no approval, no alert that wants an answer) the card is the message
+  A narrow card (beside the files pane on an 80-column terminal its rows have 38 cells) takes
+  more rows before the edge cuts what a digit answers:
+
+  - An approval's question folds onto further rows, four at most, so the flag that `1` submits
+    is whole on the card. An alert's reason is cut at the edge with `…`: the full card has it.
+  - The quotes of row 2 shorten together until the row fits, down to 12 characters, and then
+    there are none. Answers that still do not fit take further rows, each starting with its
+    number, and `/dismiss not a problem` a row of its own if it must.
+  - Row 3 keeps the names that fit and counts the rest: `  also: looping · +2 more   ctrl+o
+    shows all`, then `  also: +3 more   ctrl+o shows all`. Where even that does not fit,
+    `ctrl+o shows all` is on the next row.
+
+  With no question (no approval, no alert that wants an answer) the card is the message
   the lane has not read yet (`› sent, not read yet: TEXT`), or how many (`› 2 messages sent,
-  not read yet   ctrl+o shows all`), under the row of an alert that needs no answer. The
+  not read yet   ctrl+o shows all`, the key on the next row in a narrow card), under the row of
+  an alert that needs no answer. The
   border and its title are as on the full card: the colour of the most urgent alert that wants
   an answer, else the approval's. A suggestion with no key (advice only) is on the full card.
 
@@ -373,7 +384,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 | `1`-`9` | | Quick answers: the numbers in the why line and the needs-you card; one key, no enter (focus view: only while the chat box is empty) |
 | `c` | `/claim [challenge]` | Team mode: claim or release a challenge |
 | enter, `o` | `/open <lane>` | Open the lane in the focus view (`esc` or `/back` returns) |
-| `ctrl+o` (focus) | `/details` | In a lane's focus view: details on or off. On: every line of the transcript, and the full needs-you card; off: one row for each entry, a run of tool calls on two, and the card in three rows at most. Typed in the fleet, `/details` says it is that view's |
+| `ctrl+o` (focus) | `/details` | In a lane's focus view: details on or off. On: every line of the transcript, and the full needs-you card; off: one row for each entry, a run of tool calls on two, and the card in three rows (more only where it is too narrow for them). Typed in the fleet, `/details` says it is that view's |
 |  | `/diff [file]` | Show the files the lane changed |
 | `ctrl+c` | `/copy [output\|command\|flag\|all]` | `ctrl+c` copies the text selected with the mouse (a drag copies it as you let go; `esc` takes the selection down). `/copy` copies from the lane with no mouse: its last output (alone), that call's command, its flag, or all of its transcript (Focus view, Selecting and copying) |
 |  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` | Alone: a dialog with this run's settings (lanes at once, what happens to a flag); Enter applies, esc cancels. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run. |

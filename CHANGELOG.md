@@ -46,7 +46,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   and why it fired), the numbered answers (`1 more budget   0 stop the lane`), and a row for
   whatever else is open (`also: looping · past its effort budget · stalled`). `ctrl+o` shows
   the full card, every alert with its whole reason and each answer as a command, as the deck
-  layout does. On the full card the approval and its `1` and `0` now come first, and a card
+  layout does. Where the card is narrow (an 80-column terminal, beside the files pane) it takes
+  a row or two more: the flag that `1` submits is whole, no numbered answer is cut, and the
+  last row counts what it cannot name and still says `ctrl+o shows all`. On the full card the approval and its `1` and `0` now come first, and a card
   taller than its half of the pane scrolls: before, a lane with four alerts lost the approval
   under the edge. An approval's text on the card shows a credential's name but not its value,
   as the transcript does (before, the card showed the value).
