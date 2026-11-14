@@ -45,7 +45,11 @@ own cost (TurnReport.turn_end), with why and the model that spent it (an escalat
 old model too), also when it comes after the lane has ended (solved or killed mid-turn). A
 run of the CLI that ends in a turn it never reported settles it: the config price of the
 turn's tokens, or unknown. Each lane says at its start that its caps are checked only when
-a turn ends.
+a turn ends. Claude's assistant events carry each call's output tokens only as far as they
+had come; its result's modelUsage has them all, and the tokens the events missed are counted
+then (reconcile). A call an interrupt cuts short is in neither claude's cost nor its
+modelUsage: flightdeck charges the tokens its events showed at the config price, or says it
+cannot.
 
 How the player's controls reach the CLI:
 - pause: SIGSTOP to the CLI's process group; resume: SIGCONT. A take-over first lets the
@@ -56,18 +60,21 @@ How the player's controls reach the CLI:
   rule "a waiting lane spends nothing" holds. So is a lane that gave up while a flag of it
   still waits (for the player, or for the platform's answer): it gets no more messages and
   no new CLI, and ends when the deck ends it.
-- a hint, a new plan, a verdict on a flag or a hand-back while the agent works: SIGINT
-  ends the agent's turn (Claude Code ends the turn and waits for input; Codex exits), and
-  the message goes in as the next turn. Notes that can wait (budget approved) go with the
-  next message.
+- a hint, a new plan, a verdict on a flag or a hand-back while the agent works: the
+  agent's turn is ended, and the message goes in as the next turn. Claude Code gets an
+  interrupt request on its stdin (the stream-json control request), ends the turn and waits
+  for input; never SIGINT, on which it exits when it is already waiting for a message (its
+  turn can end just before a signal lands). Codex gets SIGINT and exits. Notes that can wait
+  (budget approved) go with the next message.
 - stop: stdin closed, then SIGINT, SIGTERM after a grace period, then SIGKILL, to the
   process group and to every process the CLI started.
 - escalation: the CLI is stopped and started again on the stronger model, in a fresh
   context, with the brief and prompts.escalation(lane summary).
 - whatever thaws a frozen CLI to interrupt or stop it (a message, a hand-back, a kill, an
-  escalation) sends the SIGINT before the SIGCONT: the CLI wakes with the interrupt there,
-  never going on first with a step it had chosen before (one whose wait ran out while it
-  was frozen).
+  escalation) sends the interrupt (claude's request, codex's SIGINT; a stop's SIGINT) before
+  the SIGCONT: the CLI wakes with the interrupt there, never going on first with a step it
+  had chosen before (one whose wait ran out while it was frozen). In a docker lane claude's
+  request travels with its stdin, and the SIGCONT by a `docker exec` of its own after it.
 
 Security. The CLI is the player's own tool and holds the player's credential for its model
 API, so the agent's own API key (or login token) is in the CLI's environment and the
@@ -104,8 +111,11 @@ followed; a folder another user owns stops the CLI, saying why), and keeps for t
 later starts (codex's resume finds its thread there).
 
 What this module assumes about the CLIs is listed in tests/fake_agent_cli.py, which plays
-them in the tests (a real run spends the player's money). Nothing here has been checked
-against a real run yet; claude_argv() and codex_argv() hold every flag in one place.
+them in the tests (a real run spends the player's money). Claude Code's stream (events,
+cost, interrupt, signals, configuration folder) was compared with a real run of 2.1.325
+(P86), with no tools; the fake marks what that run settled as CHECKED and the rest as
+ASSUMED (its tool calls among it). Codex has not been checked against a real run.
+claude_argv() and codex_argv() hold every flag in one place.
 """
 
 from __future__ import annotations
@@ -875,10 +885,14 @@ class _Proc:
         if container is None:
             self.inner.set_result(process.pid)
         self.frozen = False
-        self.interrupted = False  # we sent SIGINT to end a turn
+        self.interrupted = False  # we asked it to end its turn (claude: an interrupt request; codex: SIGINT)
         self.ending: asyncio.Future[None] | None = None
         self.stderr: asyncio.Future[None] | None = None  # the task reading its stderr
         self.cost = 0.0  # claude: total_cost_usd so far
+        self.usage = (0, 0, 0, 0)  # claude: its modelUsage so far, summed over models (fresh, written, read, output)
+        self.requests = 0  # claude: control requests sent
+        self.announced = False  # claude: its start noted (it sends an init event every turn)
+        self.limits: set[tuple[str, str]] = set()  # claude: the rate-limit states noted, (status, which limit)
         self.thread: str | None = None  # codex: the thread this turn ran in
         self.completed = False  # codex: turn.completed seen
         self.failed: str | None = None  # codex: turn.failed's message
@@ -1919,6 +1933,7 @@ class _ClaudeRun(_Run):
         super().__init__(*args, **kwargs)
         self.busy = False  # a turn runs: claude reads the next message only when it ends
         self.usage_seen: dict[str, tuple[int, int, int, int]] = {}
+        self.uncharged = False  # said once: a call cut short has no price here
 
     async def session(self) -> None:
         while await self.until_running():
@@ -1963,6 +1978,21 @@ class _ClaudeRun(_Run):
         proc.sent = sent
         self.busy = True
 
+    def interrupt(self, proc: _Proc) -> None:
+        """End claude's turn: an interrupt request on its stdin (the stream-json control
+        request the Agent SDK sends), never SIGINT. claude exits on a SIGINT that finds it
+        waiting for a message, and its turn can end just before a signal would land; an
+        interrupt request that finds it waiting does nothing. The request is written before
+        a frozen CLI is woken (sync), so it is there when the CLI runs again."""
+        stdin = proc.process.stdin
+        if stdin is None or stdin.is_closing() or not proc.alive or proc.ending is not None:
+            return
+        proc.requests += 1
+        line = json.dumps({"type": "control_request", "request_id": f"flightdeck-{proc.requests}",
+                           "request": {"subtype": "interrupt"}})
+        stdin.write(line.encode("utf-8") + b"\n")
+        proc.interrupted = True
+
     def deliver(self) -> None:
         lane = self.lane()
         proc = self.proc
@@ -1970,8 +2000,7 @@ class _ClaudeRun(_Run):
             return  # not started yet: the first message carries everything
         if self.busy:
             if (lane.hints or self.notes) and not proc.interrupted:
-                proc.interrupted = True
-                proc.send(signal.SIGINT, tree=False)  # claude ends the turn; the message goes when it has
+                self.interrupt(proc)  # claude ends the turn; the message goes when it has
             return
         hints = list(lane.hints)
         extra = self.compose(hints)
@@ -2009,10 +2038,39 @@ class _ClaudeRun(_Run):
         elif kind == "result":
             await self.result(proc, event, current)
         elif kind == "system":
-            if event.get("subtype") == "init" and current:
+            if event.get("subtype") == "init" and current and not proc.announced:  # it sends one every turn
+                proc.announced = True
                 self.init(event)
+        elif kind == "rate_limit_event":
+            if current:
+                self.rate_limit(proc, event.get("rate_limit_info"))
+        elif kind == "control_response":
+            response = event.get("response")
+            if current and isinstance(response, dict) and response.get("subtype") == "error":
+                self.note(f"claude refused flightdeck's interrupt: {_one_line(_str(response.get('error')), 200) or 'no reason given'}")
         elif kind != "stream_event":
             self.unknown_event(proc, _str(kind))
+
+    def rate_limit(self, proc: _Proc, info: Any) -> None:
+        """claude's word on its plan's usage limits (a subscription login): a note when a limit
+        is near, or reached, once per state and limit."""
+        if not isinstance(info, dict):
+            return
+        status = _one_line(_str(info.get("status")), 40)
+        which = _one_line(_str(info.get("rateLimitType")), 40) or "usage"
+        if status not in ("allowed_warning", "rejected") or (status, which) in proc.limits:
+            return
+        proc.limits.add((status, which))
+        resets = info.get("resetsAt")
+        when = ""
+        if isinstance(resets, (int, float)) and not isinstance(resets, bool) and 0 < resets < 1e11:
+            when = f"; it resets at {time.strftime('%Y-%m-%d %H:%M', time.localtime(resets))}"
+        if status == "rejected":
+            self.note(f"claude says its {which} limit is reached{when}: its model calls are refused until then")
+            return
+        used = info.get("utilization")
+        share = f"{used:.0%} of " if isinstance(used, (int, float)) and not isinstance(used, bool) and 0 <= used <= 1 else ""
+        self.note(f"claude says {share}its {which} limit is used{when}")
 
     def count(self, message: dict) -> None:
         """An assistant message's usage. claude sends one event per content block, each with
@@ -2031,6 +2089,35 @@ class _ClaudeRun(_Run):
         self.usage_seen[key] = new
         fresh, created, read, out = (n - o for n, o in zip(new, old))
         self.add_tokens(prompt=fresh + created + read, completion=out, cached=read, written=created)
+
+    def reconcile(self, proc: _Proc, event: dict) -> tuple[int, int, int, int]:
+        """A turn's tokens, by claude's own count. An assistant event carries its call's usage
+        as it stood when the block was sent: the input and cache counts are the call's, the
+        output often only what had come by then. The result's modelUsage (per model, from the
+        process's start) has the whole of each call, so what the turn's assistant events
+        missed is counted now. Returned: what they saw that modelUsage leaves out (fresh,
+        written, read, output), a call cut short, which claude neither counts nor charges. A
+        result with no modelUsage leaves the counts as they are."""
+        models = event.get("modelUsage")
+        if not isinstance(models, dict):
+            return (0, 0, 0, 0)
+        now = [0, 0, 0, 0]
+        for entry in models.values():
+            if isinstance(entry, dict):
+                now[0] += _count(entry.get("inputTokens"))
+                now[1] += _count(entry.get("cacheCreationInputTokens"))
+                now[2] += _count(entry.get("cacheReadInputTokens"))
+                now[3] += _count(entry.get("outputTokens"))
+        grew = [max(n - o, 0) for n, o in zip(now, proc.usage)]
+        proc.usage = (max(now[0], proc.usage[0]), max(now[1], proc.usage[1]), max(now[2], proc.usage[2]),
+                      max(now[3], proc.usage[3]))
+        prompt, completion, cached, written = self.turn_tokens
+        seen = [max(prompt - cached - written, 0), written, cached, completion]
+        fresh, created, read, out = (max(g - s, 0) for g, s in zip(grew, seen))
+        if fresh or created or read or out:
+            self.add_tokens(prompt=fresh + created + read, completion=out, cached=read, written=created)
+        left = tuple(max(s - g, 0) for g, s in zip(grew, seen))
+        return left[0], left[1], left[2], left[3]
 
     def action(self, name: str, args: dict) -> str:
         if name == "Bash":
@@ -2058,7 +2145,8 @@ class _ClaudeRun(_Run):
         """A turn ended: its cost, and what the lane does next."""
         text = _str(event.get("result"))
         subtype = _str(event.get("subtype"))
-        interrupted = proc.interrupted
+        # an interrupt that came as the turn ended finds claude waiting and does nothing: then the turn ended by itself
+        interrupted = proc.interrupted and subtype == "error_during_execution"
         failed = not interrupted and (event.get("is_error") is True or subtype != "success")
         last: tuple[list[str], list[str]] = ([], [])
         if current and not failed and not interrupted:
@@ -2066,14 +2154,26 @@ class _ClaudeRun(_Run):
             await self.vet(last[1])  # a flag they claim, looked for in the challenge's own text
             current = self.current(proc)  # stopped or escalated while they were searched
         # from here on nothing waits: the turn is accounted for before anything goes to claude
+        uncounted = self.reconcile(proc, event) if current else (0, 0, 0, 0)
         total = _dollars(event.get("total_cost_usd"))
+        price = self.driver.prices.get(proc.model)
         if total is None:
-            price = self.driver.prices.get(proc.model)
             prompt, completion, cached, written = self.turn_tokens
             dollars = call_cost(None, price, prompt, completion, cached, written)
         else:  # total_cost_usd counts from the start of this process
             dollars = total - proc.cost if total >= proc.cost else total
             proc.cost = total
+            if any(uncounted):  # a call cut short: claude charges it nowhere, so the config price does
+                fresh, written, read, out = uncounted
+                extra = call_cost(None, price, fresh + written + read, out, read, written)
+                if extra is not None:
+                    dollars += extra
+                elif not self.uncharged:
+                    self.uncharged = True
+                    self.note(
+                        f"claude leaves a model call cut short out of its cost, and the config has no price for "
+                        f"{proc.model}: such a call's cost is not in the lane's dollars"
+                    )
         self.turn_tokens = [0, 0, 0, 0]
         self.cost_due = False
         tokens, cached = self.take_tokens()
@@ -2100,7 +2200,9 @@ class _ClaudeRun(_Run):
                 self.report(TurnReport(turn=False, action=f"says: {_one_line(said, 200)}"))
             if failed:
                 why = _one_line(text, 300)
-                self.report(TurnReport(turn=False, gave_up=f"claude's turn failed ({_one_line(subtype or 'no subtype', 60)})"
+                # an error claude reports as subtype "success" (not logged in, a refused key) names itself in terminal_reason
+                kind = subtype if subtype and subtype != "success" else _str(event.get("terminal_reason")) or subtype
+                self.report(TurnReport(turn=False, gave_up=f"claude's turn failed ({_one_line(kind or 'no subtype', 60)})"
                                                            + (f": {why}" if why else "")))
                 return
             if interrupted:
