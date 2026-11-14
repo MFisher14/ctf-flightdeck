@@ -104,7 +104,7 @@ def test_every_flightdeck_command_a_page_shows_names_a_command_and_options_it_ha
 
 
 def test_a_command_or_option_that_does_not_exist_is_reported_and_a_real_line_is_not():
-    assert problems("flightdeck start --name X --token-stdin --no-launch < token.txt") == ["flightdeck start has no option --token-stdin"]
+    assert problems("flightdeck start --name X --token-file token.txt --no-launch") == ["flightdeck start has no option --token-file"]
     assert problems("flightdeck strat --name X") == ["flightdeck has no command strat"]
     assert problems("flightdeck pack info --no-such=1") == ["flightdeck pack info has no option --no-such"]
     assert problems("flightdeck vpn sideways ~/ctf/example-ctf") == ["flightdeck vpn has no command sideways"]
@@ -133,69 +133,17 @@ def test_command_lines_come_from_code_blocks_and_code_spans_and_from_nowhere_els
 # ---------------------------------------------------------------------- a scripted start
 
 
-def scripted_start() -> str:
-    """The guide's passage on `start` from a script: from "For a script" to "By hand"."""
-    guide = read(GUIDE)
-    assert guide.count("\nFor a script, ") == 1 and "\nBy hand (a site that is not CTFd)" in guide, "the guide's passage on a scripted start has moved"
-    return guide.split("\nFor a script, ", 1)[1].split("\nBy hand (a site that is not CTFd)", 1)[0]
-
-
-def test_start_has_no_option_for_the_token_and_the_guide_says_so_and_where_it_goes_instead():
-    """The guide tells a script that the token is the one answer `start` takes no option for.
-    The day `start` gets one, this fails: the passage (and llms.txt's line on `start`) is
-    rewritten with it, from what the option does."""
+def test_start_takes_the_token_from_a_variable_or_a_pipe_never_as_a_value_and_the_guide_and_llms_txt_say_so():
+    """A token given as an option's value would stay in the shell's history and show in the
+    process list: `start` has --token-env NAME and --token-stdin, and no option that takes the
+    token itself. The guide and llms.txt name both."""
     command = typer.main.get_command(cli.app).commands["start"]
-    for_the_token = sorted(name for name in options_of(command) if "token" in name)
-    assert for_the_token == [], f"start has an option for the token now ({', '.join(for_the_token)}): the guide says it has none"
-    passage = flat(scripted_start())
-    assert passage.startswith("every question but the token has an option (`flightdeck start --help`)")
-    assert f"`{start.token_variable('Example CTF')}` for \"Example CTF\"" in passage
-    assert "in your environment or your keys file" in passage
-
-
-def test_the_guides_scripted_start_runs_as_written_and_reads_the_token_from_the_variable_it_names(tmp_path, monkeypatch):
-    lines = block_lines(scripted_start())
-    exported = [match.group(1) for line in lines if (match := re.match(r"export (\w+)=", line))]
-    starts = [line for line in lines if line.startswith("flightdeck start ")]
-    plays = [line for line in lines if line.startswith("flightdeck play ")]
-    assert (len(exported), len(starts), len(plays)) == (1, 1, 1), lines
-    variable = exported[0]
-    arguments = shlex.split(starts[0], comments=True)[1:]
-    played = shlex.split(plays[0], comments=True)[2]
-    assert played.startswith("~/"), played
-
-    config = tmp_path / "config.toml"
-    config.write_text('[models]\nladder = ["m"]\n[lanes]\nruntime = "host"\n')
-    keys_file = tmp_path / "keys.env"
-    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(config))
-    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys_file))
-    monkeypatch.setattr(cli, "_at_terminal", lambda: False)
-    launched = []
-    monkeypatch.setattr(cli, "play", lambda **kwargs: launched.append(kwargs))
-
-    # as written: the variable is exported, then start
-    home = tmp_path / "with"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv(variable, SECRET)
-    result = CliRunner().invoke(cli.app, arguments)
-    folder = home / played[2:]
-    assert result.exit_code == 0, result.output
-    assert f"token: {variable} is already set in your environment" in result.output and SECRET not in result.output
-    assert (folder / "event.toml").is_file(), "the folder the guide then plays is not the one start made"
-    assert f"play: flightdeck play {folder}" in result.output.splitlines() and launched == []
-    assert SECRET not in (folder / "event.toml").read_text() and not keys_file.exists()
-
-    # "Without the variable, start still sets the event up and says which variable to put the token in"
-    assert "Without the variable, `start` still sets the event up and says which variable to put the token in" in flat(scripted_start())
-    home = tmp_path / "without"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.delenv(variable)
-    result = CliRunner().invoke(cli.app, arguments)
-    assert result.exit_code == 0, result.output
-    assert f"token: not set yet. Put {variable}=<your CTFd access token> in {keys_file} (chmod 600)" in result.output
-    assert (home / played[2:] / "event.toml").is_file() and launched == []
+    assert sorted(name for name in options_of(command) if "token" in name) == ["--token-env", "--token-stdin"]
+    guide = flat(read(GUIDE))
+    assert "no option takes it, because a command line stays in your shell's history" in guide
+    assert "`--token-env NAME` reads it from the environment variable you name" in guide and "`--token-stdin` from a pipe" in guide
+    llms = flat((GUIDE.parent.parent / "llms.txt").read_text(encoding="utf-8"))
+    assert "`--token-env NAME` or `--token-stdin`" in llms
 
 
 # ---------------------------------------------------------------------- the README's own claims
