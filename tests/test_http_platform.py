@@ -675,6 +675,26 @@ def test_a_challenges_ref_is_one_path_segment_whatever_it_holds():
     assert verdict.word == "unjudged"
 
 
+@pytest.mark.parametrize("ref", [".", ".."])
+def test_a_ref_of_a_dot_or_two_is_never_sent_as_another_route(tmp_path, ref):
+    """httpx folds "/a/../b" into "/b", whatever is percent-encoded around it: the flag and
+    the token would go to a route the table never named."""
+    def site(request):
+        if request.route == "/api/tasks":
+            return Reply(200, {"tasks": [{"id": ref, "title": "Dots"}]})
+        return Reply(200, {"status": "ok"})
+
+    config = {**table(), "detail": {"request": ["GET", "/api/tasks/{ref}"], "description": "$.text"}}
+    with FakeSite(site) as fake:
+        error = failure(caller(fake, config).submit(ref, "t{x}"))
+        assert fake.requests == [] and not error.timed_out
+        reply = run(caller(fake, config).pull(tmp_path))
+        assert [r.route for r in fake.requests] == ["/api/tasks"]  # no detail asked for
+    assert str(error) == f"POST /api/tasks/{{ref}}/flag: {{ref}} is {ref}, which would name another route, so flightdeck did not send it"
+    assert reply.challenges == () and reply.problems == (
+        f"Dots: GET /api/tasks/{{ref}}: {{ref}} is {ref}, which would name another route, so flightdeck did not send it",)
+
+
 def test_a_web_page_where_an_answer_should_be_is_a_stop_for_a_human_never_a_verdict(tmp_path):
     page = Reply(200, "<!doctype html><html><body>Checking your browser...</body></html>")
     config = table(**{"submit.status": {"200": "correct", "403": "incorrect"}})

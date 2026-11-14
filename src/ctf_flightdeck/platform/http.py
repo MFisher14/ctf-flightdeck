@@ -1090,8 +1090,13 @@ class HttpCaller:
 
     def _address(self, route: Route, values: Mapping[str, str]) -> httpx.URL:
         """The route's address under event.url, each placeholder percent-encoded whole (a ref
-        of "../x" is one path segment). CallFailed unless it is on event.url's origin."""
+        of "../x" is one path segment). CallFailed unless it is on event.url's origin, and
+        for a value of "." or "..", which no encoding keeps as one segment (httpx folds it)."""
         filled = {**values, **({"game": self.config.game} if self.config.game is not None else {})}
+        for match in _PLACEHOLDER.finditer(route.path):
+            if filled[match.group(1)] in (".", ".."):
+                raise CallFailed(f"{route}: {{{match.group(1)}}} is {filled[match.group(1)]}, which would name another route, "
+                                 "so flightdeck did not send it")
         path = _PLACEHOLDER.sub(lambda match: quote(filled[match.group(1)], safe=""), route.path)
         target = None
         with contextlib.suppress(httpx.InvalidURL):
