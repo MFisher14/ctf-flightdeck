@@ -488,13 +488,16 @@ def test_the_guide_and_the_spec_say_of_the_command_menu_what_the_commands_do():
 
     # the commands the pages say list words after their name are the ones that do
     with_words = [name for name, command in commands.BY_NAME.items() if command.words is not None]
-    assert sorted(with_words) == ["autopilot", "layout", "open", "queue", "sort", "theme"]
+    assert sorted(with_words) == ["autopilot", "copy", "layout", "open", "queue", "sort", "theme"]
     for page in (guide, menu):
         for name in with_words:
             assert f"`/{name}`" in page, name
     assert [word.text for word in commands.BY_NAME["layout"].words(commands.State())] == list(LAYOUTS) == ["simple", "deck"]
     assert [word.text for word in commands.BY_NAME["autopilot"].words(commands.State())] == ["on", "off"]
     assert [word.text for word in commands.BY_NAME["sort"].words(commands.State())] == [mode.value for mode in SortMode]
+    assert [word.text for word in commands.BY_NAME["copy"].words(commands.State())] == ["output", "command", "flag", "all"]
+    assert "`output`, `command`, `flag` and `all` after `/copy`" in flat(guide)
+    assert "`output`, `command`, `flag` and `all` for `/copy`" in flat(menu)
     assert "`simple` and `deck` after `/layout`" in flat(guide) and "`on` and `off` after `/autopilot`" in flat(guide)
     assert "`simple` and `deck` for `/layout`" in flat(menu) and "`on` and `off` for `/autopilot`" in flat(menu)
 

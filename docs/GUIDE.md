@@ -522,7 +522,8 @@ name to find it:
 - After the name and a space, the menu lists what the command takes: the lanes with their
   challenge and state after `/open` (type `l2`, or part of the challenge's name), the parked
   and new challenges after `/queue`, your themes after `/theme`, `simple` and `deck` after
-  `/layout`, the sort modes after `/sort`, `on` and `off` after `/autopilot`.
+  `/layout`, the sort modes after `/sort`, `on` and `off` after `/autopilot`, and `output`,
+  `command`, `flag` and `all` after `/copy`.
 - When nothing matches, the menu says `No commands match "/x"` and stays open, so you can
   correct what you typed.
 
