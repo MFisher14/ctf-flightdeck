@@ -675,10 +675,15 @@ def write_setup(answers: Answers, path: Path, *, keys: Mapping[str, str] | None 
     named = {answers.key_env, answers.fallback.key_env if answers.fallback is not None else ""} - {""}
     if any(variable not in named for variable in keys or {}):
         raise ValueError("a key was given for a variable the config does not name")
+    from .config_edit import replace_file
+
     try:
-        before: str | None = path.read_text(encoding="utf-8")  # only with force: check_config refuses one that is there
+        before: bytes | None = path.read_bytes()  # only with force: check_config refuses one that is there
     except FileNotFoundError:
         before = None
+    except OSError as exc:  # said by the callers as "cannot write <path>: <strerror>"
+        raise OSError(exc.errno, f"the config there cannot be read ({exc.strerror or type(exc).__name__}), so it is not "
+                                 "replaced: it could not be put back if the key cannot be kept") from None
     write_config(answers, path, force=force)
     try:
         for variable, value in (keys or {}).items():
@@ -687,7 +692,7 @@ def write_setup(answers: Answers, path: Path, *, keys: Mapping[str, str] | None 
         if before is None:
             path.unlink(missing_ok=True)
         else:
-            path.write_text(before, encoding="utf-8")
+            replace_file(path, before)  # byte for byte, in one step, with the file's mode
         raise
     return path
 

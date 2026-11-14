@@ -1124,3 +1124,48 @@ def test_a_config_that_cannot_be_written_keeps_no_key_and_a_refused_key_puts_the
     with pytest.raises(keys.KeysError):
         setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY}, force=True)
     assert target.read_text() == "# the player's old config\n"
+
+
+def test_a_replaced_config_goes_back_byte_for_byte_with_its_mode(tmp_path, monkeypatch):
+    """With --force and a key the keys file refuses, the old config goes back as it was: its
+    line endings and bytes that are not UTF-8 too (a text round trip changes both), and its mode."""
+    import os
+
+    from ctf_flightdeck import keys, setup
+
+    keys_file = tmp_path / "keys.env"
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys_file))
+    keys.save("OPENROUTER_API_KEY", "the-old-synthetic-key")
+    keys_file.chmod(0o644)  # the keys file refuses to keep a key in a file others can read
+    target = tmp_path / "config.toml"
+    old = b"# the player's old config\r\n# caf\xe9\r\n"
+    target.write_bytes(old)
+    target.chmod(0o640)
+    with pytest.raises(keys.KeysError):
+        setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY}, force=True)
+    assert target.read_bytes() == old and (os.stat(target).st_mode & 0o777) == 0o640
+    assert [entry.name for entry in tmp_path.iterdir() if entry.name.startswith("config.toml")] == ["config.toml"]
+
+
+def test_a_config_there_that_cannot_be_read_is_not_replaced_and_the_reason_is_said(tmp_path, monkeypatch):
+    """With --force, the config there is read first so it can go back: one that cannot be read
+    stops the setup before anything is written, with why, and no key is kept."""
+    import os
+
+    from ctf_flightdeck import keys, setup
+
+    if os.geteuid() == 0:
+        pytest.skip("not run: as root, a file's mode does not stop a read")
+    keys_file = tmp_path / "keys.env"
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys_file))
+    target = tmp_path / "config.toml"
+    target.write_text("# the player's old config\n")
+    target.chmod(0o200)
+    try:
+        with pytest.raises(OSError) as caught:
+            setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY}, force=True)
+    finally:
+        target.chmod(0o600)
+    assert caught.value.strerror == ("the config there cannot be read (Permission denied), so it is not replaced: "
+                                     "it could not be put back if the key cannot be kept")
+    assert target.read_text() == "# the player's old config\n" and not keys_file.exists()
