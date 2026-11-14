@@ -324,13 +324,13 @@ class FlightdeckApp(App[None]):
             driver.write(data)
 
     def header_text(self, width: int, *, clock_keys: bool = True, compact: bool = False) -> Text:
-        """The header; `clock_keys` says how to freeze the mock clock (only where space does).
+        """The header; `clock_keys` says how to freeze the mock clock (only where `,` does).
         `compact`: the compact layout's header (views.header_pieces); otherwise the header of
         the layout in use."""
         note = ""
         if self._ticker is not None:
             if clock_keys:
-                note = "⏸ frozen: space resumes, . steps" if self.frozen else "▶ live: space freezes"
+                note = "⏸ frozen: , resumes · . steps" if self.frozen else "▶ live: , freezes"
             else:
                 note = "⏸ frozen" if self.frozen else "▶ live"
         return views.header(self.deck, mock=self.mock, note=note, width=width, compact=compact, simple=self.layout == "simple")

@@ -795,6 +795,7 @@ class ChallengeCard(ModalScreen[str | None]):
 
 KEY_HELP = (
     ("enter / o", "Open the selected lane full screen (its transcript, files and a chat box)"),
+    ("space", "Peek: the selected lane's last steps under the lane list, without leaving it; it follows the selection (space or esc closes it)"),
     ("p", "Pause or resume the selected lane"),
     ("h", "Hint: a message the lane reads on its next turn (opens /hint in the bar)"),
     ("r", "Redirect: replace the lane's plan (opens /redirect, with the suggestion)"),
@@ -811,7 +812,7 @@ KEY_HELP = (
     ("tab", "Move focus: board, lanes, command bar (the board hides under 100 columns)"),
     ("enter on ▸", "Expand or collapse finished lanes"),
     ("enter on board", "Open the challenge's lane; with none or several, its card: queue, claim, 1-9 open a lane"),
-    ("esc", "Leave the command bar, clear the filter, or go back to the fleet"),
+    ("esc", "Leave the command bar, close the peek, clear the filter, or go back to the fleet"),
     ("ctrl+n", "In a lane: the next lane that needs you, in attention order, round to the first"),
     ("ctrl+o", "In a lane: details on or off. Off: one row for each entry, a run of tool calls on two"),
     ("mouse drag", "Select text: copied as you let go (double-click: a whole entry; triple-click: all)"),
@@ -826,7 +827,7 @@ BATCH_KEY_HELP = (
           "it wrong. The lane is not touched; the alert stays quiet as an answered one does"),
 )
 MOCK_KEYS = (
-    ("space", "Freeze or restart the mock clock"),
+    (",", "Freeze or restart the mock clock"),
     (".", "Step the mock clock one tick"),
 )
 MOCK_KEY_HELP = {

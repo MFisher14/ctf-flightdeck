@@ -53,6 +53,43 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   never a settled `$0.00` then.
 - **Why line**: under the list, why the selected lane is flagged and the keys that answer it
   (for an alert about its course, also `x dismiss`).
+- **Peek** (`space`, P68): a panel between the lane list and the why line with the last rows of
+  the selected lane's log, so a hint or a redirect can be chosen without leaving the list.
+  - Closed until `space` opens it; `space` or `esc` closes it (`esc` first leaves the command
+    bar, then closes the peek, then clears the filter). It stays open or closed for the run:
+    through a lane's view, `/layout` and a resize.
+  - Its first row is a rule that names the lane and its challenge: the lane the keys and the
+    command bar act on, so with the board in focus it is the challenge's only lane, and `no
+    lane` when no lane or several work it, or when the filter hides the selected lane. It
+    follows the selection.
+  - Under the rule, six rows at most, oldest first, each cut at the edge and never wrapped.
+    They are the calm transcript's rows (Focus view, below) with a run of tool calls opened:
+    every call is a row (`⏺ the call → the first line of its output`, each with ` …+N lines`
+    when it has more), and the model's words, a message or an intervention, a note, an alert
+    (`▲ Loop alert · turn 3`) and an approval (`◆ asked you · turn 12: …`) are a row each. A
+    lane with no step yet says so. The panel is the same height for every lane, so the list
+    does not move with the cursor.
+  - Its rows come from the lane list, which scrolls and keeps the selected lane in view. The
+    list keeps three lane rows: on a terminal shorter than 23 lines (25 in the compact layout)
+    the peek has fewer than six rows, and under 18 (20) it has none: `space` then opens
+    nothing and the status line says how tall the terminal must be. An open peek that a
+    resize leaves no room for is hidden until there is room again.
+  - Those heights are with a status line of one row and the `/` menu closed. Both take their
+    rows from the lanes panel, and the peek is sized for what the panel has left: it gives up
+    one row for each of theirs, the oldest first (its last row is always the lane's last
+    step), and is hidden when not one is left; only then does the list go under three lane
+    rows, and it keeps the selected lane in view. The whole `/` menu is ten rows: the peek
+    stays beside it from 28 lines (30 in the compact layout) and keeps all six rows from 33
+    (35). On 24 lines the whole menu hides the peek, and it is back as the command is typed
+    (the menu lists fewer) or the menu closes. On a terminal tall enough, `space` under a
+    status line of several rows that has the room opens the peek hidden: what the status line
+    says stays, and the peek shows once there is room.
+  - The lanes panel's bottom border carries the hint: `space peek`, `space closes the peek`
+    while it is open, `no room for the peek` while it is open and hidden (a short terminal,
+    the `/` menu, a status line of several rows). No key line names
+    it; `?` does.
+  - The peek draws the same in every layout and changes nothing while it is closed.
+    `flightdeck doctor` measures the lane list with the peek closed.
 - **Command bar**: acts on the same lane the keys do (the board challenge's only lane when the board
   has focus; refused when the filter hides the selected lane). Its suggestions follow the selection.
   Enter on an empty bar opens the selected lane. A command that takes no argument refuses a stray
@@ -274,6 +311,7 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   any are, ` · sort X` only when the sort is not by attention, and the filter as in `deck`.
 - **Why line.** Why the selected lane is flagged and its answers, as in `deck`, for a lane with
   an alert or an approval waiting; blank for any other lane (its row says what it is doing).
+- **Peek.** `space`, as in `deck` (Fleet view, above): under the list, over the why line.
 - **Key line.** Only the keys that apply to the selected lane now. Every other key still acts,
   and `?` lists them all:
 
@@ -573,6 +611,8 @@ matters there: what needs you and why, the one-key answers, and each lane's stat
   rows), then its numbered answers, one a row (three at most; with more, the last row says how
   many more: the lane's needs-you card has them all), then a row with `x dismiss` for an alert
   about its course and `enter open`.
+- **Peek.** `space`, as on a wide terminal, directly over the why line; it needs 20 lines for
+  one row and 25 for all six.
 - **Key lines.** Fleet: `a yes  d no  1-9 answer  / cmd  ? help  q quit`. Focus: `esc fleet
   1-9 0 answer  / cmd  ctrl+n next`. Every other key still works (`?` lists them): only the line
   is shorter.

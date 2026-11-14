@@ -1,6 +1,6 @@
-"""Rendering for the console: header, board and lane rows, the fleet's "why" line, and the
-focus view's transcript (every line: transcript_lines; calm: entries, entry_text), "needs you
-now" card, files and diff.
+"""Rendering for the console: header, board and lane rows, the fleet's "why" line and its peek
+at the selected lane (peek), and the focus view's transcript (every line: transcript_lines;
+calm: entries, entry_text), "needs you now" card, files and diff.
 
 The console has two layouts (config.LAYOUTS): `deck`, the whole dashboard, and `simple`, which
 shows what needs the player and little else. The functions here that draw differently in
@@ -30,6 +30,7 @@ from rich import box
 from rich.cells import cell_len, set_cell_size
 from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
+from rich.rule import Rule
 from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
@@ -1270,6 +1271,56 @@ def entry_text(deck: Deck, lane: Lane, entry: Entry) -> Text:
     if more:
         out.append(_more_lines(more), theme.MUTED)
     return out
+
+
+# ---------------------------------------------------------------------- the peek under the lane list (space)
+
+PEEK_ROWS = 6  # the rows of a lane's log the peek shows at most; a short terminal has fewer (fleet.peek_rows)
+PEEK_EMPTY = "nothing yet: the lane has taken no step"
+PEEK_NO_LANE = "the peek shows the lane the keys act on: there is none here"
+
+
+def peek_lines(deck: Deck, lane: Lane, rows: int) -> list[Text]:
+    """The last `rows` rows of `lane`'s log, oldest first, each one row that the peek cuts at
+    its edge. They are the calm transcript's rows (entry_text) with a run of tool calls
+    opened: every call has its own row (its first line, then its output's), since the last
+    few steps are what the player reads a peek for, where the lane's own view counts them."""
+    out: list[Text] = []
+    for index in range(len(lane.actions) - 1, -1, -1):
+        if len(out) >= rows:
+            break
+        action = lane.actions[index]
+        if _is_call(action):
+            for call in reversed(calls_of(action)):
+                row = Text("⏺ ", theme.GREEN)
+                _call_row(deck, lane, call, row)
+                out.append(row)
+        else:
+            kind = "says" if action.kind is ActionKind.STEP else _ENTRY_KIND[action.kind]
+            out.append(entry_text(deck, lane, Entry(index, kind, (action,))))
+    return out[:rows][::-1]
+
+
+def peek(deck: Deck, lane: Lane | None, rows: int) -> RenderableType:
+    """The peek: a rule that names the lane and its challenge (a message typed in the bar goes
+    to that lane), then the last `rows` rows of its log (peek_lines), each cut at the edge.
+    With no lane to show (no lane yet, the filter hides the selected one, or the board has the
+    focus on a challenge that no lane or several work), it says so."""
+    title = Text(no_wrap=True, overflow="ellipsis")
+    if lane is None:
+        title.append("no lane", theme.MUTED)
+        lines = [Text(PEEK_NO_LANE, theme.MUTED)]
+    else:
+        title.append(lane.id, "bold")
+        title.append(" · ", theme.MUTED)
+        title.append(untrusted(deck.challenges[lane.challenge_id].name, one_line=True), "bold")
+        lines = peek_lines(deck, lane, rows) or [Text(PEEK_EMPTY, theme.MUTED)]
+    body = Text(no_wrap=True, overflow="ellipsis")
+    for i, line in enumerate(lines):
+        body.append("\n" if i else "")
+        body.append(" ")
+        body.append_text(line)
+    return Group(Rule(title, align="left", style=theme.BORDER), body)
 
 
 # ---------------------------------------------------------------------- /copy: a lane's text for the clipboard
