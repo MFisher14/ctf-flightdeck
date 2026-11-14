@@ -28,7 +28,8 @@ problem: report it privately, never in a public issue.
   plugin's program running when your config has no `[plugins.NAME]` table for it, or because an
   event profile, a board or a challenge named it; flightdeck fetching, installing or updating
   one; a model API key, or anything of your environment outside the short list that page gives,
-  in the program's environment; an event's token given to another event's plugin; a plugin's
+  in the program's environment; an event's token given to a plugin other than the one its
+  profile selects; a plugin's
   output steering flightdeck (a file written outside the board's challenge folders, a path that
   leaves the staging folder, a link followed, a reply that is taken as a verdict when it is not
   one of the five words); the token's value shown or logged from something a plugin printed.

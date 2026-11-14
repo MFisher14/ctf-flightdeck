@@ -3,6 +3,36 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Built, not released: a calmer console, themes, plugins (2026-11-14)
+
+Three proposals, built and waiting for a release (P51 to P53 in [DECISIONS.md](DECISIONS.md);
+the lines for players are under Unreleased in [CHANGELOG.md](../CHANGELOG.md)).
+
+- **The simple layout** (P51). The console opens on one list of lanes, a short header and the
+  keys that apply to the selected lane now; `/layout deck`, or `layout = "deck"` under
+  `[console]`, is the dashboard as it was. An empty board says what to do and keeps saying it,
+  and the `/` menu scrolls to every command.
+- **Themes** (P52). Every colour comes from one palette: five built in (`flightdeck`, `light`,
+  `nord`, `gruvbox`, `dracula`) and a player's own `themes/NAME.toml`, refused when its colours
+  could not be read. `/theme` switches in a running console.
+- **Plugins** (P53). An event on a platform flightdeck does not know, through an adapter of the
+  player's own that flightdeck runs out of process: `flightdeck plugin new`, `add` and `pull`,
+  and `platform = "NAME"` in the event profile ([PLUGINS.md](PLUGINS.md)).
+
+Known limits, each said where it applies:
+
+- No plugin has met a real platform: the plugin path was built against synthetic plugins and a
+  stand-in on 127.0.0.1.
+- A plugin is not sandboxed: it runs as the player, and `plugin add` says so before it asks.
+- A plugin provides a platform and nothing else: no console commands, detectors, notification
+  sinks or instances from one, no settings for it in the profile, no pinning of its files, and
+  `flightdeck start` and the home screen's form do not offer a plugin's platform.
+- `/layout` and `/theme` last for the run; the config is edited by hand. There is no key for the
+  switch.
+- The five built-in palettes were checked for contrast, not judged by eye on many terminals.
+- The gallery has no picture of the compact layout or of autopilot yet
+  ([SCREENSHOTS.md](SCREENSHOTS.md)).
+
 ## Released: 0.4.0, M6 the solver pack and the first run (2026-11-13)
 
 The author's own solvers and the pipeline he won events with come into flightdeck (D24; P29 to
@@ -166,7 +196,8 @@ the guardrail Autopilot needs: nothing reached but a challenge's own instance.
   touches D4 and must be locked down. Best: push a notification when a lane needs you, with approve and decline from the
   phone; needs its own sign-in and permission design.
 - **Nerd Font look.** Opt-in powerline glyphs for truly slanted header segments and rounded chip ends
-  in terminals that draw them; plain Unicode stays the default.
+  in terminals that draw them; plain Unicode stays the default. Still later: a theme (P52)
+  changes colours only, never a glyph.
 - **Installs beyond PyPI.** Built, and first used by the release after 0.2.0: the release
   workflow builds a `.deb` for amd64 and arm64 that brings its own Python (Debian 12 has 3.11),
   installs each in a clean Debian 12 container and attaches them to the GitHub release, and it
