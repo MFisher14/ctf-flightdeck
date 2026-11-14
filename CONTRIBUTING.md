@@ -56,9 +56,13 @@ number) leaves cores for other work, and one file alone is as quick without it. 
 ten minutes is waiting (for a timeout to run out, for the console to settle), so the tests share
 a machine well. They can run at once because each has its own temporary folder, its own state
 folder and its own ports: keep a new test that way (`tmp_path`, a server on port 0, nothing in a
-fixed place), and do not make it depend on the test before it. A test that fails only with `-n`
-has a wait too short for a busy machine: that is a bug in the test, so fix the wait (wait for
-what must happen, not for a time) rather than run it alone.
+fixed place), and do not make it depend on the test before it. One thing the tests do share is
+Docker: a lane's container is named after the second its run started, so a test that starts a
+real run in Docker (`play` with `runtime = "docker"`) takes the fixture
+`one_docker_run_at_a_time`, and those few tests take turns (`tests/turns.py`). A test that
+fails only with `-n` either shares something with another test (give it its own, or a turn) or
+has a wait too short for a busy machine (wait for what must happen, not for a time): both are
+bugs in the test, so fix them rather than run it alone.
 
 `uv run flightdeck mock` opens the console on scripted data. No test needs a key: the tests use
 local fakes (a fake model server, a fake CTFd, fake agent CLIs). The Docker tests run only when
