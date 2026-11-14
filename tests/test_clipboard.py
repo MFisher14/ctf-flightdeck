@@ -12,6 +12,7 @@ import asyncio
 import base64
 import re
 import subprocess
+import threading
 from functools import partial
 
 import pytest
@@ -690,6 +691,34 @@ def test_copy_warns_when_the_lane_has_nothing_of_it_or_the_word_is_not_one_of_it
         await send(pilot, app, "copy L01 all")
         assert clip.texts[-1] == "⏺ says: nothing run yet\n⏺ plan: read the header"
         assert status_line(app).strip() == "● copied L01's transcript: 2 lines"
+
+    drive(app, script, BIG)
+
+
+def test_a_clipboard_tool_that_hangs_does_not_hold_up_the_console_and_its_line_comes_when_it_ends():
+    deck, app, lane = busy_lane("simple")
+    started, go, ended = threading.Event(), threading.Event(), threading.Event()
+
+    def slow(text: str) -> str:  # a tool that takes its time (wl-copy on a compositor that does not answer)
+        started.set()
+        go.wait(2.0)  # long enough to tell; it never hangs the test
+        ended.set()
+        return ""
+
+    app.copier = slow
+
+    async def script(pilot):
+        await open_focus(pilot, app, "L01")
+        written = terminal(app)
+        await send(pilot, app, "/copy")
+        await asyncio.sleep(0.05)  # the event loop the lanes share runs on while the tool works
+        assert started.is_set() and not ended.is_set()
+        assert osc52(written)  # the terminal's clipboard has it at once
+        assert "copied" not in status_line(app)  # no line before the tool says
+        go.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert ended.is_set() and "● copied" in status_line(app)
 
     drive(app, script, BIG)
 
