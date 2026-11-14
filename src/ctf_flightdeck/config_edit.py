@@ -19,6 +19,7 @@ into the wrong place (as config.py).
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import stat
@@ -136,18 +137,28 @@ PUT_BACK = "it was put back as it was"
 
 
 def _write(path: Path, text: str) -> None:
-    """Put `text` in place of the config in one step: written to a new file in the same folder
+    replace_file(path, text.encode("utf-8"))
+
+
+def replace_file(path: Path, data: bytes) -> None:
+    """Put `data` in place of the config in one step: written to a new file in the same folder
     with the config's mode, flushed to the disk, then renamed over what the path points at (a
     link stays a link). A config the player cannot write is refused as before (it is opened
-    for writing first, and nothing is changed). OSError when it cannot be done."""
+    for writing first, and nothing is changed). A folder that does not let the new file be
+    made is refused with its own reason: the config is never written over in place instead.
+    OSError when it cannot be done."""
     target = Path(os.path.realpath(path))
     os.close(os.open(target, os.O_WRONLY))  # the file's own mode decides, as a write in place would
     mode = stat.S_IMODE(os.stat(target).st_mode)
-    descriptor, name = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=".tmp")
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
+        descriptor, name = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=".tmp")
+    except PermissionError:
+        raise PermissionError(errno.EACCES, f"its folder {target.parent} does not let a new file be made in it, and "
+                                            "the config is only ever replaced whole, never written over in place") from None
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
             os.fchmod(handle.fileno(), mode)
-            handle.write(text)
+            handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(name, target)

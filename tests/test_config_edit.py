@@ -235,10 +235,37 @@ def test_the_config_is_replaced_in_one_step_and_keeps_its_mode(tmp_path, monkeyp
 def test_a_config_that_is_a_link_stays_a_link(tmp_path):
     (tmp_path / "dotfiles").mkdir()
     real = write(tmp_path / "dotfiles", LADDER)
+    real.chmod(0o640)
     link = tmp_path / "config.toml"
     link.symlink_to(real)
     assert save_console(link, theme="nord") is True
-    assert link.is_symlink() and read(real) == LADDER + '\n[console]\ntheme = "nord"\n'
+    assert link.is_symlink() and os.readlink(link) == str(real)
+    assert read(real) == LADDER + '\n[console]\ntheme = "nord"\n' and (real.stat().st_mode & 0o777) == 0o640
+    assert sorted(entry.name for entry in (tmp_path / "dotfiles").iterdir()) == ["config.toml"]
+
+
+def test_a_config_whose_folder_cannot_take_a_new_file_is_refused_and_says_why(tmp_path):
+    """The file can be written but its folder cannot: the new text cannot be put in place in
+    one step, and it is never written in place instead. The message names the folder (for a
+    link, the folder of the file it points at), and the config is as it was."""
+    if os.geteuid() == 0:
+        pytest.skip("not run: as root, a folder's mode does not stop a new file in it")
+    (tmp_path / "dotfiles").mkdir()
+    real = write(tmp_path / "dotfiles", "a = 1\n")
+    link = tmp_path / "config.toml"
+    link.symlink_to(real)
+    (tmp_path / "dotfiles").chmod(0o500)
+    try:
+        for path in (real, link):
+            with pytest.raises(EditError) as caught:
+                rewrite(path, lambda text: text + "b = 2\n", lambda: None, what="x")
+            assert str(caught.value) == (
+                f"cannot write the config {path} (its folder {tmp_path / 'dotfiles'} does not let a new file be made in it, "
+                "and the config is only ever replaced whole, never written over in place): it is as it was")
+            assert read(real) == "a = 1\n"
+    finally:
+        (tmp_path / "dotfiles").chmod(0o700)
+    assert sorted(entry.name for entry in (tmp_path / "dotfiles").iterdir()) == ["config.toml"]
 
 
 # ---------------------------------------------------------------------- save_console
