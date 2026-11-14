@@ -29,7 +29,8 @@ below describe. **simple**, the default, shows the same two views with less in t
 ```
 
 `[flag]` stands for a chip: a solid colored label (no half-block caps, so no color shows past a
-corner in any font). The header's segments are solid blocks with a `╱` between them on the page.
+corner in any font). The header's segments are solid blocks with a `╱` between them on the page
+(in the simple layout only what says "look here" is a block: [Layouts](#layouts)).
 
 - **Header**: event, solo/team, docker/host, lanes used/limit, queue length, **how many lanes need
   you** ("all clear" when none), tokens, dollars (ending in `…` while a coding-agent CLI's turn is
@@ -276,6 +277,7 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
 │   !          lane chall         state    cost  last action                                         │
 │   [flag]     L04  Ticket Desk   wait     $.16  candidate flag mock{…}                              │
 │ ▌ [offhint]  L01  Static Hiss   run      $.10  python3 diff_channels.py --window 512 left.wav …    │
+│              L09  Night Shift   starting                                                           │
 │   ...                                                                                              │
 │ ▌L01 ▲ Ignores the hint: The description hints at slow-scan TV …                                   │
 │    1  redirect with the hinted technique   2  hint   x  dismiss   enter open                       │
@@ -290,13 +292,20 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
 - **Header.** Only what is not the usual: flightdeck, the event's name, the mock tag, `team` in
   team mode, `host` when lanes run on this machine, `queue N` when the queue is not empty,
   `AUTOPILOT` while it is engaged, `▲ N need you` when any do, `queue held` and why, and the
-  run's dollars. No solo, docker, lane count, "all clear", tokens or clock. On a narrow terminal
+  run's dollars. No solo, docker, lane count, "all clear", tokens or clock. Only "look here" is
+  a block: flightdeck, `host`, `AUTOPILOT`, `▲ N need you` and `queue held`. The event's name,
+  the queue and the dollars are text on the page, `team` is in the `info` colour on the page,
+  and the mock tag is muted text; a `╱` still stands between every two pieces. Each colour a
+  quiet piece takes on the page is one of the pairs a theme is checked for. On a narrow terminal
   the event's name goes first, then the mock tag, the queue, `host` and `team`; flightdeck,
   `AUTOPILOT`, the need-you count, a held queue and the dollars never drop.
 - **Lane list.** One panel, no board. Columns: the attention cell (`!`), lane, challenge, state,
   cost, last action. Under 86 columns the challenge's name narrows (to 8 cells at least); under
   74 the last action is left out and the name is whole again; the cost is never left out, and
-  `flightdeck doctor` says when the last action is. The model, turns and idle time are in the
+  `flightdeck doctor` says when the last action is. A running lane that has done nothing yet (no
+  turn, no step of its own, nothing spent, no coding-agent CLI turn whose cost is on its way)
+  reads `starting` in muted text in the state column, and its cost is blank; the filter finds it
+  by `starting`. The model, turns and idle time are in the
   focus view's title. The panel's
   title is `lanes n/m`, then ` · N waiting` when the queue is not empty, ` · ✓ N solved` when
   any are, ` · sort X` only when the sort is not by attention, and the filter as in `deck`.
@@ -341,7 +350,8 @@ lists them and marks the one in use; `/theme NAME` repaints what is on screen, a
 lines included, for the rest of the run. `mock --screenshot` takes its pictures in the default
 theme, and saves the fleet in the light one as `theme-light`.
 
-A theme is colours only. The chips stay solid labels, the header's segments solid blocks, the
+A theme is colours only. The chips stay solid labels, the header's segments solid blocks (in
+the simple layout, those that say "look here"), the
 marks and glyphs the same plain Unicode, and what never drops from the header never drops in
 any theme. A palette has 17 colours by role (the page, text, a muted text, an accent, the
 states `ok`, `error`, `warn`, `info` and `pending`, the ink on their chips, and the surfaces),

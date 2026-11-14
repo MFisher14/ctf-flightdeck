@@ -521,11 +521,14 @@ The console has two layouts.
 
 - a short header: the event, `team` in team mode, `host` when lanes run on this machine, the
   queue when challenges wait, `AUTOPILOT` while it is engaged, `▲ N need you`, a held queue and
-  why, and the run's dollars;
+  why, and the run's dollars. Only what asks you to look has a coloured block: flightdeck,
+  `host`, `AUTOPILOT`, `▲ N need you` and `queue held`. The event, `team`, the queue and the
+  dollars are plain text, and the mock's tag is dimmed;
 - one list of lanes: what each needs from you, the lane, its challenge, state, cost and last
   action (under 86 columns the challenge's name narrows, and under 74 the last action is left
-  out; the cost never is). Its title counts the lanes, the challenges that wait and the ones
-  solved;
+  out; the cost never is). A lane that has started and done nothing yet reads `starting`,
+  dimmed, with no cost, until its first step or its first spend. Its title counts the lanes,
+  the challenges that wait and the ones solved;
 - under the list, why the selected lane is flagged and its numbered answers; nothing for a lane
   that needs nothing;
 - a key line of the keys that apply to the selected lane now: `a approve` and `d decline` while

@@ -4,6 +4,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- A quieter simple layout. In its header only what asks you to look keeps a coloured block:
+  flightdeck, `host`, `AUTOPILOT`, `▲ N need you` and `queue held`. The event's name, `team`,
+  the queue and the dollars are plain text, and the mock's tag is dimmed. In its lane list a
+  lane that has started and done nothing yet reads `starting`, dimmed, with no cost, in place
+  of `run` and `$.00`, until its first step or its first spend. The deck and compact layouts
+  are as they were.
 - `?` opens help for where you are. In a lane, `?` on the empty chat box opens help, from any
   pane; with text in the box it is a question mark (type a space first, or paste, to start a
   message with one). The key line in a lane reads `esc lanes  / commands  ? help  ctrl+o
