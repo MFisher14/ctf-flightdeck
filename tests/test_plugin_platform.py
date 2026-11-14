@@ -13,9 +13,10 @@ import os
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from ctf_flightdeck import config as configs
-from ctf_flightdeck import preflight
+from ctf_flightdeck import preflight, preflight_cli
 from ctf_flightdeck.config import ConfigError, load_config
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.driver import TurnReport
@@ -209,6 +210,27 @@ def test_policies_is_what_a_plugin_profile_gets_by_default(tmp_path):
     """Like any platform flightdeck uses: the board is pulled, and each flag waits for a yes."""
     _, chosen = load_profile(profile_file(tmp_path))
     assert chosen == Policies(pull="auto", l1="auto", agents="auto", submit="confirm", instance="off")
+
+
+def test_flightdeck_preflight_checks_a_plugin_profile_against_the_config_it_is_given(tmp_path, monkeypatch):
+    """The command passes the player's config to the check, so it says what a run would: the
+    plugin by the config's name, or a refusal that does not show the profile's word."""
+    monkeypatch.setenv("ACME_TOKEN", "set")
+    monkeypatch.setenv("FLIGHTDECK_CONFIG", str(tmp_path / "no-config-here.toml"))
+    config = player_config(tmp_path, "acme")
+    runner = CliRunner()
+    good = runner.invoke(preflight_cli.app, [str(profile_file(tmp_path)), "--config", str(config.source), "--docker"])
+    assert good.exit_code == 0, good.output
+    out = good.stdout.splitlines()
+    assert "event     Quals · acme (a plugin) at https://ctf.example.test · solo" in out
+    assert "token     $ACME_TOKEN (set), given only to the acme plugin" in out and out[-1].startswith("preflight: ok")
+    other = runner.invoke(preflight_cli.app, [str(profile_file(tmp_path, platform="harbourctf")), "--config", str(config.source), "--docker"])
+    assert other.exit_code == 2 and "harbourctf" not in other.output
+    assert "refuse: " + NO_TABLE.format(has="your config has: acme") in other.stdout.splitlines()
+    absent = runner.invoke(preflight_cli.app, [str(profile_file(tmp_path)), "--docker"])  # no config at all
+    assert absent.exit_code == 2
+    assert ("refuse: event.platform names a plugin's platform, and your config could not be read, so flightdeck cannot tell "
+            "whether you added it") in absent.stdout.splitlines()
 
 
 # ---------------------------------------------------------------------- the link, at the deck

@@ -191,9 +191,9 @@ class EventProfile:
     # [event]
     name: str
     platform: str  # "ctfd" | "manual" | "gamemaster", or the name of a plugin's platform (`plugin`)
-    url: str | None = None  # ctfd, gamemaster: the site's address, without a trailing /
-    token_env: str | None = None  # ctfd, gamemaster: the NAME of the variable that holds the API token
-    board: Path | None = None  # manual, gamemaster: the folder board (absolute: ~ expanded, else from the profile's folder)
+    url: str | None = None  # ctfd, gamemaster, a plugin's: the site's address, without a trailing /
+    token_env: str | None = None  # ctfd, gamemaster, a plugin's: the NAME of the variable that holds the API token
+    board: Path | None = None  # manual, gamemaster, a plugin's: the folder board (absolute: ~ expanded, else from the profile's folder)
     flag_format: str | None = None  # a regular expression; None: the board's, else the deck's default
     team: bool = False
     start: datetime | None = None  # when the event starts, with its zone: autopilot waits for it (autopilot.py)
