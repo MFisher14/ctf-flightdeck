@@ -1310,11 +1310,34 @@ def _docker_checks(config) -> list[Check]:
         found = image_present(image)
         how = "flightdeck image build" if image == IMAGE else f"docker pull {image}"
         out.append(Check("lane image", found, f"{image} is {'present' if found else 'not on this machine'}", f"run `{how}`"))
+        if found:
+            out += _lane_image_build_checks(image)
         if config.l1.pack is not None and config.l1.image:
             there = image_present(config.l1.image)
             out.append(Check("l1 image", there, f"{config.l1.image} is {'present' if there else 'not on this machine'}",
                              "run `flightdeck pack image`, or remove [l1] image to run engines in the lane image"))
     return out
+
+
+def _lane_image_build_checks(image: str) -> list[Check]:
+    """A lane image that is on this machine but was not built from the Dockerfile this
+    flightdeck ships: nothing else asks for a rebuild, and what its lanes' shells have may
+    differ (the image of flightdeck 0.4.0 has no debugger and no decompiler: P59). Told by the
+    label `image build` writes (lane.built_from), so no container is started. A warning:
+    lanes run in the old image all the same, and each lane's brief names only what its own
+    container has. No line for an image built from today's Dockerfile, for one that cannot be
+    asked, or for a player's own image that carries no such label: what that holds is theirs."""
+    from . import lane
+
+    label = lane.built_from(image)
+    if label is None or label == lane.fingerprint() or (not label and image != lane.IMAGE):
+        return []
+    return [Check(
+        "lane image build", False,
+        f"{image} was not built from the Dockerfile this flightdeck ships (another flightdeck built it, or it was built by "
+        "hand), so its lanes' shells may lack programs this one's have",
+        "run `flightdeck image build` to build it again (lanes run in the old one all the same)", essential=False,
+    )]
 
 
 def image_present(image: str) -> bool:

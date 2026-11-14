@@ -30,6 +30,14 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   the challenge is done. Before, it was taken for a teammate's and never stopped, which held
   one of the team's slots until the site ended it
   ([BOARDS.md](docs/BOARDS.md#instances-on-demand)).
+- A debugger and a decompiler in every Docker lane: the lane image now has `gdb` (and
+  `gdb-multiarch`, for a binary of another architecture) and radare2 with the Ghidra decompiler
+  (`r2`, `pdg`), and a lane's brief says how to run them from a shell with no terminal. Run
+  `flightdeck image build` again to get them: `flightdeck doctor` warns while your lane image is
+  one an older flightdeck built. The image is now Debian 13 (its `python3` is 3.13, not 3.11)
+  and about 830 MB, where it was about 700. The solver pack's image has the same two
+  (`flightdeck pack image` rebuilds it), so the pack's decompile engine works from a lane and
+  at intake.
 - A lane can look at a picture: flightdeck's own lanes have a `view_image` tool that shows the
   model a PNG, JPEG, GIF or WebP file in the lane's workspace, as it is (at most 4.5 MB, never
   scaled down). When your model's API will not take a picture, or the `[fallback]` model a lane

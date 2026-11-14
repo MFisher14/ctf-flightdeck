@@ -767,6 +767,23 @@ async def _docker(*args: str, timeout: float = DOCKER_CALL_TIMEOUT) -> tuple[int
     return proc.returncode if proc.returncode is not None else -1, out.decode("utf-8", "replace")
 
 
+# The analysis programs a lane's brief may name (prompts.shell_tools), as _TOOLS answers:
+# three programs by name, and "pdg" for radare2's Ghidra decompiler.
+SHELL_TOOLS = ("gdb", "gdb-multiarch", "r2", "pdg")
+
+# Run in a lane's new container as `bash -c _TOOLS flightdeck-tools`: one line for each of
+# SHELL_TOOLS the image has. "pdg" is asked of r2 itself, which lists the plugins it loaded:
+# the plugin's file being there is not enough (one built for a newer C library does not
+# load). It runs from /, r2 is given no file and reads no settings (-N), so nothing of the
+# challenge is read or run.
+_TOOLS = r"""exec 2>/dev/null
+cd / || exit 1
+for t in gdb gdb-multiarch r2; do [ -n "$(type -P -- "$t")" ] && echo "$t"; done
+r2 -N -q -c Lc -- </dev/null | grep -q r2ghidra && echo pdg
+exit 0
+"""
+
+
 def _seconds(timeout: float) -> str:
     """A duration for GNU timeout, rounded up to the millisecond (never "0", which means no limit)."""
     ms = max(1, math.ceil(timeout * 1000))
@@ -787,7 +804,11 @@ class DockerWorkspace:
 
     prepare() refuses an image without bash or timeout, which every command needs. An image
     without python3 (debian:bookworm-slim, say) is fine for the shell, so it only sets
-    python_missing, for the python tool to answer, and says so in prepare.log.
+    python_missing, for the python tool to answer, and says so in prepare.log. With
+    `probe_tools` (a lane's own container, never an L1 engine's) prepare() also asks the image
+    which of SHELL_TOOLS it has, a debugger and a decompiler among them, and keeps the answer
+    in shell_tools for the lane's brief: an image that has none, or does not answer, gets a
+    brief that names none.
 
     `mounts` are more bind mounts, each (a path on this machine, where the container sees
     it), read-only: an L1 engine's container (l1/container.py) gets the pack and flightdeck's
@@ -823,6 +844,7 @@ class DockerWorkspace:
         pids_limit: int = 512,
         mounts: Sequence[tuple[Path, str]] = (),
         labels: Mapping[str, str] | None = None,
+        probe_tools: bool = False,
     ) -> None:
         _require(bool(_DOCKER_NAME.fullmatch(name)), f"container name {name!r} is not valid (letters, digits, _ . -; at least 2 characters)")
         _require(bool(image) and not image.startswith("-") and not any(c.isspace() for c in image), f"image {image!r} is not a valid image name")
@@ -853,6 +875,8 @@ class DockerWorkspace:
         self.pids_limit = pids_limit
         self.workdir = CONTAINER_ROOT  # root as the lane's commands see it
         self.python_missing: str | None = None  # set by prepare() when the image has no python3: why the python tool cannot run
+        self.probe_tools = probe_tools
+        self.shell_tools: tuple[str, ...] = ()  # set by prepare() under probe_tools: the SHELL_TOOLS the image has
         self._started = False  # our container exists, or may: close() must remove it
         self._starting: asyncio.Future[tuple[int, str]] | None = None  # `docker run`, which a cancel must not cut off
         self._ready = False
@@ -921,6 +945,14 @@ class DockerWorkspace:
             )
             add_to_log(self.root, f"python3 is not in image {self.image}: the python tool will not work in this lane "
                                   "(`flightdeck image build` builds the lane image, which has it)")
+        if self.probe_tools:
+            code, out = await _docker("exec", self.name, "bash", "-c", _TOOLS, "flightdeck-tools")
+            if code == 0:
+                said = out.split()
+                self.shell_tools = tuple(tool for tool in SHELL_TOOLS if tool in said)
+            else:  # the lane runs all the same: its brief names no program, and the log says why
+                add_to_log(self.root, f"image {self.image} did not say which analysis programs it has (docker exec exited "
+                                      f"{code}): this lane's brief names none")
         self._ready = True
 
     async def run(self, command: str, *, timeout: float, stdin: bytes | None = None) -> RunResult:

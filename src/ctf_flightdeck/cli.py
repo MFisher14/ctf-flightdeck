@@ -731,7 +731,7 @@ app.add_typer(image_app, name="image", rich_help_panel=SETUP)
 def image_build(
     tag: Annotated[str, typer.Option("--tag", show_default=False, help="Image name and tag (default: ctf-flightdeck-lane:1, the [lanes] image init writes; another tag needs [lanes] image set to it).")] = "",
 ) -> None:
-    """Build the lane image with Docker (pulls the Debian base image and packages)."""
+    """Build the lane image with Docker (pulls the Debian base image, its packages and radare2's release archives)."""
     import subprocess
 
     from .agent.workspace import docker_unavailable

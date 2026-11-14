@@ -21,7 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ctf_flightdeck.agent import owntext
+from ctf_flightdeck.agent import owntext, prompts
 from ctf_flightdeck.agent.client import ModelClient
 from ctf_flightdeck.agent.driver import AgentDriver
 from ctf_flightdeck.agent.tools import TOOLS
@@ -1323,6 +1323,71 @@ def test_no_refresh_when_compaction_is_off(tmp_path):
             lane = lab.lane()
             await until(lambda: lane.pending is not None, "the candidate flag")
             assert [m["role"] for m in server.requests[1]["json"]["messages"]] == ["system", "user", "assistant", "tool"]
+            await lab.finish()
+
+    run(main())
+
+
+# ---------------------------------------------------------------------- what the lane's shell has
+
+
+class _Equipped(HostWorkspace):
+    """A workspace that learns what its shell has only while it is prepared, as a Docker lane's
+    does (DockerWorkspace.shell_tools: asked of the container, which exists only then)."""
+
+    shell_tools: tuple[str, ...] = ()
+
+    async def prepare(self) -> None:
+        await super().prepare()
+        self.shell_tools = ("gdb", "gdb-multiarch", "r2", "pdg")
+
+
+def test_a_lanes_brief_names_the_debugger_and_decompiler_its_container_turned_out_to_have(tmp_path):
+    """The brief is written when the lane starts, before its container: what the image has is
+    known after prepare(), and must be in the brief of the first model call and of every later
+    one, an escalation's fresh context too."""
+    gate = threading.Event()
+
+    def responder(record):
+        n = sum(1 for r in server.requests if r["path"].endswith("/chat/completions"))
+        if n == 1:
+            return tool_call_reply("shell", {"command": "cat note.txt"})
+        if n == 2:
+            gate.wait(5)  # the old model is still thinking when the player escalates
+            return tool_call_reply("shell", {"command": "ls"})
+        return tool_call_reply("submit_flag", {"flag": "t{note}"})
+
+    server = FakeModelServer(responder=responder)
+    said = prompts.shell_tools(("gdb", "gdb-multiarch", "r2", "pdg"))
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.driver.workspaces = lambda lane, ch: _Equipped(tmp_path / "runs" / lane.id / "work", lab.handouts[ch.id])
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: len(server.requests) >= 2, "two turns")
+            assert lab.deck.apply(iv.Escalate(lane.id)).ok
+            gate.set()
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            briefs = [request["json"]["messages"][1]["content"] for request in server.requests]
+            assert len(briefs) == 3 and said and all(said in brief.splitlines() for brief in briefs), briefs[0]
+            assert briefs[0] == briefs[1]  # the same text every turn: the cached prefix holds
+            assert server.requests[2]["json"]["model"] == "big" and briefs[2].count(said) == 1
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_lane_whose_shell_did_not_say_what_it_has_gets_no_such_line(tmp_path):
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{note}"})])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)  # host workspaces: the player's own machine, never asked
+            lab.release()
+            await until(lambda: lab.lane().pending is not None, "the candidate flag")
+            assert "Your shell has" not in server.requests[0]["json"]["messages"][1]["content"]
             await lab.finish()
 
     run(main())

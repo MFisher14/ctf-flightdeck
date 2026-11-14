@@ -68,7 +68,7 @@ answer at the prompt:
 
 ```sh
 flightdeck init          # the setup questions (model API, models, Docker or host, your API key); writes your config
-flightdeck image build   # once, for Docker lanes: pulls Debian and common tools (about 700 MB)
+flightdeck image build   # once, for Docker lanes: pulls Debian and common tools (about 830 MB)
 flightdeck doctor        # checks your setup and says how to fix each problem
 flightdeck practice      # 14 small practice challenges: spends tokens on your model API
 ```
@@ -110,6 +110,8 @@ flightdeck --version               # which release you have now
 Your config, keys file, event folders and run folders are not touched. From a clone, pull and
 install it over the old one: `git pull`, then `uv tool install --force .`. If you use the solver
 pack, run `flightdeck pack install` again after an upgrade so the pack matches the release.
+With Docker lanes, `flightdeck doctor` says when the lane image on this machine is one an older
+release built: `flightdeck image build` builds it again.
 
 ### Install with Homebrew or apt
 
@@ -171,7 +173,7 @@ a model API charges for. A **setting** is a line of your config.
 - **Light model**: an optional small model for small jobs (by default, the hint judge). Off by
   default.
 - **Lane image**: the Docker image lanes run in, `ctf-flightdeck-lane:1`.
-  `flightdeck image build` builds it once.
+  `flightdeck image build` builds it once, and again after an upgrade that changed it.
 - **Event profile** (`event.toml`): what an event's rules allow, and a **policy** for each stage:
   `auto`, `confirm`, `manual` or `off`.
 - **Run folder**: where a run's event log, transcripts and reports go
@@ -214,7 +216,8 @@ own, and the question is where that shell is.
 **Docker** is the default (`runtime = "docker"` under `[lanes]`). Each lane runs in its own
 container of the lane image, with only that lane's copy of the challenge in it, and your L1
 solvers run in containers too. `flightdeck image build` builds the image once, and
-`flightdeck image dockerfile` prints what it builds. A lane of flightdeck's own loop gets no
+`flightdeck image dockerfile` prints what it builds ([what a lane's shell
+has](#what-a-lanes-shell-has) lists it). A lane of flightdeck's own loop gets no
 network unless its challenge has a live instance it may reach: a web origin, or a TCP service like
 `nc host port` (`tcp://host:port` in the challenge's `urls`). Under an event whose instance policy
 is `confirm`, the lane asks you first.
@@ -267,6 +270,38 @@ encoded): use Docker, a disposable VM, or a separate key with a low limit.
 A coding-agent CLI holds its own credential, and the commands it runs can read it, in Docker too:
 give it a key you can revoke, with a low spending limit. Practise in Docker: on the host, a lane
 can read the practice set's reference solutions in a clone of this repository.
+
+### What a lane's shell has
+
+The lane image is Debian 13 with Python 3.13 (requests, pycryptodome as `Cryptodome`, Pillow,
+numpy, sympy), `file`, `xxd`, binutils (`objdump`, `strings`, `readelf`), the archive tools,
+`curl`, `nc`, `jq`, `git`, `sqlite3` and `exiftool`, and for binaries:
+
+- **A debugger:** `gdb`, and `gdb-multiarch`, which reads a binary of any architecture.
+- **A decompiler:** radare2 (`r2`) with the Ghidra decompiler as its `pdg` command, for the
+  processors Ghidra knows. No Java is involved.
+
+A lane's commands get no terminal, so the brief of a challenge that has files shows the model
+the form that works: `gdb -q -batch -ex 'break main' -ex run -ex bt --args FILE ARGUMENTS`, and
+`r2 -q -e scr.color=0 -c 'aaa; afl; pdg @ main' FILE`. The brief names only what the lane's own
+container has: flightdeck asks each lane's container once, before the model's first turn, and
+an image without them (your own, or one an older flightdeck built) gets a brief that does not
+mention them. Three limits:
+
+- **gdb runs only binaries of the image's own architecture.** On an Apple Silicon Mac the image
+  is arm64: gdb there cannot run an x86-64 binary, which `gdb-multiarch` and `r2` still read.
+  The image has no emulator.
+- **Address randomisation stays on under gdb.** Docker's default rules refuse the call gdb
+  makes to switch it off; gdb says so in a warning and carries on, and addresses differ from
+  run to run.
+- **An image you built earlier has neither.** `flightdeck image build` builds today's, and
+  `flightdeck doctor` warns (`lane image build`) while the image on this machine is one that
+  another flightdeck's Dockerfile built. Lanes run in the old one all the same.
+
+The build fetches radare2 and its decompiler plugin from their projects' releases on
+github.com, for amd64 and arm64, and refuses an archive whose SHA-256 is not the one in the
+Dockerfile. On the host runtime a lane's shell has whatever your machine has, and its brief
+names nothing.
 
 ## Models and keys
 

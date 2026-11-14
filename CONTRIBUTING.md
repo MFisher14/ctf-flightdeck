@@ -67,16 +67,21 @@ bugs in the test, so fix them rather than run it alone.
 `uv run flightdeck mock` opens the console on scripted data. No test needs a key: the tests use
 local fakes (a fake model server, a fake CTFd, fake agent CLIs). The Docker tests run only when
 Docker answers and `debian:bookworm-slim` is already on your machine
-(`docker pull debian:bookworm-slim`); otherwise they report as not run. One more test runs a
-Python L1 engine in the real lane image, and only when `flightdeck image build` has built it.
-No test pulls or builds an image.
+(`docker pull debian:bookworm-slim`); otherwise they report as not run. A few more use the
+real lane image (a Python L1 engine in it, gdb and the decompiler in a lane's container), and
+only when `flightdeck image build` has built it from the Dockerfile in your checkout: after a
+change to `lane/Dockerfile` they report as not run until you build it again. One test runs the
+solver pack's decompile engine in the pack's image, when `flightdeck pack image` has built
+today's (no CI job builds that image, so only your machine runs it;
+`FLIGHTDECK_REQUIRE_PACK_IMAGE=1` makes it fail instead of reporting as not run). No test
+pulls or builds an image.
 
 CI runs the tests (with `-n auto`) and the secret scan on Linux and macOS for every push and
 pull request; the release workflow runs them one after the other before it publishes. CI's
 Linux job pulls `debian:bookworm-slim` first and sets `FLIGHTDECK_REQUIRE_DOCKER=1`: with that
 variable at 1, a Docker test that cannot run fails instead of being skipped, so the job never
-passes with those tests left out. A second job builds the lane image and runs its test with
-`FLIGHTDECK_REQUIRE_LANE_IMAGE=1`, which does the same for that test. Set either on your own
+passes with those tests left out. A second job builds the lane image and runs its tests with
+`FLIGHTDECK_REQUIRE_LANE_IMAGE=1`, which does the same for those tests. Set either on your own
 machine to be sure nothing was skipped:
 
 ```sh

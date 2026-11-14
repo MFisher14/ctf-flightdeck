@@ -37,10 +37,11 @@ jobs:
           FLIGHTDECK_REQUIRE_DOCKER: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: uv run pytest -q -n auto
 
-  # A Python L1 engine in the image flightdeck ships, and a real lane behind its fenced network
-  # (it reaches its instance and not a second server): the image is built here (the Debian base
-  # and its packages, a few minutes), then its test must run (FLIGHTDECK_REQUIRE_LANE_IMAGE=1
-  # fails it where the image is absent) and -v names it in the log.
+  # A Python L1 engine in the image flightdeck ships, gdb and the decompiler in a lane's own
+  # container of it, and a real lane behind its fenced network (it reaches its instance and not
+  # a second server): the image is built here (the Debian base, its packages and radare2's two
+  # release archives, a few minutes), then its tests must run (FLIGHTDECK_REQUIRE_LANE_IMAGE=1
+  # fails them where the image is absent or another Dockerfile built it) and -v names them.
   lane-image:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -51,7 +52,7 @@ jobs:
       - run: uv sync --locked
       - name: Build the lane image
         run: uv run flightdeck image build
-      - name: A Python L1 engine in the lane image, and a lane's fenced network
+      - name: A Python L1 engine, gdb and the decompiler in the lane image, and a lane's fenced network
         env:
           FLIGHTDECK_REQUIRE_LANE_IMAGE: "1"
         run: uv run pytest -v tests/test_l1_lane_image.py tests/test_egress.py

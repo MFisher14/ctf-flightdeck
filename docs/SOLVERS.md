@@ -46,11 +46,23 @@ image with the pack mounted read-only (their network is fenced as before); a cod
 (`--agent`) needs its CLI in that image, and a run says so before it starts when it is not.
 `flightdeck pack install --no-lane-tools` leaves it off.
 
+The pack's image has a debugger and a decompiler, as flightdeck's own lane image has: `gdb`
+with `gdb-multiarch`, and radare2 with the Ghidra decompiler (`r2`, `pdg`). So
+`binary.decompile_intake` decompiles a native binary at intake and when a lane's model runs it
+(`solvers run binary.decompile_intake .` writes the C under `recon/decompile/`), and the lane's
+brief names both programs ([what a lane's shell has](GUIDE.md#what-a-lanes-shell-has)). An image
+built before they were added has neither: `flightdeck pack image` builds it again, and
+`flightdeck doctor` names `r2` as missing until then. The pack also holds Dockerfiles for
+separate images (`packs/solvers/docker/`: a pwn toolchain, angr, SageMath, a sandbox with more
+decompilers). The pack's own tools start those with `docker run` on your machine; a lane cannot,
+because its container has no Docker, and an engine that needs one of them says `blocked` there
+and names it.
+
 Three things to know:
 
 - It never submits and never talks to a platform or the network; its engines run under its own
   network guard as well as flightdeck's.
-- Some engines call command-line tools (tshark, binwalk, exiftool, ghidra and others). The
+- Some engines call command-line tools (tshark, binwalk, exiftool, r2 and others). The
   Docker image has the common ones; on the host runtime they are yours to install
   (`packs/solvers/Brewfile` lists them), and an engine whose tool is missing is skipped and named.
 - `flightdeck pack info` says what the configured pack is and whether its image is built;

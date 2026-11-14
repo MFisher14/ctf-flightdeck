@@ -79,7 +79,7 @@ kept in a file only you can read), the models (it offers some for every API) and
 `ctrl+s` saves it. The home screen then offers what comes next, first choice first:
 
 1. **Build the lane image**, when your lanes run in Docker and it is not built yet: once, about
-   700 MB. It is what each agent's container has inside.
+   830 MB. It is what each agent's container has inside.
 2. **Practice**: 14 small practice challenges on your model. This spends money on your model API
    unless the model runs on your machine; each lane stops and asks you at $2 or 400,000 model
    tokens by default.
@@ -110,7 +110,7 @@ For a script or a habit, each step has a command of its own:
 
 ```sh
 flightdeck init          # the setup form's questions, at the prompt; your API key is pasted hidden
-flightdeck image build   # once, for Docker lanes (about 700 MB)
+flightdeck image build   # once, for Docker lanes (about 830 MB)
 flightdeck doctor        # checks everything; its last line says what to fix, or what to run next
 flightdeck practice      # the 14 practice challenges, on your model
 ```
