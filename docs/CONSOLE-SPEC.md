@@ -103,6 +103,14 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 - **Files changed**: the files the lane wrote or edited, with the diff of the selected one.
 - **Chat box**: plain text is a message the lane reads on its next turn; `/` runs a command. Typing
   reaches it from any pane. An unsent message stays with its lane when you switch lanes.
+- **A lane that restarts takes the view with it.** `/attach` typed here, and a kill that
+  re-queues made here (`/kill`, the Kill prompt's re-queue, the numbered "kill and re-queue fresh"
+  answer), end the lane and start a fresh one on its challenge: the view goes to the fresh lane,
+  and an unsent message goes with it. While the fresh lane has not started (the queue is held, no
+  lane is free) the view stays, and moves when it starts. A player who went back to the fleet or
+  opened another lane meanwhile is not moved, and nothing follows once the challenge is parked or
+  solved. `/kill park` starts no lane, so the view stays. The same when the lane in view had
+  already ended and `/attach` starts a lane on its challenge.
 - **ctrl+n** goes through the lanes that need you in attention order, then round to the first.
 
 ## Layouts
@@ -162,7 +170,9 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   has changed a file, the strip of other lanes while one of them needs the player, the
   needs-you card while this lane does. The title is the same as in `deck` (the lane, its
   challenge, model, state, turns, tokens, cost and idle time). Key line: `esc lanes  / commands
-  /help all keys`, with `1-9 answer` first while the lane has numbered answers.
+  /help all keys`, with `1-9 answer` first while the lane has numbered answers. The empty chat
+  box names the lane a message goes to (`message L01 · / commands`), and a lane that has ended
+  says `esc goes back to the lanes`.
 - **The first lane.** On a board the player fills, the first lane of the run that a `/new`
   starts opens in the focus view, once it exists: only while the player is still in the lane
   list with nothing typed in the command bar, and only while it is the one lane. Later lanes
@@ -226,7 +236,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 | `h` | `/hint <text>`, or plain text | A message the lane reads on its next turn |
 | `r` | `/redirect <plan>` | Replace the lane's plan with a new direction |
 | `f` | `/fork [approach]` | Start a sibling lane on the same challenge with a different approach or model |
-| `k` | `/kill [park]` | Kill the lane; the challenge goes back to the queue (fresh) or is parked |
+| `k` | `/kill [park]` | Kill the lane; the challenge goes back to the queue (fresh) or is parked. A re-queue made in the lane's focus view takes the view to the fresh lane |
 | `e` | `/escalate` | Hand a compact state summary to a stronger model |
 | `t` | `/takeover` | Drop to a shell in the lane's workspace (its container in Docker); exit the shell to hand back. The lane hears what you changed. Other lanes keep running meanwhile. |
 | `a`, `1` | `/approve` | Approve the pending action (submit, more budget, live-box access); on a board that cannot check flags, "accepted" |
@@ -242,7 +252,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 |  | `/theme [name]` | Alone: the themes there are, the one in use marked. With a name: the console's colours for the rest of this run, and the status line says the config line that keeps it. A name that is no theme, or a theme file that cannot be used, is a warning with the reason, and the theme in use stays. |
 |  | `/note <text>` | A note for every lane (an organizer's ruling, a replaced handout): each running lane reads it on its next turn, and every lane started later in this run reads it at its start. At most 12 stand at once. |
 |  | `/new [name]` | Hand a challenge over, on a board you fill yourself: a form with the challenge's name and a box for its description and its instance's address; its files and screenshots are attached by a drop on the terminal, `ctrl+o` or `ctrl+v`, and listed on the form (a path written in the description is only text; the address is `https://...` or `nc host port`, on a line of its own); category and points are optional. A line under the box says what is attached. `ctrl+v` pastes a screenshot from the clipboard, and the lanes' model reads an image's text into the description. `ctrl+s` adds it and a lane starts on it; `esc` cancels. Refused on a board that comes from a platform, and in the mock. |
-|  | `/attach [challenge] <files>` | Add files to a challenge on a board you fill yourself: drag them onto the command bar. Its lanes start afresh with them. Without a challenge: the open lane's. |
+|  | `/attach [challenge] <files>` | Add files to a challenge on a board you fill yourself: drag them onto the command bar. Its lanes start afresh with them, and the status line names the fresh ones (`attached extra.txt to doll; L01 restarted as L02`; `L01 ended, a fresh lane starts when one is free` while none has started). An ended lane's result reads `killed: to restart with extra.txt; re-queued fresh`. Typed in the lane's focus view, the view goes to the fresh lane. Without a challenge: the open lane's. |
 |  | `/queue <challenge>` | Queue a parked or new challenge (also from its board card) |
 |  | `/autopilot [on\|off]` | `on` engages autopilot, `off` takes the controls back, alone it says which it is. `on` is refused, with the reason, without a run budget, off the Docker runtime, while the queue is held, and once the budget is spent |
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: the challenges an API outage parked are queued again, and queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |

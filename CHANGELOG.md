@@ -33,6 +33,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A status line too long for the terminal goes on in a second row instead of being cut, so
   what `/layout` and `/theme` answer (the config line that keeps the choice, and its file) is
   read whole at 80 columns.
+- A lane that restarts takes its view with it: `/attach` or `/kill` typed in a lane's own view
+  moves the view to the fresh lane, with what you were typing (before, the view stayed on the
+  dead lane). `/attach` names the fresh lane (`L01 restarted as L02`), and the ended lane reads
+  `killed: to restart with extra.txt`. In the simple layout the chat box names its lane
+  (`message L01 · / commands`).
 - The mock opens in your config's layout and theme, and the home screen in its theme.
   `flightdeck doctor` measures your terminal in the layout your config names, and reports each
   plugin you added.

@@ -770,7 +770,11 @@ model that takes no images is said, and the challenge is added without that text
 
 A challenge added with no file and no target says so, and its lane is told to say what is
 missing and stop instead of waiting. To add a file afterwards: type `/attach`, a space, the
-challenge's name, and drag the file onto the command bar. Its lane starts afresh with the file.
+challenge's name, and drag the file onto the command bar. Its lane starts afresh with the file,
+and the status line names the fresh lane (`attached extra.txt to doll; L01 restarted as L02`).
+Typed in the lane's own view, `/attach` needs no name, and the view goes to the fresh lane with
+whatever you were typing; `/kill` there does the same. If no lane can start yet (the queue is
+held, every lane is busy) the view moves when one does, unless you have gone elsewhere meanwhile.
 
 **A VPN for live targets.** `flightdeck start` asks for the event's VPN file (a WireGuard
 `.conf` or an OpenVPN `.ovpn`: drag it in) and keeps a copy in the event's folder, readable by
