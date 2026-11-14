@@ -809,6 +809,48 @@ def test_an_image_the_model_cannot_read_is_a_warning_and_the_challenge_is_added_
     asyncio.run(main())
 
 
+@pytest.mark.parametrize("dropped", [True, False])
+def test_a_new_with_an_image_that_is_not_added_after_all_removes_the_copies_of_its_drop_and_says_so(tmp_path, monkeypatch, dropped):
+    """The /new was answered ("reading 1 image...") and its form closed, then the challenge
+    could not be written: nothing will attach the copies of its drop now, so they go, and the
+    warning says so. A file of the player's own that was not dropped is left where it is."""
+    from fake_model import text_reply
+
+    shot = tmp_path / "clip.png"
+    shot.write_bytes(PNG)
+
+    def full(board, new):
+        raise AddError("the disk is full")
+
+    monkeypatch.setattr(addchallenge, "create", full)
+
+    async def main():
+        with FakeModelServer([text_reply("some text")]) as server:
+            run = prepare_run(options(tmp_path, server))
+            warnings = []
+            run.deck.subscribe(lambda e: warnings.append(e.text) if e.kind.value == "warning" else None)
+            run.release()
+            files = run.stage_files([shot]) if dropped else [shot]
+            ok, told = await run.add_challenge(NewChallenge(name="Lost", description="typed", files=tuple(files)))
+            assert ok and "reading 1 image" in told
+            for _ in range(500):
+                if warnings:
+                    break
+                await asyncio.sleep(0.01)
+            (warning,) = warnings
+            assert "the disk is full" in warning
+            if dropped:
+                assert "copies of its dropped file (clip.png) are removed" in warning
+                assert not files[0].exists() and not files[0].parent.exists()
+            else:
+                assert "dropped" not in warning
+            assert shot.read_bytes() == PNG and "lost" not in run.deck.challenges
+            await run.shutdown()
+            run.close()
+
+    asyncio.run(main())
+
+
 def test_a_challenge_with_an_image_is_checked_before_the_model_is_asked_to_read_it(tmp_path):
     """The refusal comes back while the form is open, not as a warning after "reading 1
     image..." closed it."""

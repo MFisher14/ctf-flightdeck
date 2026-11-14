@@ -878,7 +878,20 @@ class Run:
             description = (description + "\n\n" if description else "") + f"[Text read from the image {image.name} by {self.model}:]\n{text}"
         ok, said = await self._add_now(replace(new, description=description))
         if not ok:
-            self.deck.warn(f"/new: {said}", data={"source": "board"})
+            self.deck.warn(f"/new: {said}" + await self._dropped_lost(new.files), data={"source": "board"})
+
+    async def _dropped_lost(self, files: Sequence[Path]) -> str:
+        """A /new that was answered and then not added: the form is closed, and nothing will
+        attach the copies of a drop among its files now. They are removed (in a thread), and
+        what is returned says so, for the warning; with no such copy, it is empty."""
+        from .addchallenge import staged
+
+        copies = staged(self._drops, files)
+        if not copies:
+            return ""
+        await asyncio.to_thread(self.unstage_files, copies)
+        names = ", ".join(_show(copy.name) for copy in copies)
+        return f"; the copies of its dropped file{'' if len(copies) == 1 else 's'} ({names}) are removed: drop them again with /new"
 
     def _add(self, new: Sequence[BoardChallenge]) -> None:
         """New challenges on the board: their handouts and instances, for lanes and L1."""
