@@ -275,7 +275,7 @@ corner in any font). The header's segments are solid blocks with a `╱` between
 
   `/copy` reads the lane's log and not the calm rows, so a folded row (`×7`) is never what it
   copies: `/copy all` has every call, as details draw them, and `/copy output` and `/copy
-  command` take the last call, the one a folded row shows.
+  command` take the last call that printed something, which need not be the one a folded row shows.
   A copy goes two ways, both every time: to the terminal's clipboard (OSC 52), and to the
   operating system's by its tool, which is `pbcopy` on macOS and on Linux `wl-copy`, else
   `xclip -selection clipboard`, else `xsel --clipboard --input`. Over SSH (`SSH_CONNECTION` or
