@@ -39,6 +39,12 @@ teammate's profile too. What keeps that safe is in this module:
   back to the player and is never recorded as wrong.
 - One request per flag, never sent again from here (a second send could spend a try); the
   resend of a rate-limited flag is the run's (platform/plugin_run.py), as for a plugin.
+- A platform can say it wants something of a flag this engine cannot give (GZCTF's encrypted
+  submissions): [http.refuse] names a request, made without the token, and a path whose
+  value means "do not send". It is asked before every flag, and a value there, or no answer
+  to read, keeps the flag back with the table's reason. A pull and the dry run say so too.
+- A cookie's value may be pasted with the cookie's name in front of it (NAME=value, as a
+  browser's tools copy it): the name is taken off, so the platform is not sent NAME=NAME=value.
 
 parse_config() checks the table (ValueError naming the key; a string value of the profile is
 never shown). HttpCaller is the engine: the same three calls a plugin answers (pull, submit,
@@ -83,7 +89,8 @@ from .ctfd import CONNECT_TIMEOUT, MAX_FILE_BYTES, MAX_REDIRECTS, _message, _ret
 NAME = "http"  # event.platform, and the name on the board's record (plugin.json): no plugin can take it (config.RESERVED_PLATFORMS)
 LABEL = "the http adapter"  # how messages name it, where a plugin's say "the NAME plugin"
 PULL_COMMAND = "flightdeck http pull"
-PRESETS = ("rctf",)  # http_presets/NAME.toml
+PRESETS = ("rctf", "gzctf")  # http_presets/NAME.toml
+GAME_HINTS = {"gzctf": " (GZCTF: the game's number, as its address shows it: https://.../games/3)"}
 PRESET_DIR = "platform/http_presets"
 TOKEN_VARIABLE = "HTTP_TOKEN"  # event.token_env of a profile with no preset: this, or this and _NAME (HttpConfig.names_token)
 
@@ -104,6 +111,7 @@ MAX_BODY_DEPTH = 4
 MAX_TABLE_KEYS = 64  # keys of a body or a verdict table
 MAX_PROBLEMS = 20  # challenges a pull names as left out; the rest are counted
 MAX_VALUE = 200  # characters of a verdict value, a game or a pending word
+MAX_REASON = 300  # characters of [http.refuse]'s reason
 TIMEOUT = 20.0  # seconds a request may wait for a connection, and for each part of its answer
 DEADLINE = 30.0  # seconds a request and its whole answer may take (a plugin's submit has as long)
 FILE_SECONDS = 600.0  # seconds one file's download may take
@@ -129,10 +137,10 @@ _HEADERS_REFUSED = frozenset({
     "accept-encoding", "upgrade", "te", "trailer", "expect", "proxy-authorization",
 })
 _PATH_PLACEHOLDERS = {"list": ("game",), "solved": ("game",), "detail": ("ref", "game"), "submit": ("ref", "game"),
-                      "poll": ("ref", "game", "submission"), "auth": ("game",)}
+                      "poll": ("ref", "game", "submission"), "auth": ("game",), "refuse": ("game",)}
 _BODY_PLACEHOLDERS = {"auth": ("token", "game"), "submit": ("ref", "flag", "game")}
 _METHODS = {"list": ("GET",), "solved": ("GET",), "detail": ("GET",), "poll": ("GET",), "submit": ("POST", "PUT", "PATCH"),
-            "auth": ("POST",)}
+            "auth": ("POST",), "refuse": ("GET",)}
 _NOT_JSON = object()
 _ALL = "*"  # a step that takes every child
 
@@ -302,6 +310,17 @@ class Solved:
 
 
 @dataclass(frozen=True)
+class Refuse:
+    """[http.refuse]: how the platform says it wants something of a flag that flightdeck
+    cannot give. The request is made without the token; a value at `path` (anything but
+    null, false, or an empty string, list or object) means no flag is sent, for `reason`."""
+
+    request: Route
+    path: JsonPath
+    reason: str
+
+
+@dataclass(frozen=True)
 class HttpConfig:
     """An event profile's [http] table, checked."""
 
@@ -313,6 +332,7 @@ class HttpConfig:
     game: str | None = None  # the value of {game}
     files_auth: bool = False  # whether a file on event.url's origin is asked for with the token
     preset: str | None = None  # the preset it started from, for messages
+    refuse: Refuse | None = None  # asked before each flag: whether the platform wants what flightdeck cannot send
 
     @property
     def variable_prefix(self) -> str | None:
@@ -336,7 +356,7 @@ class HttpConfig:
         return f"{prefix}TOKEN" if prefix else TOKEN_VARIABLE
 
 
-_TOP = ("preset", "game", "files_auth", "auth", "list", "detail", "submit", "solved")
+_TOP = ("preset", "game", "files_auth", "auth", "list", "detail", "submit", "solved", "refuse")
 _AUTH = ("kind", "header", "cookie", "request", "body", "token_path", "scheme", "link_param")
 _LIST = ("request", "items", "ref", *FIELDS)
 _DETAIL = ("request", *FIELDS)
@@ -344,6 +364,7 @@ _SUBMIT = ("request", "body", "verdict_path", "detail_path", "retry_after_path",
            "verdicts", "status", "poll")
 _POLL = ("request", "id_path", "pending", "every", "at_most", "verdict_path")
 _SOLVED = ("request", "refs")
+_REFUSE = ("request", "path", "reason")
 NOT_BUILT = {
     "list.next_path": "pages of a listing", "list.page_param": "pages of a listing", "files": "a download route per challenge",
     "submit.form": "a form-encoded body", "auth.csrf_cookie": "a CSRF header", "auth.csrf_header": "a CSRF header",
@@ -388,11 +409,13 @@ def parse_config(table: object) -> HttpConfig:
         submit=_submit(_sub(table, "submit")) if "submit" in table else None,
         detail=_detail(_sub(table, "detail")) if "detail" in table else None,
         game=game, files_auth=files_auth, preset=preset,
+        refuse=_refuse(_sub(table, "refuse")) if "refuse" in table else None,
     )
     if game is None:
         for name, route in config_routes(config):
             if "{game}" in route.path:
-                raise ValueError(f"http.{name}.request has {{game}} in its path, and the table has no game: set http.game")
+                raise ValueError(f"http.{name}.request has {{game}} in its path, and the table has no game: set http.game"
+                                 + GAME_HINTS.get(preset or "", ""))
         for name, body in (("auth", config.auth.body), ("submit", config.submit.body if config.submit is not None else None)):
             if body is not None and "{game}" in json.dumps(body):
                 raise ValueError(f"http.{name}.body has {{game}} in it, and the table has no game: set http.game")
@@ -405,6 +428,8 @@ def config_routes(config: HttpConfig) -> list[tuple[str, Route]]:
     if config.auth.request is not None:
         routes.append(("auth", config.auth.request))
     routes.append(("list", config.list.request))
+    if config.refuse is not None:
+        routes.append(("refuse", config.refuse.request))
     if config.detail is not None:
         routes.append(("detail", config.detail.request))
     if config.submit is not None:
@@ -632,6 +657,18 @@ def _poll(table: object, has_verdict_path: bool) -> Poll:
     return Poll(route, parse_path("http.submit.poll.id_path", table["id_path"]), tuple(pending), float(every), at_most, verdict_path)
 
 
+def _refuse(table: Mapping) -> Refuse:
+    _keys("http.refuse", table, _REFUSE)
+    for key in _REFUSE:
+        if key not in table:
+            raise ValueError(f"http.refuse.{key} is required")
+    reason = table["reason"]
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > MAX_REASON or untrusted(reason, one_line=True) != reason:
+        raise ValueError(f"http.refuse.reason must be one line of at most {MAX_REASON} printable characters: what the player is "
+                         "told when no flag is sent")
+    return Refuse(_route("http.refuse.request", "refuse", table["request"]), parse_path("http.refuse.path", table["path"]), reason)
+
+
 def _solved(table: Mapping) -> Solved:
     _keys("http.solved", table, _SOLVED)
     for key in ("request", "refs"):
@@ -668,6 +705,9 @@ def plan(config: HttpConfig) -> list[str]:
         lines.append(f"sign in   {auth.request}: your token in the request's body; the answer's {auth.token_path.text} is the "
                      "session token")
     lines.append(f"list      {config.list.request}, {carried}")
+    if config.refuse is not None:
+        lines.append(f"refuse    {config.refuse.request}, without your token: before each flag; a value at {config.refuse.path.text} "
+                     "means no flag is sent")
     if config.detail is not None:
         lines.append(f"detail    {config.detail.request}, {carried}: once for each new challenge")
     urls = (config.detail.fields.get("file_urls") if config.detail is not None else None) or config.list.fields.get("file_urls")
@@ -744,6 +784,11 @@ class HttpCaller:
         if not token:
             raise ValueError("the http platform needs the event's token: the variable event.token_env names is empty")
         self.token = token if link is None else _token_from(token, link, self._base)
+        if kind == "cookie" and self.token.startswith(f"{config.auth.cookie}="):  # NAME=value, as a browser's tools copy a cookie
+            self.token = self.token.removeprefix(f"{config.auth.cookie}=").strip()
+            if not self.token:
+                raise ValueError(f"the variable event.token_env names holds the cookie's name ({config.auth.cookie}=) and no value "
+                                 "after it: put the cookie's value in it")
         written = quote(self.token, safe="")  # as a link of the platform's would write it: cut out of what is shown, too
         self._written = written if link is not None and written != self.token else None
         if (kind in ("bearer", "token", "header") and not _HEADER_VALUE.fullmatch(self.token)) or \
@@ -786,11 +831,20 @@ class HttpCaller:
                         problems.append(f"{self._label(item)}: {self._scrub(exc, limit=2 * MAX_SHOWN)}")
                     continue
                 challenges.append(found)
+            notes: tuple[str, ...] = ()
+            if self.config.refuse is not None:
+                try:
+                    reason = await self._refusal(http)
+                except CallFailed as exc:
+                    notes = (f"{exc}; each flag asks again before it is sent",)
+                else:
+                    if reason is not None:
+                        notes = (f"no flag is sent from here: {reason}",)
         if left > MAX_PROBLEMS:
             more = left - MAX_PROBLEMS
             problems.append(f"{more:,} more challenge{' was' if more == 1 else 's were'} left out too: the first {MAX_PROBLEMS} "
                             "are named, and they may share a cause")
-        return PullReply(tuple(challenges), (), tuple(problems))
+        return PullReply(tuple(challenges), notes, tuple(problems))
 
     async def submit(self, ref: str, flag: str) -> Verdict:
         """Send one flag, once, and read the platform's word by the table's rules. CallFailed
@@ -801,6 +855,10 @@ class HttpCaller:
         values = {"ref": ref, "flag": flag}
         path = cfg.verdict_path
         async with self._clients() as (http, _):
+            if self.config.refuse is not None:
+                reason = await self._refusal(http)
+                if reason is not None:
+                    raise CallFailed(f"flightdeck did not send the flag: {reason}")
             answer = await self._send(http, cfg.request, values, body=cfg.body, sends_flag=True)
             self._refuse_page(answer)
             word, value = self._word(cfg, path, answer)
@@ -872,6 +930,18 @@ class HttpCaller:
                 lines.append(f"  the other {len(items) - show:,}: " + ("each has a ref and a name" if not unreadable else
                              f"{unreadable:,} cannot be read (a pull names each, with the reason)"))
                 problems += unreadable
+            if cfg.refuse is not None:
+                try:
+                    reason = await self._refusal(http)
+                except CallFailed as exc:
+                    lines.append(f"refuse   {exc}: a run sends no flag while this lasts")
+                    problems += 1
+                else:
+                    if reason is None:
+                        lines.append(f"refuse   {cfg.refuse.request}: nothing at {cfg.refuse.path.text}, so flags can be sent")
+                    else:
+                        lines.append(f"refuse   no flag would be sent: {reason}")
+                        problems += 1
             answer = await self._read(http, cfg.solved.request, {})
             refs = self._refs(cfg.solved.refs, answer)
             on_list = len(set(refs) & set(listed))
@@ -1047,6 +1117,24 @@ class HttpCaller:
                 return answer, word, value
         raise CallFailed(f"the flag was sent, and the platform had not judged it after {poll.at_most} looks, "
                          f"{poll.every:g} s apart ({path.text} is {json.dumps(self._scrub(value), ensure_ascii=False)})", timed_out=True)
+
+    async def _refusal(self, http: httpx.AsyncClient) -> str | None:
+        """[http.refuse]'s reason when the platform's answer says it wants what flightdeck
+        cannot send, else None. Asked without the token, each time, so a setting the site
+        changes is seen at the next flag. CallFailed when there is no answer to read: then
+        nobody knows, and no flag goes."""
+        refuse = self.config.refuse
+        assert refuse is not None
+        why = "flightdeck could not tell whether the platform takes a flag as flightdeck sends it"
+        try:
+            answer = await self._request(http, refuse.request, {}, None, auth=False)
+        except CallFailed as exc:
+            raise CallFailed(f"{why}: {exc}") from None
+        if answer.page or answer.doc is _NOT_JSON or not 200 <= answer.status < 300:
+            raise CallFailed(f"{why}: {answer.endpoint} was answered with HTTP {answer.status}{_phrase(answer.status)}"
+                             + ("" if answer.doc is not _NOT_JSON else ", not JSON"))
+        found = [value for value in refuse.path.find(answer.doc) if value is not None and value is not False and value not in ("", [], {})]
+        return f"{_show(refuse.reason)} ({refuse.request}: {refuse.path.text} has a value)" if found else None
 
     def _refuse_page(self, answer: _Answer) -> None:
         """A web page where JSON is expected is a stop for a human: never read as an answer, never worked around."""
