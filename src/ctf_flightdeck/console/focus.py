@@ -197,7 +197,7 @@ class FocusScreen(Screen, inherit_bindings=False):
                 with VerticalScroll(id="diff-scroll"):
                     yield Static(id="diff")
         yield Static(id="status")
-        yield CommandBar(BAR, id="chat", title=self._chat_title)
+        yield CommandBar(BAR, id="chat", title=self._chat_title, history=self.fd.bar_history)
         yield Static(_key_line(), id="keys")
 
     def on_mount(self) -> None:

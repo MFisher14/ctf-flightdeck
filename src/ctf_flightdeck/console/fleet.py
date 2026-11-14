@@ -248,7 +248,7 @@ class FleetScreen(Screen, inherit_bindings=False):
                 yield Static(id="peek")
                 yield Static(id="why")
         yield Static(id="status")
-        yield CommandBar(BAR, id="bar", title=self._bar_title)
+        yield CommandBar(BAR, id="bar", title=self._bar_title, history=self.fd.bar_history)
         yield Static(id="keys")
 
     def on_mount(self) -> None:

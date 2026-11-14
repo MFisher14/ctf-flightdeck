@@ -49,6 +49,7 @@ from .fleet import FleetScreen
 from .focus import FocusScreen
 from .screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from .terminal import STOP_SIGNALS, Beacon, TerminalDriver
+from .widgets import History
 
 STATUS_EVENTS = (EventKind.RELEASE, EventKind.TEAMMATE, EventKind.SUBMIT, EventKind.WARNING)
 STATUS_SECONDS = 12.0
@@ -128,6 +129,7 @@ class FlightdeckApp(App[None]):
         # goes to the fresh one (follow_restart); None: nothing to follow
         self._follow: tuple[str, str, frozenset[str]] | None = None
         self.copier = copier or clipboard.put
+        self.bar_history = History()  # what the command bars sent this run, for up and down (P71); never written to a file
         self._copied: object = None  # the selection last copied (a screen's `selections`): a button that comes up again copies it once
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
