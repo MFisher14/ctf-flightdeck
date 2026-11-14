@@ -4,6 +4,14 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- `flightdeck mock` no longer rings the terminal's bell unless your config says `bell = true`
+  under `[console]`: its lanes are scripted and need no one. A run rings as before, and
+  `bell = false` still silences both.
+- `/copy ` with a space lists what it copies (`output`, `command`, `flag`, `all`), each with a
+  few words, as `/sort` and `/autopilot` list theirs.
+- In the simple layout, while the filter hides the selected lane, the key line shows the keys
+  for no lane, as help and the command bar's `no lane` do, instead of keys that would be
+  refused.
 - `space` peeks at the selected lane. A panel opens under the lane list with the lane's last
   six steps, each on one row (a command and the first line of its output, the model's words,
   your messages, an alert, the question it waits on), over the line that says why the lane is
