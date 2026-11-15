@@ -322,10 +322,10 @@ def shown_whole(app: FlightdeckApp, selector: str) -> bool:
 
 
 WELCOME_SIZES = [(80, 24), (66, 24), (64, 24), (50, 20), (80, 16), (100, 24), (160, 46)]
-WELCOME_KEYS = {  # (the mock, a board the player fills): what the last row says
-    (True, False): "enter open the console esc just show me the console",
+WELCOME_KEYS = {  # (the mock, a board the player fills): what the last row says, all of it
+    (True, False): "enter open the console",
     (False, True): "enter add your first challenge esc just show me the console",
-    (False, False): "enter open the console esc just show me the console",
+    (False, False): "enter open the console",
 }
 
 
@@ -345,11 +345,31 @@ def test_the_welcome_screen_always_says_which_key_does_what(size, mock, by_hand,
         assert type(app.screen).__name__ == "WelcomeScreen"
         said = prompt_text(app)
         assert WELCOME_KEYS[mock, by_hand] in said, said
+        keys = " ".join(str(app.screen.query_one(".keys").render()).split())
+        assert keys == WELCOME_KEYS[mock, by_hand], keys  # nothing more: esc is named only where it differs from Enter
         assert "Welcome to flightdeck" in said and shown_whole(app, ".keys")
         await press(pilot, "enter")
         assert type(app.screen).__name__ == ("NewChallengePrompt" if by_hand else "FleetScreen")
 
     drive(app, script, size)
+
+
+@pytest.mark.parametrize("key", ["escape", "q"])
+@pytest.mark.parametrize("mock, by_hand", list(WELCOME_KEYS), ids=["mock", "empty by hand", "platform"])
+def test_esc_still_closes_the_welcome_screen_where_its_key_line_does_not_name_it(mock, by_hand, key):
+    """esc and q show the console on every welcome screen, named or not, and never open /new."""
+    if mock:
+        world = FakeWorld(scenarios.get("sstv"))
+        app = FlightdeckApp(world.deck, ticker=world.tick, mock="MOCK · test", refresh_seconds=None, welcome=True)
+    else:
+        _, app = console(by_hand=by_hand, welcome=True)
+
+    async def script(pilot):
+        assert type(app.screen).__name__ == "WelcomeScreen"
+        await press(pilot, key)
+        assert type(app.screen).__name__ == "FleetScreen"
+
+    drive(app, script, (100, 30))
 
 
 def test_a_welcome_screen_too_tall_for_the_terminal_scrolls_under_its_key_line():
