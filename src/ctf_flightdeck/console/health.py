@@ -114,7 +114,8 @@ def settings(path: Path | None = None) -> list[Row]:
     look = config.console
     rows.append(Row("Layout", look.layout, where("console", "layout", "In a run: /layout, then s saves one.")))
     rows.append(Row("Theme", look.theme, where("console", "theme", "In a run: /theme, then s saves one.")))
-    rows.append(Row("Bell", _on(look.bell), where("console", "bell", "Rings once when more lanes need you.")))
+    bell = "on in a run, off in the mock" if look.bell is None else _on(look.bell)  # as rings_bell has it
+    rows.append(Row("Bell", bell, where("console", "bell", "Rings once when more lanes need you.")))
     rows.append(Row("Title", _on(look.title), where("console", "title", "The terminal's title counts the lanes that need you.")))
     rows.append(Row("Mouse", _on(look.mouse), where("console", "mouse", "Off: your terminal keeps the mouse for selecting text.")))
     return rows

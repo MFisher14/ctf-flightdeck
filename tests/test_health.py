@@ -72,6 +72,14 @@ def test_the_settings_say_what_each_is_and_where_it_is_set_and_never_a_keys_valu
         "Config", "Model", "API", "Models", "Lanes", "Layout", "Theme", "Bell", "Title", "Mouse"]
 
 
+def test_the_bell_unwritten_says_a_run_rings_it_and_the_mock_does_not(machine):
+    bell = row(screen.settings(), "Bell")
+    assert bell.value == "on in a run, off in the mock"
+    assert bell.where.startswith("the default: your config has no [console] bell")
+    machine.write_text('[models]\nladder = ["m"]\n[console]\nbell = true\n')
+    assert row(screen.settings(), "Bell").value == "on"
+
+
 def test_a_key_that_is_not_set_says_where_it_goes_and_one_set_in_the_environment_says_so(machine, tmp_path, monkeypatch):
     rows = screen.settings()
     key = row(rows, "API key")
