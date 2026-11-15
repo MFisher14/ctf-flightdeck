@@ -213,7 +213,7 @@ def _ready(event: Path, command: str):
     from .config import ConfigError, load_config
     from .keys import KeysError, environment, keys_file_named
     from .platform.http import HttpCaller
-    from .preflight import ProfileError, http_token_env, load_profile
+    from .preflight import ProfileError, http_token_env, load_profile, placeholder_url
 
     try:
         profile, _ = load_profile(event)  # it expands ~ itself, and says so when it cannot
@@ -227,6 +227,8 @@ def _ready(event: Path, command: str):
               "so flightdeck does not ask it")
     if profile.url is None:
         _fail('event.url is required for platform "http": the platform\'s address, which every route of the [http] table is under')
+    if (unedited := placeholder_url(profile.url)) is not None:
+        _fail(unedited)
     name = profile.token_env
     if name is None:
         _fail('event.token_env is required for platform "http": the name of the environment variable that holds your token')

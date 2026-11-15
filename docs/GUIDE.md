@@ -1301,8 +1301,10 @@ presets ([Boards](BOARDS.md#a-board-from-a-platform-with-a-json-api)); no code r
 flags gets none from flightdeck: each comes back to you, to submit on the site.
 
 ```sh
-flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset, to edit (--preset noctf for noCTF)
+mkdir -p ~/ctf/quals
+flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset, to edit (--preset rctf2 for rCTF v2, noctf for noCTF)
 flightdeck http example --preset gzctf > ~/ctf/quals/event.toml   # or with the gzctf preset
+# edit event.toml: event.url (the site's address) and [rules]; then put your token in the variable token_env names
 flightdeck http check ~/ctf/quals/event.toml       # tries it: signs in, lists, reads the solved list (and an instance's status); submits nothing
 flightdeck play --event ~/ctf/quals/event.toml
 ```

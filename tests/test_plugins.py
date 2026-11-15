@@ -1018,3 +1018,18 @@ def test_doctor_reports_each_enabled_plugin_and_a_broken_one_never_fails_the_set
     assert f"     fix: fix the plugin's plugin.toml, or take [plugins.harbour] out of {config}" in result.output
     assert "ok   plugin acme: platform acme, runs <flightdeck's python> adapter.py" in result.output
     assert "FAIL plugin" not in result.output
+
+
+def test_plugin_pull_of_the_new_plugins_example_event_left_unedited_runs_nothing(tmp_path, config, monkeypatch):
+    """`plugin new` writes event.example.toml with url = https://ctf.example.org; pulled as it
+    is, the plugin would be handed the player's token for an address that is not the event's."""
+    from ctf_flightdeck.preflight import placeholder_url
+
+    root = make_plugin(tmp_path / "acme", LISTED)
+    enabled(config, root)
+    monkeypatch.setenv("ACME_TOKEN", TOKEN)
+    text = manifest.skeleton("acme")["event.example.toml"]
+    assert 'url = "https://ctf.example.org"' in text
+    result = invoke("pull", event_file(tmp_path, text=text))
+    assert (result.exit_code, result.output) == (2, f"flightdeck: {placeholder_url('https://ctf.example.org')}\n")
+    assert calls(root) == []

@@ -784,3 +784,35 @@ def test_http_check_with_no_challenge_marked_on_demand_asks_nothing_and_passes(t
     assert result.exit_code == 0, result.output
     assert "instance GET /api/v2/integrations/challs/{id}/instance: not asked: no challenge is marked on-demand (list.instance " \
            "matched no value)" in result.stdout.splitlines()
+
+
+@pytest.mark.parametrize("preset", ["rctf", "rctf2", "noctf", "gzctf"])
+def test_an_example_profile_left_unedited_sends_the_token_nowhere(tmp_path, own_config, monkeypatch, preset):
+    """`flightdeck http example > event.toml` and then `http check` (or pull, or play) with
+    event.url still the example's: the player's token went to ctf.example.org, a host that is
+    not the event's. Each command now refuses it by name before any address is looked up."""
+    import socket
+
+    from ctf_flightdeck.preflight import placeholder_url
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("a request left for the example's address")
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_network)
+    text = http_cli.example_profile(False, preset)
+    loaded_once = tmp_path / "once.toml"
+    loaded_once.write_text(text)
+    variable = load_profile(loaded_once)[0].token_env
+    monkeypatch.setenv(variable, "a-synthetic-token-for-the-example")
+    folder = tmp_path / "quals"
+    folder.mkdir()
+    path = folder / "event.toml"
+    path.write_text(text)
+    refusal = placeholder_url("https://ctf.example.org")
+    assert refusal is not None and placeholder_url("https://ctf.realevent.test") is None
+    for command in ("check", "pull"):
+        result = invoke(command, path)
+        assert (result.exit_code, result.output) == (2, f"flightdeck: {refusal}\n"), command
+    with pytest.raises(RunError) as refused:
+        prepare_run(RunOptions(event=path, config=config(tmp_path, "http://127.0.0.1:9/v1")))
+    assert str(refused.value) == refusal

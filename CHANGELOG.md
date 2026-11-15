@@ -21,6 +21,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - `flightdeck start`'s question of how the challenges arrive no longer leaves "by hand" as the
   only answer off CTFd: it says that on rCTF, noCTF or GZCTF `flightdeck http example --preset
   NAME > event.toml` sets up an event flightdeck pulls and submits for.
+- An example profile left unedited no longer sends your token to its placeholder address:
+  `http check`, `http pull`, `plugin pull` and `play --event` refuse an `event.url` that is
+  still `ctf.example.org` and say to put the event's own address there. The http and
+  plugin examples in BOARDS.md and the guide now say to make the folder and edit the profile
+  first.
 - Approving more budget says the new cap first and what is used after it: `L01's cap is now
   15k tokens (11k used)`, where it said `11k of 15k tokens`, which read as a cap of 11k. When
   the dollar cap goes because the model has no price, it says so.

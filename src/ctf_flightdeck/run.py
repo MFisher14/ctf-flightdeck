@@ -164,6 +164,7 @@ from .preflight import (
     label_line,
     load_profile,
     looser,
+    placeholder_url,
     no_agents,
     strictest,
 )
@@ -2021,6 +2022,8 @@ def _adapter(profile: EventProfile, config: Config) -> _Adapter:
     event's token read. RunError when the plugin, the table or the token cannot be used."""
     assert profile.url is not None  # check() refuses the profile without one
     url, event = profile.url, profile.name
+    if (unedited := placeholder_url(url)) is not None:
+        raise RunError(unedited)
     if profile.platform != "http":
         plugin, token = _plugin_token(profile, config)
         held = {profile.token_env: token} if profile.token_env and token else {}
@@ -2157,6 +2160,8 @@ def _ctfd_token(profile: EventProfile) -> str:
     """The CTFd token, from the variable event.token_env names. Never shown."""
     name = profile.token_env
     assert name is not None  # check() refuses a CTFd profile without one
+    if profile.url is not None and (unedited := placeholder_url(profile.url)) is not None:
+        raise RunError(unedited)
     from .keys import KeysError, environment, keys_file_named
 
     try:

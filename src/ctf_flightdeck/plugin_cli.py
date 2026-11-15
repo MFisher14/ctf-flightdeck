@@ -113,6 +113,7 @@ def pull(
         ProfileError,
         load_profile,
         no_such_plugin,
+        placeholder_url,
         plugin_board_problem,
         plugin_http_warning,
     )
@@ -141,6 +142,8 @@ def pull(
               f"so flightdeck does not run the {plugin.name} plugin for it")
     if profile.url is None:
         _fail("event.url is required for a plugin's platform: the address its adapter talks to")
+    if (unedited := placeholder_url(profile.url)) is not None:
+        _fail(unedited)
     elsewhere = plugin_board_problem(profile)  # the profile's word for where a pull writes: inside its own folder, or none
     if elsewhere is not None:
         _fail(elsewhere)
