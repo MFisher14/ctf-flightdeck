@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: eighteen proposals, P69 to P86 (2026-11-14)
+## Built, not released: nineteen proposals, P69 to P86 and P88 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P86); the lines for players are under Unreleased in
+[DECISIONS.md](DECISIONS.md) (P69 to P86, and P88); the lines for players are under Unreleased in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -71,8 +71,8 @@ Proposals built and waiting for a release, in the order of their numbers in
   waited for; a start behind a CAPTCHA is left to the player
   ([BOARDS.md](BOARDS.md#instances-on-demand)). Built from rCTF v2's API reference and tested
   against a fake of it only. A `tcp-ssl` address reaches a lane as `tls://host:port`, the form
-  P80 made for ctfd-whale. Not built: GZCTF's instances, and klodd's (it wants a CAPTCHA for
-  every start).
+  P80 made for ctfd-whale. Not built: klodd's instances (it wants a CAPTCHA for every start);
+  GZCTF's came with P88.
 - **Sessions** (P82). flightdeck's own lanes keep a program running across turns (gdb, an
   interpreter, `nc` to the instance) with `session_start`, `session_send` and `session_close`:
   at most three per lane, closed after ten minutes unused, and all closed at a take-over and at
@@ -95,6 +95,14 @@ Proposals built and waiting for a release, in the order of their numbers in
   (which ended a claude waiting for a message), counts the output tokens its events miss, and
   charges a call an interrupt cut short. Still open: claude's tool calls, a whole `practice
   --agent claude` run, and all of codex.
+- **GZCTF's containers** (P88). `[instances] plugin = "gzctf"` with `preset = "gzctf"`: the
+  container of a challenge whose type is a container one is started, extended and stopped
+  with the `[http]` table's cookie and game, its address read from the challenge's own detail;
+  10 seconds between two changes, as GZCTF wants; a container behind GZCTF's own WebSocket
+  proxy is said to be one no lane can reach ([BOARDS.md](BOARDS.md#which-plugin)). Built from
+  GZCTF's public source and tested against a fake of it only, never a real GZCTF. Not built: a
+  guard against a site that removes the team's oldest container at its limit (the setting is
+  not shown to players).
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

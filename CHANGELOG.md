@@ -101,6 +101,16 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   once and never sent again; start that instance on the site, and flightdeck uses it. Built
   from rCTF v2's API reference; it has not met a real event yet. The older rCTF keeps
   `preset = "rctf"`, and its instancer (klodd) wants a CAPTCHA, so start those by hand.
+- Containers on GZCTF. With `preset = "gzctf"` under `[http]` and `plugin = "gzctf"` under
+  `[instances]`, flightdeck starts a container challenge's container before a lane works it,
+  with your `GZCTF_Token` cookie, extends it near its end and stops it when the challenge is
+  solved. A pull marks the challenges whose type is `StaticContainer` or `DynamicContainer`.
+  flightdeck leaves 10 seconds between two container changes, as GZCTF refuses faster ones.
+  A site that serves its containers through its own WebSocket proxy gives no address a lane
+  can use, and flightdeck says so: open those from the site. Built from GZCTF's source and
+  tested against a stand-in only; it has not met a real event yet.
+- `instance_values` under `[http.list]` or `[http.detail]` names the values of `instance` that
+  mark a challenge on-demand, for a platform whose field says something for every challenge.
 - An instance with several addresses (a web front and a TCP service, say) gives its lanes all
   of them. rCTF's `tcp-ssl` address, a TLS service, reaches the lane as `tls://host:port`, as
   ctfd-whale's do. One flightdeck cannot hand a lane yet is named in the line that says the

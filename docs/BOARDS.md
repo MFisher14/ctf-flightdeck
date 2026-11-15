@@ -396,8 +396,12 @@ game = "3"                          # the game's number, as its address shows it
   `http check` and each pull say so too.
 - **Dynamic flags need nothing of yours.** GZCTF can give each team its own flag for a
   challenge; the lane finds your team's, and flightdeck sends it as any other.
-- flightdeck does not start a GZCTF instance (start it on the site), and the preset has met a
-  stand-in in GZCTF's shape only, never a real GZCTF event: run `http check` first.
+- **Containers.** The preset marks a challenge whose type is a container one
+  (`StaticContainer` or `DynamicContainer`) as on-demand, and with `plugin = "gzctf"` under
+  `[instances]` flightdeck starts its container itself ([Instances on demand](#instances-on-demand)).
+  Without that table, start the container on the site.
+- The preset and its containers have met a stand-in in GZCTF's shape only, never a real GZCTF
+  event: run `http check` first.
 
 ### The `[http]` table
 
@@ -458,6 +462,7 @@ refs = "$.data.solves[*].id"
 | `list.category`, `points`, `solves`, `description`, `max_attempts` | Optional, as in [`challenge.json`](#challengejson). `max_attempts` makes the challenge one whose tries are counted. |
 | `list.file_urls`, `file_names` | Each file's address, and optionally its name (else the last part of the address). Both must match the same number of values. |
 | `list.instance` | Optional: a value that says the challenge has an instance the platform starts when asked (rCTF v2's `instancerLifetime`). Any value but `null`, `false`, `0` or `""` writes `"instance": "on-demand"` in its `challenge.json`. |
+| `list.instance_values` | Optional, with `instance`: the values there that mean it, a list of strings, when not every value does (GZCTF's `type` is `StaticAttachment` for a challenge with no container, so the gzctf preset names `["StaticContainer", "DynamicContainer"]`). Any other value marks nothing. |
 | `[http.detail]` | Optional: `request` with `{ref}` in it and any of the fields above, read from one more request for each new challenge. A field here wins over the list's; `file_urls` here without `file_names` names each file from its address. |
 | `submit.request`, `body` | Required for flightdeck to submit. The body is JSON; `{flag}` must be in it, and `{ref}` in the path or the body (`"{ref:int}"` as a whole value sends the ref as a number). |
 | `submit.verdict_path`, `[http.submit.verdicts]` | Where the answer holds the platform's word, and which verdict each word means: `correct`, `incorrect`, `already_solved`, `rate_limited` or `unjudged`. The answer is read whatever its HTTP status (rCTF answers a wrong flag with 400). `true` and `false` and numbers are matched as those words. |
@@ -680,12 +685,12 @@ forbids giving a model the challenge is `material_to_models = false`.
 
 Some challenges have no fixed address: the site starts a container for your team when you
 press a button, lets only a few run at once, and stops each after a while. On CTFd a plugin
-does this; rCTF v2 does it itself. With an `[instances]` table in the event profile,
+does this; rCTF v2 and GZCTF do it themselves. With an `[instances]` table in the event profile,
 flightdeck presses the button:
 
 ```toml
 [instances]
-plugin = "docker_per_team"      # the site's container plugin (rCTF v2: "rctf")
+plugin = "docker_per_team"      # the site's container plugin (rCTF v2: "rctf"; GZCTF: "gzctf")
 types = ["container"]           # CTFd challenge types that have such an instance
 max_running = 3                 # the most kept running at once: the site's cap for a team, or less
 ```
@@ -693,7 +698,7 @@ max_running = 3                 # the most kept running at once: the site's cap 
 - **Which challenges.** A challenge whose `type` (above) is one of `types`, or whose
   `challenge.json` says `"instance": "on-demand"`. To find the type name, pull the board and look
   at a container challenge's `challenge.json`. On rCTF v2 the `rctf2` preset writes
-  `"instance"` itself, and `types` is not needed.
+  `"instance"` itself, and the `gzctf` preset does on GZCTF, so `types` is not needed.
 - **When.** flightdeck starts an instance before a lane works its challenge, in the queue's own
   order, and no lane starts on such a challenge before its instance is up; the challenges behind
   it in the queue start meanwhile. It renews an instance five minutes before its end while lanes
@@ -740,7 +745,8 @@ max_running = 3                 # the most kept running at once: the site's cap 
 - **What it needs.** `platform = "ctfd"`, or `platform = "http"` with a run that uses the
   platform (`pull` or `submit` not by hand), `platform_automation = true`, and the `instance`
   policy at `auto` (so `live_targets = "allowed"`): starting an instance is reaching it. A named
-  plugin must be one of the event's platform (`rctf` is for `http`, the others for `ctfd`).
+  plugin must be one of the event's platform (`rctf` and `gzctf` are for `http`, the others
+  for `ctfd`).
   Otherwise flightdeck starts none, and `preflight` and the start of a run say why; start it on
   the site yourself, and the lane works from the files. On the http platform the instancer is
   asked with the same token, the same sign-in and the same one address as the `[http]` table's
@@ -762,6 +768,7 @@ max_running = 3                 # the most kept running at once: the site's cap 
 | `chall_manager` | [ctfd-chall-manager](https://github.com/ctfer-io/ctfd-chall-manager) | `dynamic_iac` | Built from the plugin's source; never run against a site |
 | `ctfd_whale` | [ctfd-whale](https://github.com/frankli0324/ctfd-whale) | `dynamic_docker` | Built from the plugin's source; tested against fakes only |
 | `rctf` | [rCTF v2](https://github.com/otter-sec/rctf)'s own instancer, with `platform = "http"` and `preset = "rctf2"` | (none: the preset marks them) | Built from rCTF's API reference; never run against a site |
+| `gzctf` | [GZCTF](https://github.com/GZTimeWalker/GZCTF)'s own containers, with `platform = "http"` and `preset = "gzctf"` | (none: the preset marks them) | Built from GZCTF's source; tested against a fake only, never a real GZCTF |
 
 For the ones that were never run against a site, try a practice challenge before you rely on
 one, and tell us what happened in an issue.
@@ -810,6 +817,24 @@ one, and tell us what happened in an issue.
   `https` or `tcp-ssl`, a TLS endpoint given to the lane as `tls://host:port`), a host and a
   port; the end is in milliseconds. A deployment may guard the start and the extension with a
   CAPTCHA: then start the instance on the site (above), and renew it there too.
+- **`gzctf`.** `POST /api/game/GAME/container/ID` starts the container, `POST .../extend`
+  extends it and `DELETE` stops it, with the game's number from `[http]` and the challenge's.
+  GZCTF has no request that reads a container, so the status is the challenge's own detail,
+  whose `instanceEntry` is the address (`host:port`, given to the lane as `tcp://` or, for a
+  web challenge, `http://`) and `closeTime` the end. The cookie of the `[http]` table goes
+  with each request. GZCTF refuses a start or a stop within 10 seconds of the last on that
+  challenge, so flightdeck leaves 10 seconds between two changes, and an extension before the
+  last 10 minutes of a container's life (the site's renewal window), which flightdeck's
+  renewal at five minutes before the end falls inside. A site whose window is shorter than
+  five minutes refuses it; flightdeck says so and starts the container again when it ends.
+  A site that serves its containers through its own WebSocket proxy (its `PlatformProxy` port
+  mapping) gives no host and port, only the container's id: flightdeck says the container runs
+  at an address it cannot hand a lane, and you open it from the challenge on the site. A team
+  past the game's container limit is refused, which flightdeck treats as the cap. One risk is
+  not in flightdeck's hands: a site can be set to remove the team's oldest container when a
+  start passes the limit (GZCTF's `AutoDestroyOnLimitReached`, off by default, and not shown
+  to players). On such a site, keep `max_running` below the game's limit by what your
+  teammates run, or a start may remove one of theirs.
 - `plugin = "ctfd_docker"`, a guess of 0.4.0 that matched no plugin, is refused: write
   `docker_per_team` for CTFd-Docker-Plugin.
 
