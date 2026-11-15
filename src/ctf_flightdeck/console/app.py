@@ -158,6 +158,7 @@ class FlightdeckApp(App[None]):
         self.unstager = unstager
         self._staging = asyncio.Lock()  # one drop is copied at a time, in the order they came
         self.config_path = config_path  # the player's config file, named by /config ("": none, as in the mock)
+        self._in_run = None  # /settings' part of the run (health.InRun), made when it is first opened, kept for the run
         self._exiting = False
         self.stopped_by: signal.Signals | None = None  # the signal that stopped the run, if one did
         self._signals: list[int] = []  # the signals this console catches while it runs
@@ -1452,6 +1453,36 @@ class FlightdeckApp(App[None]):
         self.push_screen(Picker("theme", choices, in_use=before.name, preview=lambda name: show(palettes[name]),
                                 save_to=self.config_path, note=own), done)
 
+    def open_settings(self) -> None:
+        """/settings: the home screen's Settings and health over the console (P90): this run's
+        settings, which /config changes (c there opens its dialog), the setup the run's config
+        holds, and doctor's checks, which run in a child process at a lower priority, never on
+        this loop the lanes share. What the checks found is kept for the run (self._in_run), so
+        opening it again shows them with their age and starts nothing until r."""
+        from .health import HealthScreen, InRun
+
+        if isinstance(self.screen, HealthScreen):
+            return
+        if self._in_run is None:
+            self._in_run = InRun(rows=self._run_rows, needing=lambda: len(self.deck.needing()), change=self.config_dialog,
+                                 config=Path(self.config_path) if self.config_path else None)
+        self.push_screen(HealthScreen(in_run=self._in_run))
+
+    def _run_rows(self) -> list:
+        """This run's own settings, as /config's dialog has them now, for /settings."""
+        from .health import Row
+
+        cfg = self.deck.config
+        lanes = "unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes)
+        flags = {"auto": "submitted as soon as found (auto approve)", "confirm": "each waits for your yes"}.get(cfg.submit, cfg.submit)
+        rows = [Row("Lanes", f"{lanes} at once", "for this run: /config lanes N, or the dialog"),
+                Row("Flags", flags, "for this run: /config submit auto|confirm, or the dialog"),
+                Row("Layout", self.layout, "for this run: /layout; s there saves it in your config"),
+                Row("Theme", theme.active().name, "for this run: /theme; s there saves it in your config")]
+        if not self.config_path:
+            rows.append(Row("Config", "none", "the mock reads none: below is the one flightdeck reads"))
+        return rows
+
     def config_dialog(self) -> None:
         """/config alone: the settings dialog (ConfigPrompt). What it changes for the run goes
         through the same deck calls as /config lanes and /config submit, so the event's rules
@@ -1562,6 +1593,8 @@ class FlightdeckApp(App[None]):
             outcome = self.deck.tell_all(arg)
             self.say(outcome.message, "information" if outcome.ok else "warning")
             self.refresh_view()
+        elif name == "settings":
+            self.open_settings()
         elif name == "config":
             self.configure(arg)
         elif name == "theme":

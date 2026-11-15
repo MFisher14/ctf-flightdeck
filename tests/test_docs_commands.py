@@ -457,7 +457,8 @@ def test_the_guide_and_the_spec_say_of_the_command_menu_what_the_commands_do():
         (line,) = [line for line in table if re.match(rf"\|[^|]*\| {re.escape(start)}", line)]  # the row whose command cell starts so
         return line
 
-    assert row("`/quit` (also `/q`, `/exit`) |") and "(also `/settings`) | Alone: a dialog" in row("`/config ")
+    assert row("`/quit` (also `/q`, `/exit`) |") and "`/config file` | Alone: a dialog" in row("`/config ")
+    assert "/settings" not in row("`/config ") and "Settings and health" in row("`/settings` |")
     assert "(`esc` or `/back`, also typed `/lanes`, returns)" in row("`/open <lane>` |")
     assert "/a`" not in guide + menu and commands.BY_NAME["approve"].aliases == ()  # approve is typed whole, and no page offers a short form
 
