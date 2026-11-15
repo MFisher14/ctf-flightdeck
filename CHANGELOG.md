@@ -14,6 +14,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   (12k used)`, where `11k of 15k tokens` read as a cap of 11k. Approving a lane on a model with
   no price says `L01 carries on with no dollar cap; its token cap is 400k tokens (120 used)`, not
   `L01's cap is now 120 of 400k tokens`.
+- `/` alone in the command bar, sent after esc closed its list, says `/ alone is no command:
+  type a command's name after it, the list shows them; esc clears the bar` instead of
+  `Unknown command /: type / to see the list`.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
