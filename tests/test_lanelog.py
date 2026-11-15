@@ -889,7 +889,7 @@ def test_help_lists_the_details_key_and_command_and_the_keys_that_page_the_trans
     keys = dict(LANE_KEY_HELP)
     assert "pgup pgdn" not in dict(KEY_HELP)  # a key of a lane's view (P65)
     assert dict(KEY_HELP)["ctrl+o"].startswith("Attach files")  # in the lane list it is the file window (P85), not details
-    assert keys["ctrl+o"] == "Details on or off. Off: a row for each entry, and the needs-you card in three"
+    assert keys["ctrl+o"] == "Details on or off. Off: a row for each entry, and the needs-you card in three rows"
     assert keys["pgup pgdn"] == f"Scroll the transcript; pgup at the top of a long one shows {MOUNTED} more entries"
     _, app, _ = one_lane("simple")
 
@@ -898,7 +898,7 @@ def test_help_lists_the_details_key_and_command_and_the_keys_that_page_the_trans
         await send(pilot, app, "/help")
         assert isinstance(app.screen, HelpScreen)
         said = prompt_text(app)
-        assert "ctrl+o Details on or off. Off: a row for each entry, and the needs-you card in three" in said
+        assert "ctrl+o Details on or off. Off: a row for each entry, and the needs-you card in three rows" in said
         assert f"pgup pgdn Scroll the transcript; pgup at the top of a long one shows {MOUNTED} more entries" in said
 
     drive(app, script, (160, 60))

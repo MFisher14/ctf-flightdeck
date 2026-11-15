@@ -1060,7 +1060,7 @@ LANE_KEY_HELP = (
     ("1-9, 0", "Quick answers, no enter, while the chat box is empty: the numbers on the needs-you card (0 says no)"),
     ("?", "This help, while the chat box is empty; with text in the box it is a question mark"),
     ("ctrl+n", "The next lane that needs you, in attention order, round to the first"),
-    ("ctrl+o", "Details on or off. Off: a row for each entry, and the needs-you card in three"),
+    ("ctrl+o", "Details on or off. Off: a row for each entry, and the needs-you card in three rows"),
     ("tab", "Move focus: chat box, files, diff"),
     ("pgup pgdn", "Scroll the transcript; pgup at the top of a long one shows 300 more entries"),
 )
