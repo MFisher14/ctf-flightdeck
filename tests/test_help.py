@@ -318,7 +318,9 @@ def test_help_has_every_row_from_either_view_and_starts_with_the_view_it_was_ope
 
 def test_each_view_lists_its_own_keys_and_no_row_says_in_a_lane_of_a_list_key():
     listed, lane = dict(KEY_HELP + BATCH_KEY_HELP), dict(LANE_KEY_HELP)
-    assert {"ctrl+n", "ctrl+o", "pgup pgdn", "typing"} <= set(lane) and not {"ctrl+n", "ctrl+o"} & set(listed)
+    assert {"ctrl+n", "ctrl+o", "pgup pgdn", "typing"} <= set(lane) and "ctrl+n" not in listed
+    # ctrl+o is a key of each view, with its own meaning in each: the file window in the list, details in a lane
+    assert listed["ctrl+o"].startswith("Attach files: your system's file window") and lane["ctrl+o"].startswith("Details on or off")
     assert {"p", "h", "r", "f", "k", "e", "t", "a", "d", "A", "x", "s", "q", "space"} <= set(listed) and not {"p", "k", "q", "A", "space"} & set(lane)
     assert lane["?"] == "This help, while the chat box is empty; with text in the box it is a question mark"
     assert listed["?"] == "This help, for where you are; in the command bar, only while it is empty"
@@ -400,3 +402,21 @@ def test_the_spec_the_guide_and_the_changelog_say_of_help_what_the_console_draws
     for page in (spec, guide, changelog):
         assert "/help all keys" not in flat(page)
     assert "`?` on the empty chat box opens help for that lane" in flat(guide)
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_ctrl_o_in_the_lane_list_of_a_console_that_attaches_no_file_says_why_and_opens_no_file_window(layout, monkeypatch):
+    """ctrl+o in the lane list is a bare /attach: where nothing can be attached (no attacher: a
+    board the platform fills, the mock) it says so, as /attach does, and the file window stays shut."""
+    from ctf_flightdeck import filepick
+
+    asked = []
+    monkeypatch.setattr(filepick, "choose", lambda **kw: asked.append(kw) or [])
+    deck, app = three_lanes(layout)
+
+    async def script(pilot):
+        await press(pilot, "ctrl+o")
+        assert app.screen is app.fleet and app._status[:2] == ("/attach adds files to a challenge on a board you fill yourself", "warning")
+        assert asked == []
+
+    drive(app, script)

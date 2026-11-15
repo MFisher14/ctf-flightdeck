@@ -912,6 +912,48 @@ def test_an_image_the_model_cannot_read_is_a_warning_and_the_challenge_is_added_
     asyncio.run(main())
 
 
+@pytest.mark.parametrize("dropped", [True, False])
+def test_a_new_with_an_image_that_is_not_added_after_all_removes_the_copies_of_its_drop_and_says_so(tmp_path, monkeypatch, dropped):
+    """The /new was answered ("reading 1 image...") and its form closed, then the challenge
+    could not be written: nothing will attach the copies of its drop now, so they go, and the
+    warning says so. A file of the player's own that was not dropped is left where it is."""
+    from fake_model import text_reply
+
+    shot = tmp_path / "clip.png"
+    shot.write_bytes(PNG)
+
+    def full(board, new):
+        raise AddError("the disk is full")
+
+    monkeypatch.setattr(addchallenge, "create", full)
+
+    async def main():
+        with FakeModelServer([text_reply("some text")]) as server:
+            run = prepare_run(options(tmp_path, server))
+            warnings = []
+            run.deck.subscribe(lambda e: warnings.append(e.text) if e.kind.value == "warning" else None)
+            run.release()
+            files = run.stage_files([shot]) if dropped else [shot]
+            ok, told = await run.add_challenge(NewChallenge(name="Lost", description="typed", files=tuple(files)))
+            assert ok and "reading 1 image" in told
+            for _ in range(500):
+                if warnings:
+                    break
+                await asyncio.sleep(0.01)
+            (warning,) = warnings
+            assert "the disk is full" in warning
+            if dropped:
+                assert "copies of its dropped file (clip.png) are removed" in warning
+                assert not files[0].exists() and not files[0].parent.exists()
+            else:
+                assert "dropped" not in warning
+            assert shot.read_bytes() == PNG and "lost" not in run.deck.challenges
+            await run.shutdown()
+            run.close()
+
+    asyncio.run(main())
+
+
 def test_a_challenge_with_an_image_is_checked_before_the_model_is_asked_to_read_it(tmp_path):
     """The refusal comes back while the form is open, not as a warning after "reading 1
     image..." closed it."""
@@ -1752,12 +1794,12 @@ def test_a_dropped_file_that_is_not_there_is_said_with_the_reason_and_pasted_as_
         await app.on_event(events.Paste(text))  # the lanes table has the focus: a paste has nowhere to go
         await pilot.pause()
         assert bar.value == "" and app._status[1] == "warning"
-        assert app._status[0].startswith("no such file: ...") and app._status[0].endswith(why + "type /attach with no file to choose it")
+        assert app._status[0].startswith("no such file: ...") and app._status[0].endswith(why + "press ctrl+o or type /attach with no file to choose it")
         app._status = None
         await pilot.press("slash")
         await app.on_event(events.Paste(text))  # in the command bar: the same line, and the text where the cursor is
         await pilot.pause()
-        assert bar.value == "/" + text and app._status[0].endswith(why + "type /attach with no file to choose it")
+        assert bar.value == "/" + text and app._status[0].endswith(why + "press ctrl+o or type /attach with no file to choose it")
         bar.value, app._status = "", None
         for words in ("hint L01 look at /etc/passwd", f"hint L01 open {gone}", "help"):  # text, and a command: nothing is said
             await app.on_event(events.Paste(words))
@@ -2200,7 +2242,7 @@ def test_a_typed_path_of_a_file_that_is_not_there_is_said_and_none_of_its_keys_a
             assert bar.value == "" and not bar.has_focus  # not even its first: `/` opens the command bar
             assert app._status[0].startswith("no such file: ...") and app._status[1] == "warning"
             assert app._status[0].endswith("park kill quit.bin. VS Code's terminal leaves ` $ | & > ~ # ! ^ * ; < out of a "
-                                           "dropped file's name: type /attach with no file to choose it")
+                                           "dropped file's name: press ctrl+o or type /attach with no file to choose it")
         await pilot.press("slash")  # with the command bar open it is text there, as a paste is, and said all the same
         await pilot.pause(GAP * 2)
         app._status = None
@@ -2327,6 +2369,47 @@ def test_ctrl_o_and_a_bare_attach_open_the_file_window_and_take_what_was_chosen(
                         break
                     await pilot.pause(0.01)
                 assert (run.options.board / "bare" / "doll.bin").read_bytes() == b"inside" and len(asked) == 2
+            await run.shutdown()
+            run.close()
+
+    asyncio.run(main())
+
+
+@pytest.mark.parametrize("layout", ["simple", "deck", "compact"])
+def test_ctrl_o_in_the_lane_list_attaches_to_the_selected_lanes_challenge_and_in_a_lane_is_details(tmp_path, monkeypatch, layout):
+    """ctrl+o in the lane list is a bare /attach: the file window, then the files go to the
+    selected lane's challenge, in each layout (the compact one is the simple one on a phone's
+    width). In a lane's own view the key is still details, and no file window opens."""
+    from ctf_flightdeck import filepick
+
+    handout = tmp_path / "doll.bin"
+    handout.write_bytes(b"inside")
+    asked = []
+    monkeypatch.setattr(filepick, "choose", lambda **kw: asked.append(kw) or [handout])
+
+    async def main():
+        with busy_lanes() as server:
+            run = prepare_run(options(tmp_path, server))
+            app = run.app(refresh_seconds=None)
+            async with app.run_test(size=(60, 40) if layout == "compact" else (160, 46)) as pilot:
+                await pilot.pause()
+                if layout == "deck":
+                    app.switch_layout("deck")
+                    await pilot.pause()
+                await run.add_challenge(NewChallenge(name="Doll", description="d"))
+                await until(pilot, lambda: app.fleet.selected_lane in run.deck.lanes)
+                await pilot.press("ctrl+o")
+                await until(pilot, lambda: (run.options.board / "doll" / "doll.bin").exists())
+                assert (run.options.board / "doll" / "doll.bin").read_bytes() == b"inside" and len(asked) == 1
+                await until(pilot, lambda: app.screen is app.fleet and app.fleet.selected_lane in run.deck.lanes)
+                app.open_lane(app.fleet.selected_lane)
+                await until(pilot, lambda: app.screen is not app.fleet)
+                await pilot.pause()
+                details = app.screen.details
+                await pilot.press("ctrl+o")
+                await pilot.pause()
+                assert app.screen.details != details and len(asked) == 1  # details turned; no file window
+                await pilot.press("escape")
             await run.shutdown()
             run.close()
 
