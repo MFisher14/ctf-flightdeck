@@ -337,7 +337,7 @@ def test_the_rctf2_example_profile_prints_loads_and_passes_the_check(tmp_path, r
     """`flightdeck http example --preset rctf2` once crashed (a KeyError): the preset was listed
     but had no example of its own. Its token variable is named as rCTF's (RCTF_TOKEN)."""
     from ctf_flightdeck import http_cli
-    from ctf_flightdeck.preflight import check, load_profile
+    from ctf_flightdeck.preflight import check, load_profile, placeholder_url
     from test_http_event import invoke
 
     result = invoke("example", "--preset", "rctf2", *(["--routes"] if routes else []))
@@ -348,7 +348,7 @@ def test_the_rctf2_example_profile_prints_loads_and_passes_the_check(tmp_path, r
     variable = "HTTP_TOKEN" if routes else "RCTF_TOKEN"
     assert loaded.token_env == variable and (loaded.http.preset == "rctf2") is not routes
     assert (loaded.http.list.request.method, loaded.http.list.request.path) == ("GET", "/api/v2/challs")
-    assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == []
+    assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == [placeholder_url(loaded.url)]  # the address left as the example's: the one refusal (placeholder_url)
     assert ("These are rCTF v2's, written out" in result.output) is routes
 
 
