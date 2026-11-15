@@ -273,6 +273,17 @@ def test_while_the_gate_names_a_limit_one_lane_starts_and_the_rest_stay_queued_w
     assert driver.started() == ["c0"] and len(gate_warnings(deck)) == 1
 
 
+def test_the_release_line_says_why_lanes_wait_when_the_gate_holds_them_back():
+    """The status line shows the release's line, which comes after the gate's warning: it says
+    the reason too, or a player sees one lane at work of three and nothing that says why."""
+    deck, _, _ = gated_deck()
+    (released,) = events(deck, EventKind.RELEASE)
+    assert released.text == f"Release: 4 challenges · 1 lane started · 3 queued · no new lane starts for now: {BUSY}"
+    deck, _, _ = gated_deck(gate="")
+    (released,) = events(deck, EventKind.RELEASE)
+    assert released.text == "Release: 4 challenges · 3 lanes started · 1 queued"
+
+
 def test_the_gate_is_no_hold_and_stops_or_pauses_no_lane():
     deck, driver, _ = gated_deck()
     assert deck.held == ""  # not hold_queue: nothing for the player to lift, nothing that disengages autopilot
