@@ -18,6 +18,7 @@ from typing import Annotated, NoReturn
 
 import typer
 
+from .start import PRESET_LABELS
 from .text import untrusted
 
 app = typer.Typer(
@@ -87,7 +88,7 @@ ROUTES_HEAD = """\
 # The routes of the platform's API. These are {label}'s, written out: change them to the platform in
 # front of you (its browser's network tab shows its routes). `flightdeck http check` tries them.
 """
-LABELS = {"rctf": "rCTF", "rctf2": "rCTF v2", "noctf": "noCTF", "gzctf": "GZCTF"}  # each preset's name as the platform writes it
+LABELS = PRESET_LABELS  # each preset's name as the platform writes it: start's table, so the two cannot drift
 _GAME_LINE = 'game = "1"                          '
 
 
