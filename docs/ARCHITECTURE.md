@@ -947,7 +947,9 @@ runs. It reuses the plugin's run side whole through one protocol.
   `describe()` prints `http.plan()`: each request and where the token goes.
 - **In a run**: `run._adapter` makes the caller for a plugin or for http, and everything after
   it (`_plugin_first`, `PluginLink`, the by-hand rules) is shared. `flightdeck http check` is
-  `HttpCaller.check()`: the sign-in, the list and the solved list, and what each path matched.
+  `HttpCaller.check()`: the sign-in, the list and the solved list, and what each path matched;
+  with `[instances]`, one status `GET` of the first on-demand challenge through
+  `InstanceClient` and `instance_wire()` (P89), never a start.
 
 ### Event runs
 

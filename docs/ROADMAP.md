@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: twenty proposals, P69 to P88 (2026-11-14)
+## Built, not released: twenty-one proposals, P69 to P89 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P88); the lines for players are under Unreleased in
+[DECISIONS.md](DECISIONS.md) (P69 to P89); the lines for players are under Unreleased in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -108,6 +108,11 @@ Proposals built and waiting for a release, in the order of their numbers in
   GZCTF's public source and tested against a fake of it only, never a real GZCTF. Not built: a
   guard against a site that removes the team's oldest container at its limit (the setting is
   not shown to players).
+- **`http check` asks the instancer, and "errored" is a failed instance** (P89). With
+  `[instances]`, `flightdeck http check` sends one status `GET` for the first on-demand
+  challenge (never a start) and prints what the site said; rCTF v2's `errored` is its own
+  state (`failed_states`, `InstanceFailed`): no start is sent while the site says it, and the
+  status is asked again later. Not confirmed: what rCTF does with a start of an errored one.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

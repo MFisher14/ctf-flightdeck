@@ -675,3 +675,102 @@ def test_a_coding_agent_lane_on_an_http_event_shows_the_login_link_and_the_token
     for kept in (run.log.path, *(run.dir / "lanes").iterdir()):
         text = kept.read_text()
         assert TEAM_TOKEN not in text and encoded not in text, kept.name
+
+
+# ---------------------------------------------------------------------- check, with [instances] (P89)
+
+
+RCTF2 = 'preset = "rctf2"'
+ON_RCTF = '[instances]\nplugin = "rctf"\n'
+STATUS = "instance GET /api/v2/integrations/challs/{id}/instance for pwn-box, the first of 1 on-demand"
+
+
+def boxed(status: str = "stopped") -> list[RTask]:
+    """The sample, and one challenge with an instancer in the given state."""
+    from fake_http import Instancer
+
+    return [*sample(), RTask("pwn-box", "Pwn Box", category="pwn", instancer=Instancer(status=status, left=5))]  # starting: 5 more looks
+
+
+def instance_methods(fake: FakeRCTF) -> list[str]:
+    return [r.method for r in fake.of("instance")]
+
+
+def test_http_check_asks_the_instancers_status_once_with_a_get_and_shows_where_it_runs(tmp_path, own_config, token):
+    with FakeRCTF(boxed("running"), v2=True) as fake:
+        result = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra=ON_RCTF))
+        assert instance_methods(fake) == ["GET"]  # never a PUT, a PATCH or a DELETE
+        assert fake.of("instance")[0].headers["authorization"] == f"Bearer {AUTH_TOKEN}"  # the sign-in's session, as a run sends it
+        assert fake.kinds().count("login") == 1
+    assert result.exit_code == 0, result.output
+    out = result.stdout.splitlines()
+    assert out[0] == f"Fake Quals at {fake.url}: nothing is submitted, no file is downloaded, no instance is started"
+    assert "  instance  status GET /api/v2/integrations/challs/{id}/instance, with the session token (Authorization: Bearer): only for " \
+           "an on-demand challenge of the board" in out  # the plan names the instancer's routes too
+    line = next(line for line in out if line.startswith("instance GET"))
+    assert line.startswith(f"{STATUS}: running at tcp://pwn-1.chal.example.test:31337, ends in ")
+    assert out[-1] == "every path a pull needs matched; nothing was submitted and no instance was started"
+    assert TEAM_TOKEN not in result.output and AUTH_TOKEN not in result.output
+
+
+@pytest.mark.parametrize(("status", "said"), [
+    ("stopped", "no instance runs for it, and none was started (a 400 or a 404 reads so too: if one runs on the site, the status "
+                "route is wrong)"),
+    ("errored", "the platform says the instance of pwn-box failed (errored): flightdeck sends no start for it while the platform "
+                "says so; stop it or start it again on the site"),
+    ("starting", "the instance of pwn-box is on its way up or down on the platform (starting); flightdeck sends nothing for it and "
+                 "asks again in a while"),
+])
+def test_http_check_says_what_the_instancer_says_and_starts_nothing(tmp_path, own_config, token, status, said):
+    with FakeRCTF(boxed(status), v2=True) as fake:
+        result = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra=ON_RCTF))
+        assert instance_methods(fake) == ["GET"] and fake.tasks["pwn-box"].instancer.status == status
+    assert result.exit_code == 0, result.output
+    assert f"{STATUS}: {said}" in result.stdout.splitlines()
+
+
+def test_http_check_counts_a_status_the_platform_refuses_and_exits_1(tmp_path, own_config, token):
+    with FakeRCTF(boxed(), v2=True) as fake:
+        fake.script("instance", answer(403, "badPerms", "The token does not have the required permissions."))
+        result = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra=ON_RCTF))
+        assert instance_methods(fake) == ["GET"]
+    assert result.exit_code == 1
+    assert f"{STATUS}: the platform refused instance status for challenge pwn-box: The token does not have the required " \
+           "permissions." in result.stdout.splitlines()
+    assert "flightdeck: the [instances] table's status route did not give what a run needs: see the instance line above" in result.output
+    assert "paths of the [http] table" not in result.output  # every path matched: only the instance line counts
+
+
+def test_http_check_never_sends_a_status_route_that_is_not_a_get(tmp_path, own_config, token):
+    route = "/api/v2/integrations/challs/{id}/instance"
+    own = (f'[instances]\nstart = ["PUT", "{route}"]\nstop = ["DELETE", "{route}"]\nrenew = ["PATCH", "{route}"]\n'
+           f'status = ["POST", "{route}"]\nendpoints_key = "endpoints"\n')
+    with FakeRCTF(boxed("running"), v2=True) as fake:
+        result = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra=own))
+        assert fake.of("instance") == []
+    assert result.exit_code == 0, result.output
+    assert f"instance POST {route}: not asked: the status route is a POST, and check sends only requests that change nothing " \
+           "(a GET)" in result.stdout.splitlines()
+
+
+def test_http_check_names_an_instances_table_no_run_would_use(tmp_path, own_config, token):
+    """A CTFd plugin's shape on the http platform, and a table whose list marks no challenge
+    on-demand: a run would start no instance, so check says so, asks nothing and exits 1."""
+    with FakeRCTF(boxed("running"), v2=True) as fake:
+        ctfd = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra='[instances]\nplugin = "docker_per_team"\n'))
+        unmarked = invoke("check", event_file(tmp_path, fake.url, http=PRESET, extra=ON_RCTF))  # rctf's v1 list has no instance path
+        assert fake.of("instance") == []
+    assert ctfd.exit_code == 1 and unmarked.exit_code == 1
+    assert 'instance not asked: instances.plugin docker_per_team is for platform "ctfd", and this event\'s is "http", so a run ' \
+           'starts no instance with it (rCTF v2\'s instancer: plugin = "rctf")' in ctfd.stdout.splitlines()
+    assert "instance GET /api/v2/integrations/challs/{id}/instance: not asked: the [http] table has no list.instance or " \
+           "detail.instance path, so a run marks no challenge on-demand and starts no instance" in unmarked.stdout.splitlines()
+
+
+def test_http_check_with_no_challenge_marked_on_demand_asks_nothing_and_passes(tmp_path, own_config, token):
+    with FakeRCTF(sample(), v2=True) as fake:
+        result = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra=ON_RCTF))
+        assert fake.of("instance") == []
+    assert result.exit_code == 0, result.output
+    assert "instance GET /api/v2/integrations/challs/{id}/instance: not asked: no challenge is marked on-demand (list.instance " \
+           "matched no value)" in result.stdout.splitlines()

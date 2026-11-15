@@ -1,7 +1,7 @@
 """`flightdeck http`: an event on a platform with a JSON API, played from a table of routes.
 
     flightdeck http example [--preset NAME] [--routes]  # print an event profile to edit: a preset (rctf, rctf2, noctf, gzctf), or its routes written out
-    flightdeck http check EVENT.toml           # sign in, list, read the solved list; show what each path matched; submit nothing
+    flightdeck http check EVENT.toml           # sign in, list, read the solved list (and an instance's status); show what each path matched; submit nothing
     flightdeck http pull EVENT.toml [FOLDER]   # pull the event's board and read the solved list; submit nothing
 
 The profile's [http] table (docs/BOARDS.md, platform/http.py) says how the platform's API is
@@ -124,10 +124,13 @@ def check(
     """Try the [http] table against the platform: sign in, list the challenges, read the solved list.
 
     Prints each request and what each path of the table matched for the first challenges.
-    Nothing is submitted and no file is downloaded: only requests that change nothing are made
-    (and the sign-in, when the table has one).
+    With an [instances] table it also asks the instancer's status for the first challenge
+    marked on-demand (a GET; no instance is started, renewed or stopped). Nothing is submitted
+    and no file is downloaded: only requests that change nothing are made (and the sign-in,
+    when the table has one).
 
-    Exit status 1 when a path matched nothing or the wrong thing, 2 when a request failed.
+    Exit status 1 when a path matched nothing or the wrong thing, or the instancer's status
+    gave nothing a run could use; 2 when a request failed.
     """
     import asyncio
 
@@ -135,21 +138,33 @@ def check(
     from .plugins.call import CallFailed
 
     profile, caller = _ready(event, "check")
-    typer.echo(f"{_show(profile.name)} at {_show(profile.url)}: nothing is submitted, no file is downloaded")
-    for line in plan(profile.http):
+    instances = profile.instances
+    typer.echo(f"{_show(profile.name)} at {_show(profile.url)}: nothing is submitted, no file is downloaded"
+               + (", no instance is started" if instances is not None else ""))
+    for line in plan(profile.http, instances):
         typer.echo(f"  {line}")
     typer.echo("")
+    other = None  # a named shape for another platform: a run starts no instance with it (preflight.instances_off)
+    if instances is not None and instances.platform not in (None, profile.platform):
+        other = (f'instance not asked: instances.plugin {instances.plugin} is for platform "{instances.platform}", and this '
+                 'event\'s is "http", so a run starts no instance with it (rCTF v2\'s instancer: plugin = "rctf")')
     try:
-        found = asyncio.run(caller.check(show))
+        found = asyncio.run(caller.check(show, instances if other is None else None))
     except CallFailed as exc:
         _fail(str(exc))
     for line in found.lines:
         typer.echo(line)
+    if other is not None:
+        typer.echo(other)
     if found.problems:
         typer.echo(f"flightdeck: {found.problems} path{'' if found.problems == 1 else 's'} of the [http] table did not match what a pull "
                    "needs: see above", err=True)
+    if found.instance or other is not None:
+        typer.echo("flightdeck: the [instances] table's status route did not give what a run needs: see the instance line above",
+                   err=True)
+    if found.problems or found.instance or other is not None:
         raise typer.Exit(1)
-    typer.echo("every path a pull needs matched; nothing was submitted")
+    typer.echo("every path a pull needs matched; nothing was submitted" + (" and no instance was started" if instances is not None else ""))
 
 
 @app.command("pull")

@@ -1290,7 +1290,7 @@ flags gets none from flightdeck: each comes back to you, to submit on the site.
 ```sh
 flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset, to edit (--preset noctf for noCTF)
 flightdeck http example --preset gzctf > ~/ctf/quals/event.toml   # or with the gzctf preset
-flightdeck http check ~/ctf/quals/event.toml       # tries it: signs in, lists, reads the solved list; submits nothing
+flightdeck http check ~/ctf/quals/event.toml       # tries it: signs in, lists, reads the solved list (and an instance's status); submits nothing
 flightdeck play --event ~/ctf/quals/event.toml
 ```
 
@@ -1298,7 +1298,10 @@ On rCTF v2, `preset = "rctf2"` also marks the challenges that have an instance t
 for your team, and an `[instances]` table with `plugin = "rctf"` lets flightdeck start each one
 before a lane works it, as on CTFd ([Instances on demand](BOARDS.md#instances-on-demand)). If
 the site asks for a CAPTCHA to start one, flightdeck says so and leaves it to you: start it on
-the site, and the lane gets its address once it is up. On GZCTF, `preset = "gzctf"` marks the
+the site, and the lane gets its address once it is up. If the site says an instance failed
+("errored"), flightdeck says so and sends no start until you stop it or start it again there.
+`http check` asks the status of one instance, so you see the table reaches the instancer
+before a run starts anything. On GZCTF, `preset = "gzctf"` marks the
 container challenges and `plugin = "gzctf"` under `[instances]` starts their containers the
 same way, with your cookie; a site that serves its containers through its own WebSocket proxy
 gives no address a lane can reach, so open those on the site.

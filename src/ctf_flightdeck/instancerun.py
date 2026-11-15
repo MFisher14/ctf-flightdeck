@@ -60,6 +60,9 @@ When the platform says no:
 - any other refusal or error: a warning with the platform's words (once per challenge and
   message), and the next try after a wait that doubles from RETRY_FIRST up to RETRY_MOST.
   The challenge keeps its place in the queue meanwhile; nothing else waits for it.
+- an instance the platform says failed (InstanceFailed: rCTF v2's "errored"): a warning of
+  its own, once, and no start is sent while the status says so; the status is asked again
+  after the same doubling wait, and a start goes only once it no longer says "failed".
 
 Expiry. When the plugin says how long an instance lives, it is renewed RENEW_BEFORE seconds
 before its end while its challenge is wanted. An instance that ended anyway (the renew was
@@ -85,7 +88,7 @@ from dataclasses import dataclass, replace
 
 from .core.deck import Deck
 from .core.model import Challenge, ChallengeStatus
-from .platform.instances import Instance, InstanceBusy, InstanceError, InstancePending, InstanceRefused
+from .platform.instances import Instance, InstanceBusy, InstanceError, InstanceFailed, InstancePending, InstanceRefused
 from .text import untrusted
 
 EVERY = 5.0  # seconds between looks at the deck
@@ -271,6 +274,13 @@ class InstanceRunner:
                 self.retry_at[cid] = self.clock() + RETRY_PENDING
                 self._warn(cid, f"instances: the instance of {self._name(cid)} is on its way up or down on the platform; its lanes "
                                 f"wait, and flightdeck asks again every {RETRY_PENDING:g} s")
+                return
+            if isinstance(exc, InstanceFailed):  # the platform says it failed: no start is sent, the status asked again later
+                count = self.failures.get(cid, 0) + 1
+                self.failures[cid] = count
+                self.retry_at[cid] = self.clock() + min(RETRY_FIRST * (2 ** (count - 1)), RETRY_MOST)
+                self._warn(cid, f"instances: {exc}. Its lanes wait, and flightdeck asks the platform again later (queued "
+                                "challenges behind it go on)")
                 return
             if isinstance(exc, InstanceRefused) and exc.human:
                 self.by_hand.add(cid)
