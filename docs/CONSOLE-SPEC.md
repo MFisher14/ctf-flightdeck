@@ -51,15 +51,19 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   collapse into one row. 40+ rows stay usable. The list keeps its scroll position.
   The keys act on the selected lane, and the selection follows the cursor, which never selects
   the finished row (P96):
-  - A filter that hides the selected lane selects the lane row the cursor is drawn on (the
-    nearest lane row when the cursor is on the finished row), so the row drawn highlighted is
-    the one `a`, the numbers and Enter act on. Clearing the filter leaves it there. Only a
-    filter that leaves no lane row keeps the hidden lane selected, and every key refuses it.
+  - A filter the player sets or changes that hides the selected lane selects the lane row the
+    cursor is drawn on (the nearest lane row when the cursor is on the finished row), so the
+    row drawn highlighted is the one `a`, the numbers and Enter act on. Clearing the filter
+    leaves it there. A filter that leaves no lane row keeps the hidden lane selected, and every
+    key refuses it. So does a lane whose own turn takes it out of the filter (what it did no
+    longer matches): the selection never moves to another lane with no key of the player's.
   - A lane the player answered from the list (approved, declined or killed it, by key, number,
     command bar or `A`) that then folds into the finished row hands the selection to the first
     lane shown that needs the player, in attention order, as `ctrl+n` in a lane's view; with
     none, to the row that was under it (above it, when it was the last row). The answer counts
-    while the selection stays on that lane: a player who moved off it and back, or a lane that
+    while the selection stays on that lane and until it is settled: a flag on its way to the
+    platform still counts, and a rejected flag or a decline that lets the lane go on does not
+    any more. A player who moved off it and back, or a lane that
     ended with no answer of the player's (a teammate's solve, a lane that gave up), keeps the
     finished lane selected, and the cursor points at the finished row. An answer given in a
     lane's own view moves nothing in the list.
