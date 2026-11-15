@@ -1198,7 +1198,8 @@ class Deck:
             if unpriced:
                 lane.dollar_cap = None  # no price: the player chose to go on without a dollar cap
             used = lane.budget_used()
-            if used is not None and used >= 1.0:
+            raised = used is not None and used >= 1.0
+            if raised:
                 self._raise_caps(lane)
             self._clear(lane, AlertKind.BUDGET)
             self._resolve(lane)
@@ -1206,7 +1207,9 @@ class Deck:
             if unpriced:
                 if not lane.token_cap:
                     return Outcome(True, f"{lane.id} carries on with no cap")
-                return Outcome(True, f"{lane.id} carries on with no dollar cap; its token cap is {self._caps_used(lane)}")
+                # the token cap was reached too (its question came first, or after): approving raised it
+                now = "is raised to" if raised else "is"
+                return Outcome(True, f"{lane.id} carries on with no dollar cap; its token cap {now} {self._caps_used(lane)}")
             return Outcome(True, f"{lane.id}'s cap is now {self._caps_used(lane)}")
         self._resolve(lane)
         self.driver.approved(lane, pending)

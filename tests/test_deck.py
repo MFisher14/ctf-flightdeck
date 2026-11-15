@@ -1132,6 +1132,24 @@ def test_a_light_models_spend_with_no_known_cost_never_asks_and_the_dollar_cap_h
     assert driver.named("approved") == [(lane.id, PendingKind.BUDGET)]
 
 
+def test_a_token_cap_question_taken_over_by_a_cost_with_no_price_says_the_token_cap_is_raised_too():
+    """At its token cap the lane asks to raise the cap; before the answer it spends something with
+    no price. Approving then drops the dollar cap and raises the token cap: the answer's words
+    and the reply say both, not only "carry on with no dollar cap"."""
+    from ctf_flightdeck.console.views import pending_answers
+
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0, token_cap=10_000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=10_000, dollars=0.1))
+    assert lane.pending is not None and lane.pending.detail.startswith("raise the cap by 50%")
+    deck.report(lane.id, TurnReport(turn=False, tokens=100, dollars=None, why=TURN_END))  # no price
+    assert lane.pending.kind is PendingKind.BUDGET
+    assert pending_answers(lane) == ("carry on with no dollar cap and 50% more tokens", "stop the lane")
+    said = deck.apply(iv.Approve(lane.id)).message
+    assert said == "L01 carries on with no dollar cap; its token cap is raised to 15k tokens (10k used)"
+    assert lane.dollar_cap is None and lane.token_cap == 15_000
+
+
 def test_a_cost_with_no_price_after_a_light_models_spend_with_none_still_asks_about_the_cap():
     deck, _, _ = make_deck(n=1, dollar_cap=2.0)
     lane = lane_on(deck, "c0")

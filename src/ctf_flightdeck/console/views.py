@@ -115,6 +115,7 @@ PENDING_ANSWERS = {
     PendingKind.LIVE_BOX: ("use the live box", "stay off it"),
 }
 NO_PRICE_ANSWERS = ("carry on with no dollar cap", "stop the lane")  # a budget question that is about no price, not the cap
+NO_PRICE_AT_CAP_ANSWERS = ("carry on with no dollar cap and 50% more tokens", "stop the lane")  # and the token cap reached
 
 
 def pending_answers(lane: Lane) -> tuple[str, str]:
@@ -123,7 +124,8 @@ def pending_answers(lane: Lane) -> tuple[str, str]:
     budget" would say the cap is raised."""
     assert lane.pending is not None
     if lane.pending.kind is PendingKind.BUDGET and lane.dollar_cap and lane.no_price():
-        return NO_PRICE_ANSWERS
+        # approving drops the dollar cap, and raises a token cap that is reached (Deck._approve)
+        return NO_PRICE_AT_CAP_ANSWERS if lane.token_cap and lane.tokens >= lane.token_cap else NO_PRICE_ANSWERS
     return PENDING_ANSWERS[lane.pending.kind]
 
 

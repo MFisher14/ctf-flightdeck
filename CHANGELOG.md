@@ -22,7 +22,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - Approving more budget says the new cap and what is used of it, `L01's cap is now 15k tokens
   (12k used)`, where `11k of 15k tokens` read as a cap of 11k. Approving a lane on a model with
   no price says `L01 carries on with no dollar cap; its token cap is 400k tokens (120 used)`, not
-  `L01's cap is now 120 of 400k tokens`.
+  `L01's cap is now 120 of 400k tokens`. When that lane had reached its token cap too, the
+  answer reads `carry on with no dollar cap and 50% more tokens` and the reply says `its token
+  cap is raised to ...`, since approving raises it.
 - `/` alone in the command bar, sent after esc closed its list, says `/ alone is no command:
   type / and a command's name, the list shows them` instead of `Unknown command /: type / to
   see the list`, and a stray space after the `/` (`/ hint try the cookie`) says `No space
