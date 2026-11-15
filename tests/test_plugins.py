@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 
 from ctf_flightdeck import __version__, cli, plugin_cli
 from ctf_flightdeck.config import PluginRef, load_config
+from ctf_flightdeck.keys import keys_file_named
 from ctf_flightdeck.platform.manual import load_board
 from ctf_flightdeck.plugins import board as boards
 from ctf_flightdeck.plugins import call, manifest
@@ -885,7 +886,7 @@ def test_plugin_pull_runs_only_a_plugin_the_players_config_allows(tmp_path, conf
     (("board = \"board\"\n", ""), True,
      "flightdeck: name the board folder: `flightdeck plugin pull EVENT.toml FOLDER`, or set event.board in the profile\n"),
     (("", ""), False,
-     "flightdeck: the token variable ACME_TOKEN (event.token_env) is not set or is empty: put ACME_TOKEN=<token> in your keys file "
+     "flightdeck: the token variable ACME_TOKEN (event.token_env) is not set or is empty: put ACME_TOKEN=<token> in {keys} "
      "or export it, then pull again\n"),
     (("ACME_TOKEN", "OPENAI_API_KEY"), True,
      "flightdeck: event.token_env names OPENAI_API_KEY, a variable for another service's key, not a token for this platform: "
@@ -901,7 +902,7 @@ def test_plugin_pull_refuses_before_it_runs_the_plugin(tmp_path, config, monkeyp
     for name in ("ACME_TOKEN", "OPENAI_API_KEY", "MY_API_KEY"):
         monkeypatch.setenv(name, TOKEN) if set_token else monkeypatch.delenv(name, raising=False)
     result = invoke("pull", event_file(tmp_path, text=EVENT.replace(*change) if change[0] else EVENT))
-    assert (result.exit_code, result.output) == (2, message)
+    assert (result.exit_code, result.output) == (2, message.replace("{keys}", keys_file_named()))
     assert calls(root) == []
 
 

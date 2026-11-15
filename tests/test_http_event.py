@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 from ctf_flightdeck import http_cli, plugin_cli, preflight_cli
 from ctf_flightdeck.config import ConfigError, load_config
 from ctf_flightdeck.core.model import ChallengeStatus, LaneState, PendingKind
+from ctf_flightdeck.keys import keys_file_named
 from ctf_flightdeck.platform.manual import cannot_check, load_board
 from ctf_flightdeck.platform.plugin_run import PluginLink
 from ctf_flightdeck.preflight import HTTP_BOARD, ProfileError, check, describe, load_profile
@@ -414,8 +415,8 @@ def test_http_pull_refuses_a_folder_that_holds_another_board(tmp_path, own_confi
                                 "holds your token\n"),
     ({"token_env": "CTFD_TOKEN"}, True, "Name the variable that holds your token for it, like RCTF_TOKEN\n"),
     ({"token_env": "HTTP_PROXY_PASSWORD"}, True, "Name the variable that holds your token for it, like RCTF_TOKEN\n"),
-    ({}, False, f"flightdeck: the token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put {TOKEN_VAR}=<token> in your "
-                "keys file or export it, then try again\n"),
+    ({}, False, f"flightdeck: the token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put {TOKEN_VAR}=<token> in {{keys}} "
+                "or export it, then try again\n"),
     ({"board": None}, True, "flightdeck: name the board folder: `flightdeck http pull EVENT.toml FOLDER`, or set event.board in the profile\n"),
 ])
 def test_http_pull_refuses_before_it_asks_the_platform(tmp_path, own_config, monkeypatch, fields, set_token, message):
@@ -426,7 +427,7 @@ def test_http_pull_refuses_before_it_asks_the_platform(tmp_path, own_config, mon
     with FakeRCTF(sample()) as fake:
         result = invoke("pull", event_file(tmp_path, fake.url, **fields))
         assert fake.requests == []
-    assert result.exit_code == 2 and result.output.endswith(message)
+    assert result.exit_code == 2 and result.output.endswith(message.replace("{keys}", keys_file_named()))
 
 
 def test_the_commands_say_so_when_the_config_was_not_read_and_still_check_the_variables_name(tmp_path, monkeypatch, token):
@@ -595,7 +596,7 @@ def test_a_token_that_is_not_set_stops_the_run_before_the_platform_is_asked(tmp_
             rctf_run(tmp_path, fake, server)
         assert fake.requests == []
     assert str(refused.value) == (f"the token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put {TOKEN_VAR}=<token> in "
-                                  "your keys file or export it, then start play again")
+                                  f"{keys_file_named()} or export it, then start play again")
 
 
 def test_under_pull_manual_the_run_plays_the_board_http_pull_wrote_and_refuses_one_it_did_not(tmp_path, own_config, token):

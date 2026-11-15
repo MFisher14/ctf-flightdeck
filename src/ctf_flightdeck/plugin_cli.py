@@ -208,7 +208,7 @@ def _token(name: str | None, plugin, config) -> str:
     """The event's token, from the variable event.token_env names (the environment, else the
     keys file). Never shown. A variable that holds another service's key is refused, as a run
     refuses it (preflight): its value would be handed to the plugin."""
-    from .keys import KeysError, environment
+    from .keys import KeysError, environment, keys_file_named
     from .preflight import plugin_token_env
 
     if name is None:
@@ -221,7 +221,7 @@ def _token(name: str | None, plugin, config) -> str:
     except KeysError as exc:
         _fail(str(exc))
     if not value:
-        _fail(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your keys file or "
+        _fail(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in {keys_file_named()} or "
               "export it, then pull again")
     return value
 

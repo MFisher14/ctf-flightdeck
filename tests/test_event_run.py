@@ -466,8 +466,8 @@ def test_a_coding_agent_lane_on_a_ctfd_event_shows_the_token_by_its_name(tmp_pat
 @pytest.mark.parametrize(
     "value, expected",
     [
-        (None, f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put FLIGHTDECK_TEST_CTFD_TOKEN=<token> in your keys file or export it"),
-        ("  ", f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put FLIGHTDECK_TEST_CTFD_TOKEN=<token> in your keys file or export it"),
+        (None, f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put FLIGHTDECK_TEST_CTFD_TOKEN=<token> in your keys file ("),
+        ("  ", f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put FLIGHTDECK_TEST_CTFD_TOKEN=<token> in your keys file ("),
         (f"Token {TOKEN}", "holds characters an HTTP header cannot carry (spaces, line breaks, non-ASCII); check the "
                            f"variable it came from ({TOKEN_VAR}, the variable event.token_env names)"),
     ],

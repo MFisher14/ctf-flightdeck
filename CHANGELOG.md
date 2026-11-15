@@ -12,6 +12,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   now ends with `(is the token the right one for this event, and still valid?)`, as a refused
   rCTF sign-in already did, instead of the bare status. A 404 to a route with `{game}` in it
   (GZCTF's) asks whether `game` under `[http]` is the event's.
+- "The token variable ... is not set" (from `http check`, `http pull`, `plugin pull` and
+  `play --event`) now says where your keys file is: `put RCTF_TOKEN=<token> in your keys file
+  (~/.config/ctf-flightdeck/keys.env) or export it`.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes

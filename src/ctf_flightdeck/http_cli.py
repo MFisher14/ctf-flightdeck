@@ -211,7 +211,7 @@ def _ready(event: Path, command: str):
     be an http one whose rules allow the platform's API, and its token variable must be one
     a run would take (preflight) and be set. The token is never shown."""
     from .config import ConfigError, load_config
-    from .keys import KeysError, environment
+    from .keys import KeysError, environment, keys_file_named
     from .platform.http import HttpCaller
     from .preflight import ProfileError, http_token_env, load_profile
 
@@ -243,7 +243,7 @@ def _ready(event: Path, command: str):
     except KeysError as exc:
         _fail(str(exc))
     if not value:
-        _fail(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your keys file or "
+        _fail(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in {keys_file_named()} or "
               "export it, then try again")
     if profile.url.lower().startswith("http://") and not _loopback(profile.url):
         typer.echo("flightdeck: warning: event.url is http, not https: your token would cross the network unencrypted", err=True)
