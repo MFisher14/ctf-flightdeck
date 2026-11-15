@@ -103,7 +103,10 @@ FIELDS = ("name", "category", "points", "solves", "description", "max_attempts",
 """A challenge's fields a list item or a detail answer may give, each by a path. `name` is
 required of the list; the rest are optional, as in a plugin's pull. `instance` marks the
 challenge as one whose instance the platform starts when asked (challenge.json's "instance":
-"on-demand"): a value there that is not null, false, 0 or "" (rCTF v2's instancerLifetime)."""
+"on-demand"): a value there that is not null, false, 0 or "" (rCTF v2's instancerLifetime), or,
+when the table gives `instance_values`, one of those (GZCTF's type: StaticContainer or
+DynamicContainer)."""
+MAX_INSTANCE_VALUES = 16
 
 MAX_LIST_BYTES = 8_000_000  # the list of challenges (a plugin's pull answer has the same room)
 MAX_ANSWER_BYTES = 1_000_000  # any other answer
@@ -271,6 +274,7 @@ class Listing:
     items: JsonPath  # one match per challenge
     ref: JsonPath  # from here on, paths are relative to one item
     fields: Mapping[str, JsonPath] = field(hash=False)  # FIELDS -> path; `name` is always there
+    instance_values: tuple[str, ...] | None = None  # the values at `instance` that mark it on-demand; None: any but an empty one
 
 
 @dataclass(frozen=True)
@@ -279,6 +283,7 @@ class Detail:
 
     request: Route
     fields: Mapping[str, JsonPath] = field(hash=False)  # relative to the answer; a field here wins over the list's
+    instance_values: tuple[str, ...] | None = None  # as Listing's
 
 
 @dataclass(frozen=True)
@@ -366,8 +371,8 @@ class HttpConfig:
 
 _TOP = ("preset", "game", "files_auth", "auth", "list", "detail", "submit", "solved", "refuse")
 _AUTH = ("kind", "header", "cookie", "request", "body", "token_path", "scheme", "link_param")
-_LIST = ("request", "items", "ref", *FIELDS)
-_DETAIL = ("request", *FIELDS)
+_LIST = ("request", "items", "ref", *FIELDS, "instance_values")
+_DETAIL = ("request", *FIELDS, "instance_values")
 _SUBMIT = ("request", "body", "verdict_path", "detail_path", "retry_after_path", "retry_after_unit", "tries_left_path",
            "verdicts", "status", "poll")
 _POLL = ("request", "id_path", "pending", "every", "at_most", "verdict_path")
@@ -574,7 +579,7 @@ def _listing(table: Mapping) -> Listing:
         if key not in table:
             raise ValueError(f"http.list.{key} is required")
     return Listing(_route("http.list.request", "list", table["request"]), parse_path("http.list.items", table["items"]),
-                   parse_path("http.list.ref", table["ref"]), _fields("http.list", table))
+                   parse_path("http.list.ref", table["ref"]), _fields("http.list", table), _instance_values("http.list", table))
 
 
 def _detail(table: Mapping) -> Detail:
@@ -587,7 +592,22 @@ def _detail(table: Mapping) -> Detail:
     fields = _fields("http.detail", table)
     if not fields:
         raise ValueError(f"http.detail names no field to read from its answer (one of {', '.join(FIELDS)})")
-    return Detail(route, fields)
+    return Detail(route, fields, _instance_values("http.detail", table))
+
+
+def _instance_values(where: str, table: Mapping) -> tuple[str, ...] | None:
+    """`instance_values`: the values at `instance` that mark a challenge on-demand, when not
+    every value does (GZCTF's type names its attachments too)."""
+    if "instance_values" not in table:
+        return None
+    if "instance" not in table:
+        raise ValueError(f"{where}.instance_values names values of {where}.instance, which is missing")
+    values = table["instance_values"]
+    if not isinstance(values, list) or not values or len(values) > MAX_INSTANCE_VALUES or len(set(values)) != len(values) \
+            or not all(isinstance(v, str) and v and len(v) <= MAX_VALUE and untrusted(v, one_line=True) == v for v in values):
+        raise ValueError(f'{where}.instance_values must be a list of 1 to {MAX_INSTANCE_VALUES} distinct strings, such as '
+                         '["StaticContainer", "DynamicContainer"]: the values at instance that mean the platform starts one')
+    return tuple(values)
 
 
 def _verdict_table(where: str, value: object, *, numbers: bool) -> dict:
@@ -1071,7 +1091,9 @@ class HttpCaller:
                 found = [value for value in path.find(node) if value not in (None, False, 0, "")]
                 if len(found) > 1:
                     raise _Skip(f"{label} ({path.text}) matched {len(found)} values, and one is wanted")
-                if found:
+                table = self.config.list if where == "list" else self.config.detail
+                wanted = table.instance_values if table is not None else None
+                if found and (wanted is None or (isinstance(found[0], str) and found[0] in wanted)):
                     out[name] = ON_DEMAND
             elif name in ("name", "category", "description"):
                 value = self._one(label, path, node, (str,), "a string", required=name == "name" and where == "list")
@@ -1456,6 +1478,7 @@ class InstanceWire:
     def __init__(self, caller: HttpCaller) -> None:
         self._caller = caller
         self.root = str(caller._base).rstrip("/")
+        self.game = caller.config.game  # {game} in an [instances] route (GZCTF's)
 
     def __repr__(self) -> str:
         return f"InstanceWire({self.root!r}, token=set)"
