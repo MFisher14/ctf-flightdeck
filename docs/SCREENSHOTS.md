@@ -47,6 +47,12 @@ once the lane has changed a file. Its transcript is calm, a row for each thing t
 two for a run of tool calls, and so is its card: what the lane asks, and the numbered answers.
 `ctrl+o` shows every line and the full card, as the deck layout's lane does below.
 
+![A lane in the simple layout that runs the same command again and again: its transcript says 6 tool calls, and the last row starts with ×4, python3 angr_solve.py ratchet_run and its timeout; the loop alert, and the needs-you card with 1 to send a hint and 2 to kill it and queue it again fresh](screenshots/folded-step.png)
+
+A lane going round in circles shows it at a glance: the last row of a run of tool calls starts
+with how many times in a row the lane made that call (`×4`). Calls fold only when their text is
+the same; `ctrl+o` still shows every one. (From the `wave` scenario.)
+
 ## The fleet (the deck layout)
 
 ![The fleet view: the board of challenges on the left, every lane on the right sorted by what needs you, with alert chips and a flag waiting for approval](screenshots/fleet.png)
