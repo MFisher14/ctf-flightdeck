@@ -295,13 +295,29 @@ def test_the_new_ctf_form_sets_up_an_event_on_a_json_api_platform_and_says_where
         fill(form, name="Example CTF", url="ctf.example.org", ai="yes", folder=str(tmp_path / "example"), token="synthetic-cookie")
         await pilot.press("ctrl+s")
         assert "Game: give the game's number" in problem() and app.return_value is None
+        kept = lambda: str(form.query_one("#urlread").render())  # noqa: E731
+        assert kept() == ""  # a site's root is taken as typed, and nothing is said
         fill(form, url="https://ctf.example.org/games/3/challenges", game="4")
+        await pilot.pause()
+        assert kept() == ("GZCTF's routes are under the site's root, so the address is https://ctf.example.org, "
+                          "and the game is 3, from its page's address")
         await pilot.press("ctrl+s")
         assert "Game: 4, and the address names game 3" in problem() and app.return_value is None
         fill(form, preset="rctf", game="3")
+        await pilot.pause()
+        assert kept() == "rCTF's routes are under the site's root, so the address is https://ctf.example.org"
         await pilot.press("ctrl+s")
         assert "only GZCTF's routes name a game" in problem() and app.return_value is None
-        fill(form, preset="gzctf", game="")
+        fill(form, preset="noctf")
+        await pilot.pause()
+        assert kept() == ""  # noCTF's address is its API's, taken as typed
+        fill(form, platform="ctfd")
+        await pilot.pause()
+        assert kept() == ""  # CTFd's is taken as typed too
+        await pilot.press("ctrl+s")  # the game typed for rCTF is still there
+        assert "Game: only GZCTF's routes name a game, and it is a json api platform" in problem() and app.return_value is None
+        fill(form, platform="http", preset="gzctf", game="")
+        await pilot.pause()
         await pilot.press("ctrl+s")
 
     kind, new = drive_home(homes.items(have_config=True), script)

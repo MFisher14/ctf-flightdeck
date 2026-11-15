@@ -405,6 +405,7 @@ class NewEventForm(Screen):
                          id="preset")
             yield ask("The event site's address (not by hand; noCTF: its API's, from the browser's network tab; GZCTF: the game's page will do):")
             yield Input(placeholder="https://ctf.example.org", id="url")
+            yield Static(Text(""), id="urlread")  # what was kept of it: rCTF's and GZCTF's address is cut to the site's
             yield ask("The game's number (GZCTF only, unless the address above is the game's page: https://.../games/3):")
             yield Input(placeholder="3", id="game")
             yield Static(Text(start.token_help("ctfd").capitalize() + ". It is hidden and goes to your keys file:", style=theme.MUTED),
@@ -450,6 +451,22 @@ class NewEventForm(Screen):
         self.query_one("#tokenq", Static).update(Text(help[0].upper() + help[1:] + ". It is hidden and goes to your keys file:",
                                                       style=theme.MUTED))
 
+    @on(Input.Changed, "#url")
+    @on(Select.Changed, "#platform")
+    @on(Select.Changed, "#preset")
+    def _url_read(self, _event: Input.Changed | Select.Changed) -> None:
+        """Say what was kept of the address, under the field, while it is typed: rCTF's and
+        GZCTF's routes are under the site's root, so a page's address is cut to the site's (and
+        a GZCTF game's page gives the game), as `flightdeck start` says it."""
+        said = ""
+        if str(self.query_one("#platform", Select).value) == "http" and self._value("url"):
+            try:
+                preset = start.preset_answer(str(self.query_one("#preset", Select).value))
+                said = start.http_url_read(preset, self._value("url"))[2] or ""
+            except (start.StartError, ValueError):
+                said = ""  # said on ctrl+s, with what to fix: half an address is not yet wrong
+        self.query_one("#urlread", Static).update(Text(said, style=theme.MUTED))
+
     @on(Input.Changed, "#flag")
     def _flag_read(self, event: Input.Changed) -> None:
         """Say what the flag format was understood as, under the field, while it is typed."""
@@ -486,6 +503,9 @@ class NewEventForm(Screen):
                     raise start.StartError("Game: give the game's number, as its page's address shows it (3 for "
                                            "https://.../games/3), or that page's address as the site's")
         else:
+            if self._value("game"):  # as `flightdeck start --game` is refused off http: not kept without a word
+                raise start.StartError("Game: only GZCTF's routes name a game, and it is a json api platform (the second "
+                                       "answer above): leave it empty")
             url = start.url_answer(self._value("url")) if platform == "ctfd" else None
         flag = start.flag_format_answer(self._value("flag"))
         submit = str(self.query_one("#submit", Select).value) if platform in start.SIGNS_IN else "confirm"
