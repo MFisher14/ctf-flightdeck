@@ -1356,6 +1356,14 @@ whether Docker answers (`workspace.docker_unavailable_stoppable`: `docker versio
 group of its own, killed when the form closes or the app ends), and saves no runtime before it
 has answered or the player has chosen one. `cli._home` opens the home screen again after a run
 it started ends.
+`flightdeck start` (`start_cli.py`) and the home screen's new-event form (`NewEventForm`) take
+the same answers (`start.py`): CTFd, by hand, or a JSON-API platform by one of the http
+platform's presets (P95). For a preset, the event file is the `[event]`, `[rules]` and
+`[policies]` start writes for CTFd with the preset's `[http]` table under them
+(`http_cli.preset_table`, the table `flightdeck http example --preset NAME` prints, with the
+game filled in for GZCTF), and the token variable is the preset's prefix and `TOKEN_` with the
+event's name (`start.token_prefix`): a name `preflight.http_token_env` takes, bound to the
+site by `start.token_variable_for` as a CTFd token is.
 Its "Settings and health" (`console/health.py`, P79) reads the config's main settings and where
 each is set, and shows doctor's checks, which run in a child process (`health.py`: `python -P -m
 ctf_flightdeck.health`, a process group of its own that prints the checks as JSON and is killed
@@ -1475,6 +1483,6 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
   form-encoded bodies and a CSRF header are refused by name ([http platform](#http-platform));
   instances on an http platform start only through rCTF v2's or GZCTF's shape or routes of
   the profile's own (P81, P88), and a GZCTF container behind its WebSocket proxy is not
-  reached; `flightdeck start` and the home screen's form do not
-  offer `http`, `rctf`, `noctf` or `gzctf`; a flag a GZCTF site wants encrypted is not sent;
+  reached; `flightdeck start` and the home screen's form offer the presets (P95), not a table
+  of the player's own routes; a flag a GZCTF site wants encrypted is not sent;
   and the presets have met stand-ins only, never a real rCTF, noCTF or GZCTF.

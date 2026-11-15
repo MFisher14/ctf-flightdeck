@@ -276,7 +276,10 @@ platform checks the flags.
 Many platforms have no adapter in flightdeck, but their own web page talks JSON to the site.
 For those, the event profile can say how that API is asked, and flightdeck does the talking
 itself: `platform = "http"` and an `[http]` table. No program of yours runs and there is no
-plugin to trust. rCTF, noCTF and GZCTF ship as presets.
+plugin to trust. rCTF, noCTF and GZCTF ship as presets. On one of those, `flightdeck start`
+writes the profile for you: choose json api, then the platform, and answer the address, the
+game (GZCTF) and the token; its event file is the one below with your answers in it, and the
+token goes to your keys file ([the guide](GUIDE.md#events-and-teams)). By hand:
 
 ```sh
 mkdir -p ~/ctf/quals

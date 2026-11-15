@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: twenty-three proposals, P69 to P91 (2026-11-14)
+## Built, not released: twenty-four proposals, P69 to P91 and P95 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P91); the lines for players are under Unreleased in
+[DECISIONS.md](DECISIONS.md) (P69 to P91, P95); the lines for players are under Unreleased in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -122,6 +122,12 @@ Proposals built and waiting for a release, in the order of their numbers in
   for a flag answer or more budget gives its slot to the queue once it has waited a minute; at
   most `max_waiting` lanes (`[lanes]`, 4) are without a slot at once, and a lane whose sessions
   run on keeps its own.
+- **`flightdeck start` sets up an event on rCTF, rCTF v2, noCTF or GZCTF** (P95). The platform
+  menu's third answer asks which of the four, the address (a page's path is cut where the
+  routes are under the site's root; a GZCTF game's page gives the game) and the token, kept
+  under a site-bound `RCTF_TOKEN_<NAME>`-style variable. The event file carries the `[http]`
+  table `flightdeck http example --preset NAME` prints. The home screen's form asks the same.
+  Not built: a table of your own routes from start, and asking the site which platform it runs.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
