@@ -77,6 +77,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   interpreter, `nc` to the instance) with `session_start`, `session_send` and `session_close`:
   at most three per lane, closed after ten minutes unused, and all closed at a take-over and at
   the lane's end ([ARCHITECTURE.md](ARCHITECTURE.md#sessions)).
+- **A lane waiting for a live-box answer gives its slot up** (P83, from issue #33): the next
+  queued challenge starts in it, and once answered the lane takes the next free slot before
+  anything queued. It was the last item left of M5 that was not about coding-agent lanes or a
+  real event.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
@@ -311,7 +315,6 @@ Left of M5:
 - **A refusal inside a coding-agent CLI.** flightdeck reroutes no refused request, and switches
   Anthropic's server-side refusal fallback off for its own lanes; what a CLI does with a refusal
   on its own API is not flightdeck's to see.
-- **A lane that waits for a live-box answer** keeps its slot until you are back.
 - **A real event.** Autopilot is tested against the fake CTFd and the fake model, not yet flown.
 
 ## Released: 0.2.0, a model per small job (2026-11-12)

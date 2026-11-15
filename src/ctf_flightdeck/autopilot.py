@@ -375,7 +375,7 @@ class Autopilot:
             return
         self.disengage(over)
         for lane in list(self.deck.lanes.values()):  # also once disengaged: the budget holds while the player is away
-            if lane.state in (LaneState.RUNNING, LaneState.WAITING):
+            if lane.state in (LaneState.RUNNING, LaneState.WAITING, LaneState.QUEUED):
                 self._apply(Pause(lane.id))
 
     def _over_budget(self) -> str:
@@ -400,8 +400,8 @@ class Autopilot:
         for lane in list(self.deck.lanes.values()):
             if self.state is not State.ENGAGED:
                 return
-            if lane.finished or lane.state in (LaneState.PAUSED, LaneState.TAKEOVER) or lane.gave_up_later:
-                continue
+            if lane.finished or lane.state in (LaneState.PAUSED, LaneState.TAKEOVER, LaneState.QUEUED) or lane.gave_up_later:
+                continue  # a QUEUED lane does no work until it has a slot again (P83): as a queued challenge, untouched
             pending = lane.pending
             if pending is not None and pending.kind is PendingKind.BUDGET:
                 if not self._over_budget():
@@ -473,9 +473,10 @@ class Autopilot:
         self._wake_in(soonest)
 
     def _hands_off(self, lane: Lane) -> bool:
-        """A lane no rule touches (P23): paused or taken over, waiting for the player's answer,
+        """A lane no rule touches (P23): paused or taken over, waiting for the player's answer
+        or for a slot after it (QUEUED, P83: it does no work, as a queued challenge does none),
         open only for its flag's answer, or with a flag on its way to the platform."""
-        return (lane.state in (LaneState.PAUSED, LaneState.TAKEOVER) or lane.pending is not None or bool(lane.waiting)
+        return (lane.state in (LaneState.PAUSED, LaneState.TAKEOVER, LaneState.QUEUED) or lane.pending is not None or bool(lane.waiting)
                 or bool(lane.gave_up_later) or bool(self.deck.sending(lane.id)))
 
     def _opinion(self, parent: Lane, lanes: list[Lane], which: str, why: str) -> None:
@@ -536,7 +537,7 @@ class Autopilot:
 
     def _next_round(self) -> None:
         deck = self.deck
-        if deck.held or deck.queue or any(lane.state is LaneState.RUNNING for lane in deck.lanes.values()):
+        if deck.held or deck.queue or any(lane.state in (LaneState.RUNNING, LaneState.QUEUED) for lane in deck.lanes.values()):
             return
         ladder = deck.config.models
         order = sorted(deck.challenges.values(), key=lambda ch: (ch.points, -ch.solves, ch.name))  # as the board is queued

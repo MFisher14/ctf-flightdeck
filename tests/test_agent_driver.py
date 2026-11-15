@@ -2618,6 +2618,42 @@ def test_under_confirm_a_lane_asks_before_it_may_reach_the_live_instance(tmp_pat
         run(main())
 
 
+def test_a_lane_asking_for_the_live_instance_gives_its_slot_up_and_waits_for_one_after_the_answer(tmp_path):
+    """P83: under max_lanes 1, the lane that asks lets the next challenge's lane start; once
+    answered it makes no model call until that lane's slot is free again."""
+    busy = threading.Event()  # the other lane's model call is held until the test lets it go
+
+    def responder(record):
+        if "About other." in str(record["json"]["messages"]):
+            busy.set()
+            server.leaving.wait(30)
+            return text_reply("still thinking")
+        return tool_call_reply("submit_flag", {"flag": "t{note}"})
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path), "other": handout(tmp_path, "other")}
+            lab = Lab(tmp_path, server, handouts=handouts, urls={"note": ("http://127.0.0.1:9",)}, instance="confirm",
+                      max_lanes=1)
+            lab.release("note", "other")
+            note = lab.lane("note")
+            await until(lambda: note.pending is not None, "the lane asking for the instance")
+            other = lab.lane("other")  # it started in the slot the waiting lane gave up
+            await until(busy.is_set, "the other lane's model call")
+            assert lab.deck.apply(iv.Approve(note.id)).ok
+            assert note.state is LaneState.QUEUED
+            await asyncio.sleep(0.3)
+            assert not [r for r in server.chats() if "About note." in str(r["json"]["messages"])]  # no slot: no call
+            assert lab.deck.apply(iv.Kill(other.id, requeue=False)).ok
+            assert note.state is LaneState.RUNNING
+            await until(lambda: note.pending is not None and note.pending.kind is PendingKind.SUBMIT, "the lane's flag")
+            await lab.finish()
+
+    run(main())
+
+
 def test_under_off_a_lane_is_never_asked_and_its_http_tool_stays_off(tmp_path):
     origin = "http://127.0.0.1:9"
     responder, holder = instance_reply(origin)

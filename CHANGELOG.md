@@ -118,6 +118,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   is closed when the lane ends or when you take it over; the lane hears which when you hand
   back. Its output is handled like a command's: held secrets taken out, long output cut and
   saved ([the guide](docs/GUIDE.md#what-a-lanes-shell-has)).
+- A lane that asks for the live instance (instance `confirm`) gives its slot to the next queued
+  challenge while it waits for your answer, so the queue does not stand still while you are
+  away. Once you answer, the lane goes on if a slot is free; if none is, its state reads `queued`
+  until one frees, and it takes that one before anything queued. Its transcript says which lane
+  took its slot, and the run log has a `slot` event for each move. Other approvals keep their
+  slot.
 
 ## 0.5.0 (2026-11-14)
 

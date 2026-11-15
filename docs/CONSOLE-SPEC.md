@@ -521,6 +521,11 @@ A lane whose live box a teammate holds is not stopped: it keeps working on the h
 box, and then asks for live-box access (a `box` approval). At a budget's 80% warning `a` approves
 more, as it does at 100%; escalate is offered at 80% only.
 
+A lane waiting for a live-box answer gives its slot up (P83): the next queued challenge starts in
+it, and the lane's transcript says which lane took it. Once answered, the lane goes on if a slot
+is free; if none is, its state reads `queued` (`que` in the compact layout) until one frees, and it
+takes that one before any queued challenge. Other approvals keep their slot.
+
 ## Interventions
 
 | Key (fleet) | Command (both views) | Action |
