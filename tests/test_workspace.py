@@ -805,7 +805,10 @@ case "$1" in
   run) echo fake-container-id ;;
   rm) exit 0 ;;
   exec)
-    if [ "$2" = "-i" ]; then echo $$ > "$(dirname "$0")/exec.pid"; exec sleep 300; fi
+    if [ "$2" = "-i" ]; then
+      if [ -f "$(dirname "$0")/session.exit" ]; then exit 0; fi  # a session's client that ends at once
+      echo $$ > "$(dirname "$0")/exec.pid"; exec sleep 300
+    fi
     printf '%s\n' "$2 $3 $4 ... $last" >> "$(dirname "$0")/exec.log"  # the container, the program, and the last word
     case "$last" in
       "command -v "*) echo "/usr/bin/${last#command -v }" ;;
@@ -853,6 +856,60 @@ def test_a_docker_exec_client_that_hangs_is_killed_by_the_backstop(fake_docker, 
     assert result == RunResult(None, b"", timed_out=True)
     assert took < 5
     assert_dies(int((fake_docker / "exec.pid").read_text()), within=2)
+
+
+def test_stopping_a_docker_session_whose_client_has_ended_signals_no_group(fake_docker, tmp_path, handout, monkeypatch):
+    """A client that ended and was reaped: its number may be another process group's by the
+    time the session is stopped (10 minutes later, at the idle limit), so nothing is signalled."""
+    (fake_docker / "session.exit").write_text("")
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker")
+    signalled: list[int] = []
+
+    async def scenario():
+        await ws.prepare()
+        try:
+            process = await ws.open_session("cat")
+            await process.proc.wait()
+            monkeypatch.setattr(workspace_module, "_kill_group", signalled.append)
+            await process.stop(None)
+            return process.proc.pid
+        finally:
+            await ws.close()
+
+    pid = run(scenario())
+    assert pid not in signalled
+
+
+def test_stopping_a_host_session_signals_its_group_only_while_the_group_is_its_own(tmp_path, handout, monkeypatch):
+    ws = HostWorkspace(tmp_path / "lane", handout)
+    signalled: list[int] = []
+    real_kill = workspace_module._kill_group
+
+    def kill(pgid: int) -> None:
+        signalled.append(pgid)
+        real_kill(pgid)
+
+    async def scenario():
+        await ws.prepare()
+        try:
+            ended = await ws.open_session("true")  # ends at once and leaves nothing in its group
+            await ended.proc.wait()
+            await asyncio.sleep(0.1)
+            left = await ws.open_session("sleep 300 & echo $!")  # ends, and leaves a child in its group
+            child = int((await left.proc.stdout.readline()).decode())
+            while left.proc.returncode is None:  # wait() would wait for the child too: it holds the pipe
+                await asyncio.sleep(0.05)
+            monkeypatch.setattr(workspace_module, "_kill_group", kill)
+            await ended.stop(None)
+            await left.stop(None)
+            return ended.proc.pid, left.proc.pid, child
+        finally:
+            await ws.close()
+
+    ended, left, child = run(scenario())
+    assert ended not in signalled  # its group is gone: the number may be someone else's now
+    assert left in signalled  # its group still holds the child: still the lane's, and killed
+    assert_dies(child)
 
 
 def test_an_image_with_python3_leaves_the_python_tool_on(fake_docker, tmp_path, handout):

@@ -587,7 +587,11 @@ class HostWorkspace:
         self._started(proc)
 
         async def stop(_pid: int | None) -> None:
-            _kill_group(proc.pid)
+            # the group is signalled only while it is known to be ours: once the process is
+            # reaped and its group empty, the system may give that number to someone else's
+            self._prune()
+            if proc.returncode is None or proc.pid in self._groups:
+                _kill_group(proc.pid)
             await proc.wait()
             self._prune()
 
@@ -1093,7 +1097,8 @@ class DockerWorkspace:
                     await _docker("exec", self.name, "sh", "-c", SIGNAL_TREE, "sh", "KILL", str(pid), "1", timeout=DOCKER_SESSION_STOP)
                 except WorkspaceError:
                     pass  # the client is killed below, and the container's removal ends what is left
-            _kill_group(proc.pid)
+            if proc.returncode is None:  # a client that has ended and been reaped: its number may be someone else's now
+                _kill_group(proc.pid)
             await proc.wait()
             self._clients.discard(proc)
 
