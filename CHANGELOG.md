@@ -134,6 +134,14 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   checked, and that a lane needs `CLAUDE_CODE_OAUTH_TOKEN` for a subscription: it does not see
   the login `claude` uses on your machine.
 
+- `/settings` in a run now opens Settings and health, the same screen as on the home screen:
+  this run's settings on top (lanes at once, what happens to a flag, the layout and the theme;
+  `c` opens `/config` to change them), a line that counts the lanes that need you, your setup
+  and `flightdeck doctor`'s checks. The checks run beside the console at a lower priority, and
+  opening the screen again shows what they found until `r` checks again. `/config` works as
+  before; `/settings` is no longer another name for it, and `/settings lanes 8` says to type
+  `/config lanes 8`.
+
 ## 0.5.0 (2026-11-14)
 
 A calm console: the simple layout, a lane view of one row per step, a peek at the selected lane,

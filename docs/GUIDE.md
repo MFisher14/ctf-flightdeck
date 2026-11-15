@@ -72,7 +72,14 @@ them are the checks `flightdeck doctor` runs, in its words: `ok`, `FAIL` for wha
 `warn` for what does not, with the fix under each problem and one line on top that counts them.
 The checks take a few seconds; Docker or a server that does not answer can hold them up to 2
 minutes, and then they stop and say so. The settings show at once, `esc` goes back at any time
-and stops the checks, and `r` runs them again. The screen only reads: in a run, `/config` (or `/settings`) changes that run's settings.
+and stops the checks, and `r` runs them again. The screen only reads: in a run, `/config` changes that run's settings.
+
+The same screen opens in a running console: type `/settings`. On top it adds this run's own
+settings (lanes at once, what happens to a flag, the layout and the theme) with the command that
+changes each, and `c` opens `/config`'s dialog for them. A line under the title says how many
+lanes need you; they keep running while you look. The checks run beside the console at a lower
+priority, so they do not slow it, and what they found is kept for the run: open the screen again
+and it shows them with their age, until `r` checks again.
 
 **The same by command.** Each step has a command of its own, for a script, or when you would rather
 answer at the prompt:
@@ -550,8 +557,9 @@ name to find it:
 
 - A few letters from the start of the name, or of the second word in it: `/over` finds
   `/takeover`, `/hold` finds `/unhold`, `/pilot` finds `/autopilot`.
-- An alias: `/q` and `/exit` are `/quit`, `/settings` is `/config`, `/lanes` is `/back`. The
-  menu shows them beside the name.
+- An alias: `/q` and `/exit` are `/quit`, `/lanes` is `/back`. The menu shows them beside
+  the name. (`/settings` is not `/config`: it opens Settings and health, as on the home
+  screen.)
 - After the name and a space, the menu lists what the command takes: the lanes with their
   challenge and state after `/open` (type `l2`, or part of the challenge's name), the parked
   and new challenges after `/queue`, your themes after `/theme`, `simple` and `deck` after
