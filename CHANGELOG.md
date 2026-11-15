@@ -21,6 +21,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - `flightdeck start`'s question of how the challenges arrive no longer leaves "by hand" as the
   only answer off CTFd: it says that on rCTF, noCTF or GZCTF `flightdeck http example --preset
   NAME > event.toml` sets up an event flightdeck pulls and submits for.
+- `flightdeck start FOLDER` on a folder already set up now says when the event's token
+  variable is not set, before it offers to launch; it used to say nothing, and the run then
+  refused.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes

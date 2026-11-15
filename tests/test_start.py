@@ -322,6 +322,23 @@ def test_a_folder_that_is_already_an_event_is_played_not_asked_about_again(tmp_p
     assert [call["board"] for call in setup] == [tmp_path / "example"]
 
 
+def test_a_folder_already_set_up_whose_token_is_not_set_says_so_before_it_launches(tmp_path, monkeypatch, setup):
+    """Start left out the check's "token is not set" as said already, with where the token
+    goes; for a folder set up before (an http profile from `flightdeck http example`, or a
+    CTFd event whose token was skipped) nothing had said it, and play then refused."""
+    from ctf_flightdeck import http_cli
+
+    monkeypatch.delenv("RCTF_TOKEN", raising=False)
+    folder = tmp_path / "quals"
+    folder.mkdir()
+    (folder / "event.toml").write_text(http_cli.example_profile(False, "rctf"))
+    result = run(str(folder), "--no-launch")
+    assert result.exit_code == 0, result.output
+    assert "note: the token variable RCTF_TOKEN (event.token_env) is not set or is empty" in result.output
+    monkeypatch.setenv("RCTF_TOKEN", "a-synthetic-team-token")
+    assert "RCTF_TOKEN" not in run(str(folder), "--no-launch").output  # set: nothing to say
+
+
 def test_away_from_a_terminal_start_names_every_answer_it_needs(tmp_path, monkeypatch, setup):
     monkeypatch.setattr(cli, "_at_terminal", lambda: False)
     result = run(str(tmp_path / "example"), "--platform", "ctfd")
