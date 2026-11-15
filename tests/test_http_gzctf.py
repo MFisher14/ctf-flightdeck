@@ -141,7 +141,8 @@ def test_the_solved_list_is_the_teams_own_row_of_the_scoreboard():
 def test_a_cookie_the_site_does_not_know_fails_the_pull_with_the_status_and_never_shows_the_cookie(tmp_path):
     with FakeGZCTF(sample()) as fake:
         caught = failure(gz(fake, token="CfDJ8-some-other-ticket").pull(tmp_path))
-    assert str(caught) == "GET /api/game/{game}/details was answered with HTTP 401 (Unauthorized)"
+    assert str(caught) == ("GET /api/game/{game}/details was answered with HTTP 401 (Unauthorized) "
+                           "(is the token the right one for this event, and still valid?)")
     assert "CfDJ8" not in str(caught)
 
 

@@ -1277,7 +1277,12 @@ class HttpCaller:
         self._refuse_page(answer)
         if not 200 <= answer.status < 300:
             said = self._scrub(_message(answer.doc)) if answer.doc is not _NOT_JSON else ""
-            raise CallFailed(f"{answer.endpoint} was answered with HTTP {answer.status}{_phrase(answer.status)}" + (f": {said}" if said else ""))
+            # A token sent as it is (not exchanged for a session first) and refused: the player's to fix.
+            # An exchanged session's 401 comes after a sign-in that worked, so it says nothing of the token.
+            hint = (" (is the token the right one for this event, and still valid?)"
+                    if answer.status in (401, 403) and self.config.auth.kind != "exchange" else "")
+            raise CallFailed(f"{answer.endpoint} was answered with HTTP {answer.status}{_phrase(answer.status)}"
+                             + (f": {said}" if said else "") + hint)
         if answer.doc is _NOT_JSON:
             raise CallFailed(f"{answer.endpoint} was answered with something that is not JSON (HTTP {answer.status})")
         return answer

@@ -8,6 +8,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   the two `[instances]` lines to take the `#` off) instead of a traceback, and `--routes` writes
   rCTF v2's routes out. When an `[instances]` table does nothing because the instance policy is
   not `auto`, `preflight` now says what to change (`live_targets = "allowed"` under `[rules]`).
+- On noCTF, GZCTF and a table whose token is sent as it is, a 401 or 403 from the platform
+  now ends with `(is the token the right one for this event, and still valid?)`, as a refused
+  rCTF sign-in already did, instead of the bare status.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
