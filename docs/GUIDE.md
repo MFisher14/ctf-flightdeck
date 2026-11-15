@@ -319,6 +319,17 @@ github.com, for amd64 and arm64, and refuses an archive whose SHA-256 is not the
 Dockerfile. On the host runtime a lane's shell has whatever your machine has, and its brief
 names nothing.
 
+A lane can also keep a program running across its turns: flightdeck's own lanes have
+**sessions**. `session_start` starts a command in the lane's workspace (`gdb -q ./chall`,
+`python3 -u -i`, `nc` to the challenge's instance), `session_send` writes a line to it and reads
+what it writes back, and `session_close` stops it with everything it started. You see each as a
+step in the lane: `session s1 start: gdb -q ./chall`, `session s1 < break main`. A session gets
+pipes, not a terminal, so a program that prints a prompt only at a terminal prints none. A lane
+has at most three open at once; one it has not used for ten minutes is closed; and every session
+is closed when the lane ends and when you take it over, so nothing it started runs on beside your
+shell (the lane hears which were closed when you hand back). What a session writes is handled
+like any command's output: held secrets taken out, long output cut and saved to a file.
+
 ## Models and keys
 
 Your config names the environment variable that holds each key, never the key; flightdeck reads

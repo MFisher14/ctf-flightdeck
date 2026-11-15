@@ -73,6 +73,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   against a fake of it only. A `tcp-ssl` address reaches a lane as `tls://host:port`, the form
   P80 made for ctfd-whale. Not built: GZCTF's instances, and klodd's (it wants a CAPTCHA for
   every start).
+- **Sessions** (P82). flightdeck's own lanes keep a program running across turns (gdb, an
+  interpreter, `nc` to the instance) with `session_start`, `session_send` and `session_close`:
+  at most three per lane, closed after ten minutes unused, and all closed at a take-over and at
+  the lane's end ([ARCHITECTURE.md](ARCHITECTURE.md#sessions)).
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

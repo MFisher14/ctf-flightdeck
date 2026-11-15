@@ -162,6 +162,7 @@ from .l1stage import L1Stage, StageLane, run_stage
 from .workspace import (
     CONTAINER_ROOT,
     PRIVATE,
+    SIGNAL_TREE as _SIGNAL_SCRIPT,
     DockerWorkspace,
     Snapshot,
     Workspace,
@@ -270,28 +271,6 @@ _DOCKER_WRAPPER = (
 made, or kept from the lane's last start, owner-only (mode 700); one that is not the
 user's own stops the CLI with the reason on stderr. Then it says the CLI's pid in the
 container, and becomes the CLI."""
-_SIGNAL_SCRIPT = r"""
-sig=$1; root=$2; tree=$3
-pids=$root
-if [ "$tree" = 1 ]; then
-  more=1
-  while [ "$more" = 1 ]; do
-    more=0
-    for f in /proc/[0-9]*/stat; do
-      s=$(cat "$f" 2>/dev/null) || continue
-      pid=${s%% *}
-      rest=${s##*) }
-      set -- $rest
-      case " $pids " in *" $pid "*) continue ;; esac
-      case " $pids " in *" $2 "*) pids="$pids $pid"; more=1 ;; esac
-    done
-  done
-fi
-kill -s "$sig" $pids 2>/dev/null
-exit 0
-"""
-"""Signals a process and (tree=1) everything under it, inside a lane's container: `docker
-exec` does not pass a signal on to the process it started."""
 _SIGNAMES = {
     signal.SIGSTOP: "STOP", signal.SIGCONT: "CONT", signal.SIGINT: "INT", signal.SIGTERM: "TERM", signal.SIGKILL: "KILL",
 }

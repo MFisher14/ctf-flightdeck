@@ -110,6 +110,14 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   `pending_states`, and `expires_unit = "ms"`. On the http platform the `[http]` list may mark
   a challenge with an instance by an `instance` path, and a plugin's pull may say
   `"instance": "on-demand"`.
+- flightdeck's own lanes can keep a program running across their turns: a debugger, an
+  interpreter, a connection to the challenge's instance. A lane starts one with
+  `session_start`, writes to it and reads it back with `session_send`, and stops it with
+  `session_close`; you see each as a step (`session s1 start: gdb -q ./chall`, `session s1 <
+  break main`). At most three per lane, one unused for ten minutes is closed, and every session
+  is closed when the lane ends or when you take it over; the lane hears which when you hand
+  back. Its output is handled like a command's: held secrets taken out, long output cut and
+  saved ([the guide](docs/GUIDE.md#what-a-lanes-shell-has)).
 
 ## 0.5.0 (2026-11-14)
 

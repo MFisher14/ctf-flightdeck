@@ -1900,6 +1900,95 @@ def test_a_take_over_shell_that_never_ran_loses_its_home_and_the_lane_hears_noth
     run(main())
 
 
+def _session_pid(server) -> int:
+    """The pid the lane's session (`echo $$; cat`) wrote, from the tool result the model was sent."""
+    [result] = [m for m in server.requests[1]["json"]["messages"] if m["role"] == "tool"]
+    assert result["content"].startswith("session s1: running"), result["content"]
+    return int(result["content"].splitlines()[1])
+
+
+def _gone_soon(pid: int) -> bool:
+    end = time.monotonic() + 5
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _dead(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def _a_lane_with_a_session(record):
+    """A lane that starts a session (a synthetic one: bash and cat), then waits on a candidate."""
+    if record["n"] == 1:
+        return tool_call_reply("session_start", {"command": "echo $$; cat", "wait_seconds": 5})
+    return tool_call_reply("submit_flag", {"flag": "t{note}"})
+
+
+def test_a_take_over_closes_the_lanes_sessions_and_the_hand_back_says_so(tmp_path):
+    counter = {"n": 0}
+
+    def responder(record):
+        counter["n"] += 1
+        return _a_lane_with_a_session(counter)
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the lane waiting on a candidate")
+            pid = _session_pid(server)
+            assert not _dead(pid)
+            session = take_over(lab, lane)
+            await asyncio.wait_for(session.begin(), 10)
+            assert _gone_soon(pid)  # the debugger does not run on beside the player's shell
+            session.finish()
+            run_ = lab.driver.runs[lane.id]
+            assert any("Taking over closed your sessions (s1): start again what you still need." in note for note in run_.notes)
+            assert run_.toolbox.sessions.gone["s1"] == "the player took over the lane, which closes every session"
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_lanes_end_closes_its_sessions(tmp_path):
+    counter = {"n": 0}
+
+    def responder(record):
+        counter["n"] += 1
+        return _a_lane_with_a_session(counter)
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the lane waiting on a candidate")
+            pid = _session_pid(server)
+            assert not _dead(pid)
+            assert lab.deck.apply(iv.Kill(lane.id)).ok
+            await until(lambda: lab.driver.runs[lane.id].closed, "the lane closed")
+            await asyncio.shield(lab.driver.runs[lane.id].closing)
+            assert lab.driver.runs[lane.id].toolbox.sessions.gone["s1"] == "the lane ended"
+            assert _gone_soon(pid)
+            await lab.finish()
+
+    run(main())
+
+
 def test_no_take_over_before_the_workspace_is_ready(tmp_path):
     from ctf_flightdeck.core.driver import TakeoverRefused
 

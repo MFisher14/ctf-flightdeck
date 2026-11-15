@@ -79,8 +79,11 @@ def box(lane) -> Toolbox:
 # ---------------------------------------------------------------- the schemas
 
 
-def test_the_tools_are_seven_short_openai_function_schemas():
-    assert [t["function"]["name"] for t in TOOLS] == ["shell", "read_file", "view_image", "python", "http", "submit_flag", "set_plan"]
+def test_the_tools_are_ten_short_openai_function_schemas():
+    assert [t["function"]["name"] for t in TOOLS] == [
+        "shell", "read_file", "view_image", "python", "http", "session_start", "session_send", "session_close",
+        "submit_flag", "set_plan",
+    ]
     required = {}
     for tool in TOOLS:
         assert tool["type"] == "function" and tool["function"]["description"]
@@ -93,6 +96,9 @@ def test_the_tools_are_seven_short_openai_function_schemas():
         "view_image": ["path"],
         "python": ["code"],
         "http": ["method", "url"],
+        "session_start": ["command"],
+        "session_send": ["session"],
+        "session_close": ["session"],
         "submit_flag": ["flag"],
         "set_plan": ["plan"],
     }
@@ -521,7 +527,7 @@ def test_view_image_reads_the_file_off_the_event_loop(viewer, lane, monkeypatch)
 @pytest.mark.parametrize(
     "name, arguments, message",
     [
-        ("nope", "{}", "error: unknown tool 'nope'; the tools are shell, read_file, view_image, python, http, submit_flag, set_plan"),
+        ("nope", "{}", "error: unknown tool 'nope'; the tools are shell, read_file, view_image, python, http, session_start, session_send, session_close, submit_flag, set_plan"),
         ("view_image", "{}", "error: view_image needs path (a string)"),
         ("view_image", '{"path": "pic.png", "scale": 2}', "error: view_image takes path; unknown: scale"),
         ("shell", "{not json", "error: the arguments are not valid JSON (Expecting property name"),
