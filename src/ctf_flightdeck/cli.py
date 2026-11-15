@@ -66,11 +66,26 @@ def root(
     ] = False,
 ) -> None:
     # no docstring: what `flightdeck --help` says of flightdeck is the app's own help (WHAT, NEW_HERE)
+    if ctx.invoked_subcommand != "doctor":  # doctor says it as a check of its own
+        _say_config_home()
     if ctx.invoked_subcommand is None:
         if _at_terminal() and _at_terminal_out():
             _home()
         else:  # nobody to ask (a script, a pipe): say what to run
             typer.echo(_next_steps(), nl=False)
+
+
+def _say_config_home() -> None:
+    """Once per command, on stderr: a file of flightdeck's left at ~/.config/ctf-flightdeck
+    when $XDG_CONFIG_HOME puts the config folder elsewhere, and whether it is read (P94)."""
+    from . import confighome
+
+    try:
+        lines = confighome.notes()
+    except (OSError, RuntimeError):  # no home folder: no old place to have left a file in
+        return
+    for line in lines:
+        typer.echo(f"flightdeck: {line}", err=True)
 
 
 MAX_RESUME = 6  # events offered on the opening menu, most recently played first

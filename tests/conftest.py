@@ -25,6 +25,13 @@ def no_real_keys_file(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_player_config_home(monkeypatch):
+    """No test depends on the player's $XDG_CONFIG_HOME (confighome.py): a test that wants
+    one sets its own."""
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def own_state_folder(tmp_path_factory, monkeypatch):
     """Each test has a state folder of its own (XDG_STATE_HOME), never the player's: what a
     run notes there, and the containers a sweep may remove (leftovers.py), are the test's

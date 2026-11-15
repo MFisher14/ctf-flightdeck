@@ -1,8 +1,8 @@
 """The player's config: the model API (and its fallback), the model ladder, prices, lane
 settings and the run folder.
 
-It lives outside the repository (~/.config/ctf-flightdeck/config.toml, or the file
-$FLIGHTDECK_CONFIG names) and holds no secret: it names the environment variable that
+It lives outside the repository (~/.config/ctf-flightdeck/config.toml, or under
+$XDG_CONFIG_HOME: confighome.py; or the file $FLIGHTDECK_CONFIG names) and holds no secret: it names the environment variable that
 holds the API key, and api_key() reads the key from there only when it is needed
 (fallback_key() for the [fallback] API's).
 
@@ -317,13 +317,17 @@ class ConfigError(Exception):
 
 
 def default_config_path() -> Path:
-    """$FLIGHTDECK_CONFIG if it is set, else ~/.config/ctf-flightdeck/config.toml. ConfigError
-    when a ~ in it names a user that does not exist, or there is no home directory."""
+    """$FLIGHTDECK_CONFIG if it is set, else config.toml in flightdeck's config folder:
+    $XDG_CONFIG_HOME/ctf-flightdeck, else ~/.config/ctf-flightdeck (confighome.find, which
+    also says when the file is only at the old place). ConfigError when a ~ in it names a user
+    that does not exist, or there is no home directory."""
+    from . import confighome
+
     named = os.environ.get(CONFIG_ENV)
     try:
         if named:
             return Path(named).expanduser()
-        return Path.home() / ".config" / "ctf-flightdeck" / "config.toml"
+        return confighome.find(confighome.CONFIG_FILE).path
     except RuntimeError:
         where = f"${CONFIG_ENV} starts with ~ for a user that does not exist" if named else "there is no home directory"
         raise ConfigError(f"cannot find the config: {where}; name the file with an absolute path in ${CONFIG_ENV}") from None
