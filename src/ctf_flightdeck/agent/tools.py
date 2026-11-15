@@ -778,7 +778,9 @@ class Toolbox:
         found. Unless a secret ran across, the carried part, shown already, is not shown again."""
         text = self.scrub((carried + output).decode("utf-8", "replace"))
         if carried:
-            shown = carried.decode("utf-8", "replace")
+            # as the last read showed it: scrubbed (a shorter secret may be inside the start of a
+            # longer one), and without a character it cut in two, which now comes whole
+            shown = self.scrub(carried.decode("utf-8", "replace")).rstrip("\ufffd")
             if text.startswith(shown):
                 text = text[len(shown):]
         return text

@@ -478,6 +478,25 @@ def test_what_a_read_carries_over_is_not_shown_twice_when_no_secret_follows(tmp_
     assert rest.content.split("\n", 1)[1] == "\nok\n"
 
 
+def test_what_a_read_carries_over_is_not_shown_twice_when_it_held_a_shorter_secret_or_half_a_character(tmp_path, handout):
+    async def go():
+        short, long = "abcdefgh", "abcdefghXYZ12345"  # the start of the long one holds the short one
+        box = await host_box(tmp_path, handout, scrub=Secrets({"SHORT": short, "LONG": long}))
+        await call(box, "session_start", {"command": "printf abcdefghXY; sleep 1; printf '\\nok\\n'; sleep 30",
+                                          "wait_seconds": 0.3})
+        released = await call(box, "session_send", {"session": "s1", "wait_seconds": 0.3})
+        rest = await call(box, "session_send", {"session": "s1", "wait_seconds": 5})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return box, released, rest
+
+    box, released, rest = asyncio.run(go())
+    assert released.content.endswith("\n[SHORT]XY")
+    assert rest.content.split("\n", 1)[1] == "\nok\n"
+    # a carry that ends inside a character: the last read showed U+FFFD, the character now comes whole, once
+    assert box._session_text("abcdefgh\u00e9".encode()[:-1], "\u00e9!".encode()[1:]) == "\u00e9!"
+
+
 def test_what_the_model_gets_wrong_comes_back_as_an_error(tmp_path, handout):
     async def go():
         box = await host_box(tmp_path, handout)
