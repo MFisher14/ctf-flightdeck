@@ -255,6 +255,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   opening the screen again shows what they found until `r` checks again. `/config` works as
   before; `/settings` is no longer another name for it, and `/settings lanes 8` says to type
   `/config lanes 8`.
+- Settings and health is laid out in two columns: a long path, where a setting comes from, or
+  a check's detail and fix wraps under its own column instead of under the names on the left.
+- Making the terminal wider while the layout list is open takes away its "this terminal is
+  narrow" note (narrowed again, it comes back), and a status line said while the terminal was
+  narrow no longer says so once it is wide.
 
 ## 0.5.0 (2026-11-14)
 

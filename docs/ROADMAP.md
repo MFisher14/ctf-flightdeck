@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: twenty-three proposals, P69 to P91 (2026-11-14)
+## Built, not released: twenty-four proposals, P69 to P91 and P97 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P91); the lines for players are under Unreleased in
+[DECISIONS.md](DECISIONS.md) (P69 to P91, and P97); the lines for players are under Unreleased in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -122,6 +122,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   for a flag answer or more budget gives its slot to the queue once it has waited a minute; at
   most `max_waiting` lanes (`[lanes]`, 4) are without a slot at once, and a lane whose sessions
   run on keeps its own.
+- **Settings and health in two columns; the narrow note goes when the terminal widens** (P97).
+  A long path, a where line or a check's detail wraps under its own column at 80 columns. The
+  layout list's "this terminal is narrow" note, and that part of the status line, go once the
+  terminal is made wide.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

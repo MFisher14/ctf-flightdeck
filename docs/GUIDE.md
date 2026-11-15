@@ -69,7 +69,8 @@ top are your main settings: the config file, your model API, whether its API key
 layout, theme, bell, title and mouse. Under each is where it comes from, a line of your config or
 the default, and for the look how to change it (`/layout` or `/theme` in a run, then `s`). Below
 them are the checks `flightdeck doctor` runs, in its words: `ok`, `FAIL` for what stops a run and
-`warn` for what does not, with the fix under each problem and one line on top that counts them.
+`warn` for what does not, with the fix under each problem and one line on top that counts them. A long path or detail
+wraps under its own column, so the names and the marks stay a column you can read down.
 The checks take a few seconds; Docker or a server that does not answer can hold them up to 2
 minutes, and then they stop and say so. The settings show at once, `esc` goes back at any time
 and stops the checks, and `r` runs them again. The screen only reads: in a run, `/config` changes that run's settings.
