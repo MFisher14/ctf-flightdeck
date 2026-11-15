@@ -60,6 +60,11 @@ Proposals built and waiting for a release, in the order of their numbers in
   where it is set, and doctor's checks with their fixes, run in a child process that leaving
   the screen stops. A key is `set` or `not set`. Not built: changing a setting there, and the
   checks shown one by one.
+- **ctfd-whale instances** (P80). `plugin = "ctfd_whale"` in `[instances]`: a start is never
+  sent while the account runs a container, since whale's start removes it; another
+  challenge's container reads as the cap; each of the router's five address forms is read,
+  and a TLS endpoint reaches a lane as `tls://host:port` ([BOARDS.md](BOARDS.md#which-plugin)).
+  Tested against a fake of the plugin's source only.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
@@ -360,13 +365,9 @@ the guardrail Autopilot needs: nothing reached but a challenge's own instance.
 
 ## Later (not scheduled)
 
-- **ctfd-whale instances.** Not built (P57). Read from its source, not run: a start first
-  removes whatever container the account runs, so a careless second start resets a lane's own
-  target; asking about a challenge other than the running one is refused, not answered "none";
-  and the address comes as an `nc` line, a link's HTML, a pwntools snippet or `[ssl] host port`,
-  some of them TLS endpoints that are no web server, for which a lane's instance has no form
-  yet. It wants its own reader, a fake of each form, and a run against a local CTFd with the
-  plugin before anyone relies on it.
+- **ctfd-whale against a real CTFd.** Built against a fake of its source (P80); a run
+  against a local CTFd with the plugin (Redis, a Docker socket and an frp or trp router
+  beside it) is still to do before anyone relies on it.
 - **Phone control.** Today: run flightdeck in tmux and attach over SSH (the console has a compact
   layout from 64 columns down). Option: serve the same console in a browser (textual-serve);
   touches D4 and must be locked down. Best: push a notification when a lane needs you, with approve and decline from the

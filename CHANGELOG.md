@@ -85,6 +85,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   again with `/new`. They used to stay in the run's folder until the run ended.
 - `flightdeck init --force` replaces your config in one step, keeping its permissions: a write
   cut off half way (a full disk) leaves the old config as it was, never half of each.
+- Instances on demand work with ctfd-whale: `plugin = "ctfd_whale"` under `[instances]`.
+  flightdeck never sends a start while your account runs a container, because whale's start
+  removes it: your own challenge's container is used as it is, and another challenge's is
+  treated as the cap and left alone. Each form the site writes the address in is read, and a
+  TLS endpoint reaches the lane as `tls://host:port`, with a brief that says to speak TLS to
+  it. Built from the plugin's public source and tested against a fake of it only
+  ([BOARDS.md](docs/BOARDS.md#which-plugin)).
 
 ## 0.5.0 (2026-11-14)
 

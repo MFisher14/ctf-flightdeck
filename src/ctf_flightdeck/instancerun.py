@@ -49,7 +49,9 @@ all the same: no lane gets the address, the challenge waits, and the instance is
 A plugin that keeps one container per account (ctfd-owl: InstancesConfig.single) has a
 `max_running` of 1, so the queue's on-demand challenges take turns. A teammate's container
 of another challenge is not seen by a status; the start is then refused in the plugin's
-words, which read as the cap being reached.
+words, which read as the cap being reached. On ctfd-whale, whose start would remove that
+container, the status itself refuses (InstanceBusy, read as the cap the same way), and no
+start is sent while the account runs anything (platform/instances.py).
 
 When the platform says no:
 - "full" (the team's cap is reached, by teammates' instances this run cannot see): nothing
@@ -83,7 +85,7 @@ from dataclasses import dataclass, replace
 
 from .core.deck import Deck
 from .core.model import Challenge, ChallengeStatus
-from .platform.instances import Instance, InstanceError, InstanceRefused
+from .platform.instances import Instance, InstanceBusy, InstanceError, InstanceRefused
 from .text import untrusted
 
 EVERY = 5.0  # seconds between looks at the deck
@@ -347,6 +349,8 @@ class InstanceRunner:
         """Whether the platform names an instance of the challenge, at any address."""
         try:
             return await asyncio.to_thread(self.client.status, cid) is not None
+        except InstanceBusy:
+            return False  # the account's one container is another challenge's: none of this one
         except InstanceError as exc:
             if exc.up:
                 return True

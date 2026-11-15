@@ -27,10 +27,13 @@ neither a plugin name nor all four routes is an error. The named shapes (PLUGINS
   address is in the status), refusals as HTTP 200 with `msg`.
 - `chall_manager`: ctfd-chall-manager. The number in the query for the status and in a JSON
   body for the rest; the address is a line the organiser wrote, the end a timestamp.
+- `ctfd_whale`: ctfd-whale. One container per user account, a start that first removes
+  whatever that account runs, a status that refuses for any challenge but the running one,
+  and an address in one of five forms (an nc line, a link's HTML, a pwntools snippet, an
+  https URL, `[ssl] host port`), two of them TLS endpoints that are no web server (tls://).
 
-The last two were built from the plugins' public source against fakes of it (tests/
-fake_instance_plugins.py) and have not met a real site. ctfd-whale has no shape yet
-(NOT_BUILT; BOARDS.md says why).
+The last three were built from the plugins' public source against fakes of it (tests/
+fake_instance_plugins.py) and have not met a real site.
 
 InstanceClient is the wire: start(), status(), renew(), stop() for one challenge, by the
 board's id. What it guarantees:
@@ -45,6 +48,11 @@ board's id. What it guarantees:
   STATUS_GAP seconds apart, before it gives up; and a stop on a plugin that keeps one
   container per account (whose stop takes whatever runs) asks the status first and stops
   only when it is this challenge's.
+- One container, never reset. On a plugin whose start replaces whatever the account runs
+  (Shape.replaces: ctfd-whale), a start asks the status first and is sent only when the
+  account runs nothing: this challenge's running instance is returned as it is, and another
+  challenge's is an InstanceBusy, with no start sent. A second start would otherwise take a
+  lane's target away from under it.
 - A refused start is an InstanceRefused with the plugin's own words, made safe to show
   (`full` when they say the team's cap or budget is reached), never a container with no
   address.
@@ -123,6 +131,15 @@ class InstanceRefused(InstanceError):
         self.full = full
 
 
+class InstanceBusy(InstanceRefused):
+    """The account's one container runs another challenge (Shape.busy): this challenge has
+    none, and a start would remove the other. It reads as the cap (`full`): a run waits and
+    asks again, and never sends the start."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, full=True)
+
+
 @dataclass(frozen=True)
 class Routes:
     """How one plugin is asked: each action's method and path, and where the challenge's
@@ -158,11 +175,14 @@ class Shape:
     answers: Answers = Answers()
     single: bool = False  # one container per account, and its stop takes whatever runs: max_running is 1, a stop asks first
     gap: float = 0.0  # seconds the plugin wants between two requests that change something; the client waits them
+    replaces: bool = False  # a start first removes whatever the account runs: the client asks the status before it sends one
+    busy: re.Pattern[str] | None = None  # a refusal in these words: the account's one container is another challenge's
 
 
 _CONTAINERS = "/containers/api"
 _OWL = "/plugins/ctfd-owl/container?challenge_id={id}"
 _CHALL_MANAGER = "/plugins/ctfd-chall-manager/instance"
+_WHALE = "/plugins/ctfd-whale/container?challenge_id={id}"
 
 PLUGINS: dict[str, Shape] = {
     # CTFd-Docker-Plugin (github.com/andyjsmith/CTFd-Docker-Plugin) and its forks; seen working at an event in
@@ -187,18 +207,23 @@ PLUGINS: dict[str, Shape] = {
                status=("GET", _CHALL_MANAGER + "?challengeId={id}"), body_key="challengeId", api=True),
         Answers(address=("connectionInfo",), port=(), expires=("until",), loose=True),
     ),
+    # ctfd-whale (github.com/frankli0324/ctfd-whale at 2cc84a9: api.py, decorators.py, utils/control.py, utils/routers/),
+    # read from its source, not met. One container per user account. Its POST removes that container, of any challenge,
+    # before it starts one, and answers no address; its GET for another challenge's container is a 403, "Container already
+    # started but not from this challenge"; data.user_access is the router's line (an nc line, a link's HTML, a pwntools
+    # snippet, an https URL, "[ssl] host port"), data.remaining_time the seconds left. Its changing routes refuse a second
+    # request within 60 s (decorators.frequency_limited).
+    "ctfd_whale": Shape(
+        Routes(start=("POST", _WHALE), stop=("DELETE", _WHALE), renew=("PATCH", _WHALE), status=("GET", _WHALE), api=True),
+        Answers(address=("user_access",), port=(), expires=("remaining_time",), loose=True),
+        single=True, gap=60.0, replaces=True, busy=re.compile(r"\bnot from this challenge\b", re.I),
+    ),
 }
 # names a profile may still carry, and what to write instead
 REMOVED = {
     "ctfd_docker": "its routes were a guess that matches no plugin whose source was read. CTFd-Docker-Plugin and its forks "
                    "are docker_per_team",
 }
-# plugins a player may name that have no shape, and why
-NOT_BUILT = dict.fromkeys(
-    ("ctfd_whale", "whale"),
-    "ctfd-whale has no shape yet: its start removes whatever container the account runs, and its address comes in forms "
-    "flightdeck does not read yet (BOARDS.md, Instances on demand). Start its instances on the site yourself",
-)
 
 
 @dataclass(frozen=True)
@@ -212,6 +237,8 @@ class InstancesConfig:
     answers: Answers = Answers()
     single: bool = False  # Shape.single
     gap: float = 0.0  # Shape.gap
+    replaces: bool = False  # Shape.replaces
+    busy: re.Pattern[str] | None = None  # Shape.busy
 
 
 _ANSWER_KEYS = {"address_key": "address", "port_key": "port", "expires_key": "expires"}
@@ -230,9 +257,8 @@ def parse_config(table: object) -> InstancesConfig:
         raise ValueError(f"instances.plugin {plugin} is no longer a plugin flightdeck knows: {REMOVED[plugin]}; for any other "
                          f"plugin give the four routes (start, stop, renew, status). Known: {', '.join(PLUGINS)}")
     if plugin is not None and not (isinstance(plugin, str) and plugin in PLUGINS):
-        why = NOT_BUILT.get(plugin) if isinstance(plugin, str) else None
         raise ValueError(f"instances.plugin {_show(plugin)} is not a plugin flightdeck knows (known: {', '.join(PLUGINS)}); "
-                         + (why or "give the four routes instead (start, stop, renew, status)"))
+                         "give the four routes instead (start, stop, renew, status)")
     shape = PLUGINS[plugin] if plugin is not None else None
     base = shape.routes if shape is not None else None
     given = {action: _route(action, table[action]) for action in ACTIONS if action in table}
@@ -259,13 +285,16 @@ def parse_config(table: object) -> InstancesConfig:
     if isinstance(most, bool) or not isinstance(most, int) or not 1 <= most <= 64:
         raise ValueError("instances.max_running must be a whole number from 1 to 64")
     if single and most != 1:
-        raise ValueError(f"instances.max_running must be 1 with plugin {plugin}: it runs one container per account "
-                         "(per team in team mode), and a start past it is refused")
+        past = ("a start removes the one that runs" if shape is not None and shape.replaces
+                else "a start past it is refused")
+        raise ValueError(f"instances.max_running must be 1 with plugin {plugin}: it runs one container per account, and {past}")
     answers = shape.answers if shape is not None else Answers()
     named = {part: _keys(key, table[key]) for key, part in _ANSWER_KEYS.items() if key in table}
     if "address" in named and not named["address"]:
         raise ValueError("instances.address_key must name at least one key: an answer with no address is no instance")
-    return InstancesConfig(routes, tuple(types), most, plugin, replace(answers, **named), single, shape.gap if shape is not None else 0.0)
+    return InstancesConfig(routes, tuple(types), most, plugin, replace(answers, **named), single,
+                           shape.gap if shape is not None else 0.0, shape.replaces if shape is not None else False,
+                           shape.busy if shape is not None else None)
 
 
 def _keys(name: str, value: object) -> tuple[str, ...]:
@@ -296,13 +325,15 @@ class Instance:
     challenge: str  # the board's id
     host: str
     port: int | None
-    scheme: str | None = None  # "http" or "https" when the plugin gave a URL; None when it gave a host and a port
+    scheme: str | None = None  # "http" or "https" when the plugin gave a URL, "tls" a TLS endpoint; None: a host and a port
     expires_at: float | None = None  # time.time() when the platform stops it; None: it did not say, or not so flightdeck can read it
     said: str = field(default="", compare=False)  # the plugin's words, safe to show
 
     def url(self, web: bool) -> str:
-        """The instance as a board's `urls` entry: the plugin's own scheme when it gave one,
-        else http for a web challenge and tcp for any other (what `nc host port` reaches)."""
+        """The instance as a board's `urls` entry: the plugin's own scheme when it gave one
+        (tls://host:port for a TLS endpoint that is no web server, what `ncat --ssl host port`
+        reaches), else http for a web challenge and tcp for any other (what `nc host port`
+        reaches)."""
         scheme = self.scheme or ("http" if web else "tcp")
         if self.port is None:
             return f"{scheme}://{self.host}"
@@ -349,7 +380,14 @@ class InstanceClient:
         status: that is asked then, up to STATUS_TRIES times STATUS_GAP seconds apart.
 
         What a start does to an instance that already runs is the plugin's own business (one
-        answers the same, one refuses, one replaces it): ask status() first, as a run does."""
+        answers the same, one refuses, one replaces it): ask status() first, as a run does.
+        On a plugin whose start replaces it (config.replaces) the client asks itself, and
+        sends the start only when the account runs nothing: this challenge's instance is
+        returned as it runs, and another challenge's is an InstanceBusy, with nothing sent."""
+        if self.config.replaces:
+            there = self.status(challenge_id)
+            if there is not None:
+                return there
         doc = self._ask("start", challenge_id)
         assert doc is not None
         try:
@@ -394,6 +432,8 @@ class InstanceClient:
         if self.config.single:
             try:
                 there = self.status(challenge_id) is not None
+            except InstanceBusy:
+                return  # the account's container is another challenge's: this one has none to stop
             except InstanceError as exc:
                 if not exc.up:
                     raise
@@ -448,6 +488,10 @@ class InstanceClient:
         said = _dig(doc, ERROR_KEYS) if isinstance(doc, dict) else None
         failed = isinstance(doc, dict) and (doc.get("success") is False or doc.get("error") not in (None, "", False))
         if status >= 400 or failed:
+            if self.config.busy is not None and said is not None and self.config.busy.search(str(said)):
+                # the plugin's words name the other challenge in HTML: flightdeck says it in its own
+                raise InstanceBusy(f"the platform refused {what}: the account's one container runs another challenge, and "
+                                   f"{self.config.plugin or 'the plugin'} would remove it to start this one")
             if refusal_is_none and status in (400, 404):
                 return None
             words = self._site.short(str(said)) if said is not None else f"HTTP {status}"
@@ -522,6 +566,9 @@ def _address(text: str) -> tuple[str | None, str | None, int | None]:
 
 _URL_WITHIN = re.compile(r"(https?)://([^\s/?#\"'<>]*)")  # the scheme, and all that comes before the path
 _NC_WITHIN = re.compile(r"(?<![\w.-])(?:nc|ncat|telnet)\s+([^\s:\"'<>]+)[:\s]+(\d{1,5})(?![\w-])")
+# pwntools: remote("host", port) or remote("host", port, ssl=True); with any other argument it is not read
+_REMOTE_WITHIN = re.compile(r"(?<![\w.])remote\(\s*([\"'])([^\"'\s]{1,253})\1\s*,\s*(\d{1,5})\s*(?:,\s*ssl\s*=\s*(True|False)\s*)?\)")
+_SSL_WITHIN = re.compile(r"(?<![\w-])\[ssl\]\s+([^\s:\"'<>]+)\s+(\d{1,5})(?![\w-])", re.I)  # "[ssl] host port"
 _PAIR_WITHIN = re.compile(r"(?<![\w.@/-])([A-Za-z0-9][A-Za-z0-9.-]*):(\d{1,5})(?![\w@:-])")
 _NAME_WITHIN = re.compile(r"(?:[A-Za-z0-9-]+\.)+[A-Za-z][A-Za-z0-9-]*")  # a dotted name whose last part starts with a letter
 _IPV4_WITHIN = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}")
@@ -530,8 +577,10 @@ _IPV4_WITHIN = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}")
 def _within(text: str) -> tuple[str | None, str | None, int | None]:
     """(scheme, host, port) of the first address in a line a person wrote for players, such
     as "curl -v http://host:8080", "Connect with: nc host 31337" or a link's HTML: the first
-    URL, else the first nc line, else the first host:port. Only the host and the port are
-    taken, each checked as _address checks them; the rest of the line is never used.
+    URL, else the first nc line, else the first pwntools remote("host", port) (a TLS
+    endpoint with ssl=True), else the first "[ssl] host port" (a TLS endpoint), else the
+    first host:port. Only the host and the port are taken, each checked as _address checks
+    them; the rest of the line is never used.
 
     It never guesses: a wrong address would brief a lane with, and fence it to, a host the
     organiser did not name. So:
@@ -551,6 +600,14 @@ def _within(text: str) -> tuple[str | None, str | None, int | None]:
     found = _NC_WITHIN.search(text)
     if found:
         return _address(f"{found.group(1)}:{found.group(2)}")
+    found = _REMOTE_WITHIN.search(text)
+    if found:
+        _, host, port = _address(f"{found.group(2)}:{found.group(3)}")
+        return ("tls" if found.group(4) == "True" and host is not None else None), host, port
+    found = _SSL_WITHIN.search(text)
+    if found:
+        _, host, port = _address(f"{found.group(1)}:{found.group(2)}")
+        return ("tls" if host is not None else None), host, port
     for found in _PAIR_WITHIN.finditer(text):
         host = found.group(1)
         if _NAME_WITHIN.fullmatch(host) or (_IPV4_WITHIN.fullmatch(host) and all(int(part) <= 255 for part in host.split("."))):

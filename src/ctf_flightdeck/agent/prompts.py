@@ -229,13 +229,21 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
 
 def _instance(url: str) -> str:
     """One live instance as the brief names it: a TCP service (tcp://host:port, as the board
-    loader writes one) with the command that reaches it, "tcp://host:port (nc host port)"."""
+    loader writes one) with the command that reaches it, "tcp://host:port (nc host port)",
+    and a TLS endpoint that is no web server (tls://host:port, from an instance plugin) with
+    what speaks TLS to it: Python's ssl module, which the lane image has (it has no ncat or
+    openssl command), or pwntools where a lane has it."""
     shown = one(url)
-    if url.startswith("tcp://"):
-        host, _, port = url.removeprefix("tcp://").rpartition(":")
-        host = host.removeprefix("[").removesuffix("]")  # an IPv6 address: nc takes it bare
-        if host and port.isascii() and port.isdigit():
-            shown += f" (nc {one(host)} {port})"
+    for scheme in ("tcp://", "tls://"):
+        if url.startswith(scheme):
+            host, _, port = url.removeprefix(scheme).rpartition(":")
+            host = host.removeprefix("[").removesuffix("]")  # an IPv6 address: nc takes it bare
+            if host and port.isascii() and port.isdigit():
+                if scheme == "tcp://":
+                    shown += f" (nc {one(host)} {port})"
+                else:
+                    shown += (f" (TLS, not plain TCP: nc will not do; Python's ssl module, or pwntools "
+                              f'remote("{one(host)}", {port}, ssl=True))')
     return shown
 
 
