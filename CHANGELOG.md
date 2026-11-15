@@ -4,6 +4,10 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- `flightdeck http example --preset rctf2` prints an rCTF v2 profile (with `RCTF_TOKEN`, and
+  the two `[instances]` lines to take the `#` off) instead of a traceback, and `--routes` writes
+  rCTF v2's routes out. When an `[instances]` table does nothing because the instance policy is
+  not `auto`, `preflight` now says what to change (`live_targets = "allowed"` under `[rules]`).
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes

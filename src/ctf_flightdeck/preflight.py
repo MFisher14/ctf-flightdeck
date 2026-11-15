@@ -1040,7 +1040,9 @@ def instances_off(profile: EventProfile, policies: Policies) -> str:
     if not profile.platform_automation:
         return "the rules do not allow flightdeck to use the platform's API (rules.platform_automation is false)"
     if policies.instance is not Policy.AUTO:
-        return f'the instance policy is "{policies.instance}", and flightdeck starts an instance only under "auto"'
+        how = ('set live_targets = "allowed" under [rules]' if profile.live_targets != "allowed"
+               else 'take instance out of [policies], or set it to "auto" there')
+        return f'the instance policy is "{policies.instance}", and flightdeck starts an instance only under "auto" ({how})'
     return ""
 
 
