@@ -55,6 +55,16 @@ def test_unknown_command_fails_loudly():
         parse("/nope now")
 
 
+def test_a_slash_alone_and_a_slash_with_a_stray_space_are_told_apart():
+    for alone in ("/", "/   "):
+        with pytest.raises(CommandError, match="^/ alone is no command: type / and a command's name, the list shows them$"):
+            parse(alone)
+    with pytest.raises(CommandError, match="^No space after the /: /hint$"):
+        parse("/ hint try the cookie")
+    with pytest.raises(CommandError, match="^No space after the /: /L02$"):
+        parse("/ L02")
+
+
 def test_lane_ids_are_normalised():
     assert [lane_id(t) for t in ("L1", "l07", "L123", "x7", "L", "7")] == ["L01", "L07", "L123", None, None, None]
 

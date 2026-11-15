@@ -24,8 +24,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   no price says `L01 carries on with no dollar cap; its token cap is 400k tokens (120 used)`, not
   `L01's cap is now 120 of 400k tokens`.
 - `/` alone in the command bar, sent after esc closed its list, says `/ alone is no command:
-  type a command's name after it, the list shows them; esc clears the bar` instead of
-  `Unknown command /: type / to see the list`.
+  type / and a command's name, the list shows them` instead of `Unknown command /: type / to
+  see the list`, and a stray space after the `/` (`/ hint try the cookie`) says `No space
+  after the /: /hint`.
 - The practice score says once which lanes had turns with no price (`L01, L02 and L08 had
   turns with no price, …`), not the same line for every lane.
 - A lane on a model with no price asks whether to `carry on with no dollar cap` (1) or `stop the

@@ -257,7 +257,9 @@ def parse(text: str) -> Parsed:
     head, _, rest = text[1:].partition(" ")
     command = find(head)  # whole, or not at all: the menu's loose matching stops here
     if not head:  # `/` alone, sent once its list was closed: "unknown command /, type /" would send the player round
-        raise CommandError("/ alone is no command: type a command's name after it, the list shows them; esc clears the bar")
+        if not rest.strip():
+            raise CommandError("/ alone is no command: type / and a command's name, the list shows them")
+        raise CommandError(f"No space after the /: /{rest.split()[0]}")  # `/ hint ...`, `/ L02`
     if command is None:
         raise CommandError(f"Unknown command /{head}: type / to see the list")
     rest = rest.strip()

@@ -188,7 +188,7 @@ def test_a_slash_alone_sent_after_esc_closed_its_list_says_what_to_do_and_change
         await press(pilot, "escape")
         assert not menu.menu_open and menu.field.value == "/"
         await press(pilot, "enter")
-        assert_warning(app, "/ alone is no command: type a command's name after it, the list shows them; esc clears the bar")
+        assert_warning(app, "/ alone is no command: type / and a command's name, the list shows them")
         assert "Unknown command" not in status_line(app)
         assert {lane.id: (lane.state, lane.pending) for lane in deck.lanes.values()} == before
 
