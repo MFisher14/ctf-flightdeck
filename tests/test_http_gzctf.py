@@ -146,6 +146,17 @@ def test_a_cookie_the_site_does_not_know_fails_the_pull_with_the_status_and_neve
     assert "CfDJ8" not in str(caught)
 
 
+def test_a_game_the_site_does_not_have_names_the_game_key_to_fix(tmp_path):
+    """The example profile says game = "1"; a site whose game is another number answers 404,
+    and the bare status left the player guessing which part of the profile was wrong."""
+    with FakeGZCTF(sample()) as fake:
+        caught = failure(gz(fake, game="1").pull(tmp_path))
+        right = run(gz(fake).solved())
+    assert str(caught) == ('GET /api/game/{game}/details was answered with HTTP 404 (Not Found) (is game = "1" under [http] '
+                           "this event's game? It is the number in the game's address on the site)")
+    assert right == {"13"}
+
+
 @pytest.mark.parametrize("pasted", [f"GZCTF_Token={COOKIE}", f"GZCTF_Token= {COOKIE}"])
 def test_the_cookie_may_be_pasted_with_its_name_in_front(pasted):
     """A browser's tools copy a cookie as NAME=value; sent as it is, the site would be given GZCTF_Token=GZCTF_Token=..."""
