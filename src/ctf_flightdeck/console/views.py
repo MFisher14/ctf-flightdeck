@@ -122,7 +122,7 @@ def pending_answers(lane: Lane) -> tuple[str, str]:
     with no price is whether to go on without the dollar cap, which approving drops; "more
     budget" would say the cap is raised."""
     assert lane.pending is not None
-    if lane.pending.kind is PendingKind.BUDGET and lane.dollar_cap and lane.no_price():
+    if lane.asks_without_price():
         return NO_PRICE_ANSWERS
     return PENDING_ANSWERS[lane.pending.kind]
 

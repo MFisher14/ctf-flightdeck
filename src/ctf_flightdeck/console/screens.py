@@ -1124,12 +1124,14 @@ _LIST_KEYS, _LANE_KEYS = dict(KEY_HELP + BATCH_KEY_HELP), dict(LANE_KEY_HELP)
 NOW_HELP = {
     "list": {
         "/new": "Hand a challenge to a lane: a form for its name, its text, its files or a screenshot",
-        "a": _LIST_KEYS["a"], "d": _LIST_KEYS["d"],
         "1-9": "Answer the lane's alert with one key, no enter: the numbers in the why line under the list",
+        "1 0": "Answer what the lane waits for with one key, no enter: 1 says yes and 0 says no, in the words of the why line under the list (a and d do the same)",
         "x": _LIST_KEYS["x"], "enter": _LIST_KEYS["enter / o"], "/": _LIST_KEYS["/"], "?": _LIST_KEYS["?"], "q": _LIST_KEYS["q"],
     },
     "lane": {
-        "1-9": _LANE_KEYS["1-9, 0"], "esc": _LANE_KEYS["esc"], "/": _LANE_KEYS["/"], "?": _LANE_KEYS["?"], "ctrl+o": _LANE_KEYS["ctrl+o"],
+        "1-9": _LANE_KEYS["1-9, 0"],
+        "1 0": "Answer what the lane waits for with one key, no enter, while the chat box is empty: 1 says yes and 0 says no, in the words on the needs-you card (/approve and /decline do the same)",
+        "esc": _LANE_KEYS["esc"], "/": _LANE_KEYS["/"], "?": _LANE_KEYS["?"], "ctrl+o": _LANE_KEYS["ctrl+o"],
     },
 }
 HELP_VIEWS = ("list", "lane")  # where help was opened from: the lane list, a lane's own view

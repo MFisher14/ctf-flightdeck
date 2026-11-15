@@ -345,6 +345,13 @@ class Lane:
         came, or a light model's first look)."""
         return self.unpriced > self.unreported + self.light_unpriced
 
+    def asks_without_price(self) -> bool:
+        """Whether the budget question the lane waits on is whether to carry on with no dollar
+        cap (some spend had no price, so the cap cannot hold), not whether to raise the caps.
+        The card, the key line's words and the deck's own texts all ask this (P98)."""
+        return (self.pending is not None and self.pending.kind is PendingKind.BUDGET
+                and bool(self.dollar_cap) and self.no_price())
+
 
 class EventKind(StrEnum):
     RELEASE = "release"

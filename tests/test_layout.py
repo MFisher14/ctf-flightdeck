@@ -30,7 +30,7 @@ from ctf_flightdeck.core.attention import SortMode
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.driver import TurnReport
-from ctf_flightdeck.core.model import Alert, AlertKind, Challenge, DeckConfig, FileChange, LaneState, Suggestion
+from ctf_flightdeck.core.model import Alert, AlertKind, Challenge, DeckConfig, FileChange, LaneState, Pending, PendingKind, Suggestion
 from ctf_flightdeck.mock import scenarios
 from ctf_flightdeck.mock.world import FakeWorld
 from test_console import (
@@ -940,7 +940,7 @@ def test_an_app_is_built_in_the_deck_layout_unless_told_and_refuses_a_layout_it_
 NO_LANE_BY_HAND = "/new add a challenge  ? help  q quit"
 NO_LANE_PLATFORM = "? help  q quit"
 HEALTHY = "enter open  / commands  ? help  q quit"
-APPROVAL = "a approve  d decline  enter open  / commands  ? help  q quit"
+APPROVAL = "1 0 answer  enter open  / commands  ? help  q quit"
 COURSE_ALERT = "1-9 answer  x dismiss  enter open  / commands  ? help  q quit"
 
 
@@ -982,6 +982,38 @@ def test_a_filter_that_hides_the_selected_lane_gives_the_simple_key_line_the_no_
         app.fleet.set_filter("")  # the selection is shown again: its keys are back
         await pilot.pause()
         assert footer_line(app).strip() == APPROVAL
+
+    drive(app, script, SIZE)
+
+
+def test_a_waiting_lanes_key_line_names_the_numbers_the_why_line_puts_on_its_answers_and_a_and_d_still_act():
+    """P98: one vocabulary for an answer. The key line of a lane that waits for the player says
+    `1 0 answer`, as its view's does, and the why line under the list gives 1 and 0 in the
+    card's words; a and d answer it as before. The line is no longer than P51 and P65 let it be."""
+    deck, app = three_lanes("simple")
+    deck.report("L01", TurnReport(pending=Pending(PendingKind.BUDGET, "more budget")))
+
+    async def script(pilot):
+        app.fleet.select_lane("L01")
+        await pilot.pause()
+        assert footer_line(app).strip() == APPROVAL
+        why = " ".join(region_text(app, "#why").split())  # each number on its chip
+        assert "1 more budget 0 stop the lane" in why, why
+        assert "approve" not in footer_line(app) and "decline" not in footer_line(app)
+        assert cell_len(APPROVAL) <= fleet.keys_text(fleet.SIMPLE_LONGEST).cell_len
+        await press(pilot, "1")  # the number the line names answers it
+        assert deck.lanes["L01"].pending is None and deck.lanes["L01"].state is LaneState.RUNNING
+        app.fleet.select_lane("L02")
+        await pilot.pause()
+        assert footer_line(app).strip() == APPROVAL
+        await press(pilot, "d")  # and so does the letter the line no longer shows
+        assert deck.lanes["L02"].pending is None and deck.lanes["L02"].actions[-1].text.startswith("declined")
+        deck.report("L02", TurnReport(flag="flag{second}"))
+        await open_focus(pilot, app, "L02")
+        assert footer_line(app).strip() == "1 0 answer  esc lanes  / commands  ? help  ctrl+o details"
+        await press(pilot, "escape")
+        await open_focus(pilot, app, "L03")  # an alert's answers are numbered from 1, with no 0
+        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  ? help  ctrl+o details"
 
     drive(app, script, SIZE)
 
@@ -1080,7 +1112,7 @@ def test_the_simple_key_line_fits_whole_at_every_size_whatever_the_lane(size):
             assert cell_len(line) <= size[0] - 2 and "…" not in line, line
             assert set(pairs) <= SIMPLE_PAIRS and {"? help", "q quit", "/ commands", "enter open"} <= set(pairs), line
             if lane.pending is not None and not lane.finished:
-                assert {"a approve", "d decline"} <= set(pairs), line
+                assert "1 0 answer" in pairs and not {"a approve", "d decline"} & set(pairs), line
             seen.add(line)
         assert {APPROVAL, HEALTHY} <= seen and len(seen) >= 3  # an alert's line too
 
@@ -1351,7 +1383,7 @@ def test_what_doctor_says_the_simple_layout_leaves_out_is_what_the_console_leave
                     assert "cost" in columns(app, "lanes") and ("last" not in columns(app, "lanes")) is fit.no_last_action
                     assert any("last action in the lane list" in part for part in fit.left_out()) is fit.no_last_action
                 if fit.compact:  # the compact line, which has its own short labels: the keys it has not got
-                    has = {pair.split(" ")[0] for pair in keys}
+                    has = {pair.split(" ")[0] for pair in keys} | {fleet.YES_NO_KEY[1]}  # `a yes  d no` answer what 1 and 0 do
                     assert [f"{shown} {label}" for _, shown, label in fleet.SIMPLE_KEYS if shown not in has] == list(fit.fleet_keys), keys
                     assert list(fit.fleet_keys) == ["x dismiss", "enter open"]
                 else:
