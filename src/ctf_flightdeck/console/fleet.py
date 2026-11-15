@@ -201,7 +201,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         Binding("A", "approve_all", "approve all"),
         Binding("x", "lane('dismiss')", "dismiss"),
         Binding("c", "claim", "claim"),
-        Binding("slash", "command", "commands", key_display="/"),
+        Binding("slash", "command", "commands", key_display="/", priority=True),  # acted on as it arrives (action_command)
         Binding("s", "sort", "sort"),
         Binding("tab", "app.focus_next", "focus"),
         Binding("shift+tab", "app.focus_previous", "focus back", show=False),
@@ -715,6 +715,13 @@ class FleetScreen(Screen, inherit_bindings=False):
             table.move_cursor(row=table.cursor_row, animate=False, scroll=True)
 
     def action_command(self) -> None:
+        """`/`: the bar, with the focus in it before the next key is handed on. The binding is a
+        priority one, acted on as the key arrives: keys typed straight after it (a terminal
+        hands over keys typed fast all at once) are the command's name and go into the bar,
+        never to the fleet's keys (the a of /approve is no approval, the q of /queue no quit).
+        A `/` typed in the bar is text: the key goes on to the field."""
+        if self.query_one("#bar", CommandBar).field.has_focus:
+            raise SkipAction()
         self.start_command("/")
 
     def action_attach(self) -> None:

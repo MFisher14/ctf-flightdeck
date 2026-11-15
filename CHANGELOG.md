@@ -4,6 +4,10 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- A command typed fast straight after the `/` in the lane list is no longer cut short or
+  turned into keys: a letter that came before the bar had opened went to the list (`/layout`
+  arrived as `/ayout`), and there it could act (the `a` of `/approve` approved the selected
+  lane's flag, the `q` of `/queue` quit). Every key after the `/` now goes into the bar.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
