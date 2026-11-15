@@ -1007,12 +1007,14 @@ def test_doctor_reports_each_enabled_plugin_and_a_broken_one_never_fails_the_set
     assert checks["plugin acme"].detail == "platform acme, runs <flightdeck's python> adapter.py"
     path = broken.resolve() / "plugin.toml"
     assert (checks["plugin harbour"].ok, checks["plugin harbour"].essential) == (False, False)
-    assert checks["plugin harbour"].detail == f"plugin harbour: {path}: unknown key comand (known: {KNOWN})"
+    assert checks["plugin harbour"].detail == f"{path}: unknown key comand (known: {KNOWN})"  # the line names the plugin once
     assert checks["plugin harbour"].fix == f"fix the plugin's plugin.toml, or take [plugins.harbour] out of {config}"
-    assert checks["plugin gone"].detail == f"plugin gone: {tmp_path.resolve() / 'gone' / 'plugin.toml'}: no such file"
+    assert checks["plugin gone"].detail == f"{tmp_path.resolve() / 'gone' / 'plugin.toml'}: no such file"
+    assert checks["plugin gone"].fix == (f"put the plugin's folder back at {tmp_path / 'gone'}, or change [plugins.gone] path in "
+                                         f"{config} to where it is now, or take [plugins.gone] out")  # no plugin.toml to fix
     assert calls(good_one) == [] and calls(broken) == []  # doctor reads the manifests and runs nothing
     result = CliRunner().invoke(cli.app, ["doctor", "--config", str(config)])
-    assert f"warn plugin harbour: plugin harbour: {path}: unknown key comand" in result.output
+    assert f"warn plugin harbour: {path}: unknown key comand" in result.output
     assert f"     fix: fix the plugin's plugin.toml, or take [plugins.harbour] out of {config}" in result.output
     assert "ok   plugin acme: platform acme, runs <flightdeck's python> adapter.py" in result.output
     assert "FAIL plugin" not in result.output

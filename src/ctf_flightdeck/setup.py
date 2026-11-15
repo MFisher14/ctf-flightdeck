@@ -804,8 +804,13 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
             try:
                 checks.append(Check(f"plugin {name}", True, plugins.doctor_line(plugins.load(ref)), essential=False))
             except plugins.PluginError as exc:
-                checks.append(Check(f"plugin {name}", False, str(exc),
-                                    f"fix the plugin's plugin.toml, or take [plugins.{name}] out of {path}", essential=False))
+                said = str(exc).removeprefix(f"plugin {name}: ")  # the line is named "plugin NAME" already
+                if not (ref.path / plugins.MANIFEST).exists():  # the folder moved or is gone: no plugin.toml to fix
+                    fix = (f"put the plugin's folder back at {ref.path}, or change [plugins.{name}] path in {path} to where "
+                           f"it is now, or take [plugins.{name}] out")
+                else:
+                    fix = f"fix the plugin's plugin.toml, or take [plugins.{name}] out of {path}"
+                checks.append(Check(f"plugin {name}", False, said, fix, essential=False))
     found = False
     if agent is not None:
         agent_checks = _agent_checks(agent, config, environ)
