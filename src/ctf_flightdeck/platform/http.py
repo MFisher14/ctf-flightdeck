@@ -85,7 +85,9 @@ from .. import __version__
 from ..plugins.call import MAX_CHALLENGES, MAX_SHOWN, TOKEN_MARK, VERDICTS, CallFailed, PullReply, Verdict, valid_ref
 from ..text import untrusted
 from .ctfd import API, CONNECT_TIMEOUT, MAX_FILE_BYTES, MAX_REDIRECTS, _message, _retry_after
-from .instances import ON_DEMAND, InstanceError, InstancesConfig
+from .instances import (
+    ON_DEMAND, InstanceBusy, InstanceClient, InstanceError, InstanceFailed, InstancePending, InstancesConfig,
+)
 
 NAME = "http"  # event.platform, and the name on the board's record (plugin.json): no plugin can take it (config.RESERVED_PLATFORMS)
 LABEL = "the http adapter"  # how messages name it, where a plugin's say "the NAME plugin"
@@ -769,6 +771,7 @@ class Checked:
 
     lines: list[str]  # what was asked and what each path matched, made safe to show
     problems: int  # paths that matched nothing or the wrong thing
+    instance: int = 0  # what the [instances] table's status found that a run could not use (counted apart: no path of the table)
 
 
 class HttpCaller:
@@ -917,11 +920,14 @@ class HttpCaller:
 
     # ------------------------------------------------------------------ the dry run
 
-    async def check(self, show: int = 2) -> Checked:
+    async def check(self, show: int = 2, instances: InstancesConfig | None = None) -> Checked:
         """`flightdeck http check`: the sign-in, the list and the solved list, and what each
         path matched for the first `show` challenges. Nothing is submitted and no file is
-        downloaded. CallFailed when a request gets no answer to read."""
+        downloaded. With `instances` (the profile's [instances] table) the instancer's status
+        is asked for the first challenge marked on-demand, when that route is a GET: nothing
+        is ever started, renewed or stopped. CallFailed when a request gets no answer to read."""
         cfg, lines, problems = self.config, [], 0
+        marked: list[str] = []  # the refs of the challenges the table marks on-demand, in the list's order
         async with self._clients() as (http, _):
             if cfg.auth.request is not None:
                 await self._auth(http)
@@ -937,6 +943,8 @@ class HttpCaller:
                 ref = self._scalar(cfg.list.ref, item)
                 if ref is not None and valid_ref(ref):
                     listed.append(ref)
+                    if self._marked("list", cfg.list.fields, item):
+                        marked.append(ref)
                 if n >= show:
                     try:
                         self._challenge(item)
@@ -958,6 +966,8 @@ class HttpCaller:
                         continue
                     lines.append(f"    detail  {cfg.detail.request}: HTTP {detail.status}")
                     problems += self._show_fields(lines, "detail", cfg.detail.fields, detail.doc, required=())
+                    if ref not in marked and self._marked("detail", cfg.detail.fields, detail.doc):
+                        marked.append(ref)
             if len(items) > show:
                 lines.append(f"  the other {len(items) - show:,}: " + ("each has a ref and a name" if not unreadable else
                              f"{unreadable:,} cannot be read (a pull names each, with the reason)"))
@@ -982,7 +992,63 @@ class HttpCaller:
             if refs and not on_list and listed:
                 lines.append("  none of the solved refs is a ref on the list: is solved.refs the same id as list.ref?")
                 problems += 1
-        return Checked(lines, problems)
+        instance = 0
+        if instances is not None:  # after the clients are closed: the instancer is asked from a worker thread, on its own loop
+            instance = await self._check_instance(lines, instances, marked)
+        return Checked(lines, problems, instance)
+
+    def _marked(self, where: str, fields: Mapping[str, JsonPath], node: object) -> bool:
+        """Whether the table's `instance` path marks this challenge on-demand."""
+        if "instance" not in fields:
+            return False
+        try:
+            return "instance" in self._read_fields(where, {"instance": fields["instance"]}, node)
+        except _Skip:
+            return False
+
+    async def _check_instance(self, lines: list[str], instances: InstancesConfig, marked: Sequence[str]) -> int:
+        """The [instances] table's status route, asked once for the first challenge marked
+        on-demand, as a run asks it (InstanceClient, through instance_wire). Only a GET is
+        sent: a status route of another method is named and not asked, since nothing here may
+        change anything. How many problems it found."""
+        method, path = instances.routes.status
+        route = f"{method} {(API if instances.routes.api else '') + path}"
+        if method != "GET":
+            lines.append(f"instance {route}: not asked: the status route is a {method}, and check sends only requests that "
+                         "change nothing (a GET)")
+            return 0
+        if not marked:
+            paths = [where for where, table in (("list", self.config.list.fields),
+                     ("detail", self.config.detail.fields if self.config.detail is not None else {})) if "instance" in table]
+            if not paths:
+                lines.append(f"instance {route}: not asked: the [http] table has no list.instance or detail.instance path, so a "
+                             "run marks no challenge on-demand and starts no instance")
+                return 1
+            lines.append(f"instance {route}: not asked: no challenge is marked on-demand ({', '.join(f'{w}.instance' for w in paths)} "
+                         "matched no value)")
+            return 0
+        ref = marked[0]
+        shown = untrusted(ref, one_line=True)
+        how = f"for {shown}, the first of {len(marked):,} on-demand"
+        client = InstanceClient(None, None, {ref: ref}, instances, wire=self.instance_wire(), timeout=self.timeout)
+        try:
+            got = await asyncio.to_thread(client.status, ref)
+        except (InstancePending, InstanceFailed, InstanceBusy) as exc:  # the platform answered, and said what its instance does
+            lines.append(f"instance {route} {how}: {exc}")
+            return 0
+        except InstanceError as exc:  # a refusal, an answer the table does not read, no answer
+            lines.append(f"instance {route} {how}: {exc}")
+            return 1
+        finally:
+            client.close()
+        if got is None:
+            lines.append(f"instance {route} {how}: no instance runs for it, and none was started (a 400 or a 404 reads so too: "
+                         "if one runs on the site, the status route is wrong)")
+            return 0
+        ends = f", ends in {max(0, round(got.expires_at - time.time())):,} s" if got.expires_at is not None else ""
+        left = f"; left out: {'; '.join(got.left_out)}" if got.left_out else ""
+        lines.append(f"instance {route} {how}: running at {untrusted(', '.join(got.urls(web=False)), one_line=True)}{ends}{left}")
+        return 0
 
     def _show_fields(self, lines: list[str], where: str, fields: Mapping[str, JsonPath], node: object, *, required: Sequence[str]) -> int:
         """A line for each field's path and what it matched in `node`; how many are problems."""
