@@ -326,7 +326,10 @@ A lane can also keep a program running across its turns: flightdeck's own lanes 
 `python3 -u -i`, `nc` to the challenge's instance), `session_send` writes a line to it and reads
 what it writes back, and `session_close` stops it with everything it started. You see each as a
 step in the lane: `session s1 start: gdb -q ./chall`, `session s1 < break main`. A session gets
-pipes, not a terminal, so a program that prints a prompt only at a terminal prints none. A lane
+pipes, not a terminal, so a program that prints a prompt only at a terminal prints none; a lane
+that needs one asks for a terminal (`session s1 start (terminal): python3`), and what the
+program writes still reaches the lane and your console as plain text, with no colours or other
+escapes. A program on such a terminal cannot be stopped with ctrl+c: the lane closes it. A lane
 has at most three open at once; one it has not used for ten minutes is closed; and every session
 is closed when the lane ends and when you take it over, so nothing it started runs on beside your
 shell (the lane hears which were closed when you hand back). What a session writes is handled
