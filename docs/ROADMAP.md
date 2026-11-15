@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: eighteen proposals, P69 to P86 (2026-11-14)
+## Built, not released: nineteen proposals, P69 to P87 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P86); the lines for players are under Unreleased in
+[DECISIONS.md](DECISIONS.md) (P69 to P87); the lines for players are under Unreleased in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -95,6 +95,11 @@ Proposals built and waiting for a release, in the order of their numbers in
   (which ended a claude waiting for a message), counts the output tokens its events miss, and
   charges a call an interrupt cut short. Still open: claude's tool calls, a whole `practice
   --agent claude` run, and all of codex.
+- **Sessions in the brief, and on a terminal** (P87, after P82). flightdeck's own lanes are
+  told of their session tools in one line of the brief (coding-agent lanes, which lack them,
+  are not), and `session_start` takes `terminal: true`: the command runs on a pty under a small
+  relay, with no controlling terminal, `TERM=dumb` and no echo, and its escapes are stripped
+  before the model or the console see them ([ARCHITECTURE.md](ARCHITECTURE.md#sessions)).
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

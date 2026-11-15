@@ -1358,7 +1358,7 @@ def test_a_lanes_brief_names_the_debugger_and_decompiler_its_container_turned_ou
         return tool_call_reply("submit_flag", {"flag": "t{note}"})
 
     server = FakeModelServer(responder=responder)
-    said = prompts.shell_tools(("gdb", "gdb-multiarch", "r2", "pdg"))
+    said = prompts.shell_tools(("gdb", "gdb-multiarch", "r2", "pdg"), sessions=True)  # the lane has the session tools
 
     async def main():
         with server:
@@ -1374,6 +1374,43 @@ def test_a_lanes_brief_names_the_debugger_and_decompiler_its_container_turned_ou
             assert len(briefs) == 3 and said and all(said in brief.splitlines() for brief in briefs), briefs[0]
             assert briefs[0] == briefs[1]  # the same text every turn: the cached prefix holds
             assert server.requests[2]["json"]["model"] == "big" and briefs[2].count(said) == 1
+            await lab.finish()
+
+    run(main())
+
+
+def test_flightdecks_own_lane_is_told_of_its_session_tools_in_its_brief(tmp_path):
+    """P87: the session tools are offered to flightdeck's own lanes, and the brief says in one
+    line what they are for; a workspace without open_session (a stand-in) has no sessions, so
+    its lane is not told of them."""
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{note}"})])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            await until(lambda: lab.lane().pending is not None, "the candidate flag")
+            lines = server.requests[0]["json"]["messages"][1]["content"].splitlines()
+            assert prompts.SESSIONS in lines and lines.index(prompts.FENCE_CLOSE) < lines.index(prompts.SESSIONS)
+            assert "session_start" in [t["function"]["name"] for t in server.requests[0]["json"]["tools"]]
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_lane_whose_workspace_has_no_sessions_is_not_told_of_them(tmp_path):
+    class NoSessions(HostWorkspace):
+        open_session = None  # a stand-in that cannot start one
+
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{note}"})])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.driver.workspaces = lambda lane, ch: NoSessions(tmp_path / "runs" / lane.id / "work", lab.handouts[ch.id])
+            lab.release()
+            await until(lambda: lab.lane().pending is not None, "the candidate flag")
+            assert "session_start" not in server.requests[0]["json"]["messages"][1]["content"]
             await lab.finish()
 
     run(main())

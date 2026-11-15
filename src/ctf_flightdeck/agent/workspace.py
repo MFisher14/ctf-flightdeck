@@ -37,6 +37,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -46,6 +47,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from ..core.model import FileChange
 from ..text import untrusted
+from .terminal import RELAY
 
 if TYPE_CHECKING:
     from ..leftovers import ProcessRecord
@@ -564,17 +566,22 @@ class HostWorkspace:
             return RunResult(None, output)
         return RunResult(_exit_status(code), output)
 
-    async def open_session(self, command: str) -> SessionProcess:
+    async def open_session(self, command: str, *, terminal: bool = False) -> SessionProcess:
         """Start `command` with bash in root as a long-lived process the lane talks to (a
         debugger, an interpreter, a connection to the challenge's instance), in a process group
-        of its own like every command here, so close() kills it too. Pipes, not a terminal.
-        OSError when it cannot be started, or when .flightdeck cannot be set up."""
+        of its own like every command here, so close() kills it too. Pipes, not a terminal;
+        with `terminal`, bash runs on a pty under the relay (agent/terminal.py), started by
+        the Python that runs flightdeck, in the same group. OSError when it cannot be
+        started, or when .flightdeck cannot be set up."""
         bash = self._ready()
         _check_call(command, 1.0)
         restore_private(self.root)
         self._prune()
+        argv = [bash, "-c", command]
+        if terminal:
+            argv = [sys.executable, "-I", "-c", RELAY, *argv]
         proc = await asyncio.create_subprocess_exec(
-            bash, "-c", command, cwd=self.root, env=self._env(), stdin=asyncio.subprocess.PIPE,
+            *argv, cwd=self.root, env=self._env(), stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True,
         )
         self._started(proc)
@@ -847,6 +854,10 @@ exec` does not pass a signal on to the process it started."""
 SESSION_PID = "flightdeck-session-pid "
 """The start of a docker session's first line (DockerWorkspace.open_session): its pid in the container follows."""
 _SESSION_WRAPPER = f'echo "{SESSION_PID}$$"; exec bash -c "$1" 2>&1'
+NO_TERMINAL_PYTHON = "flightdeck: a terminal session needs python3 in the lane's container, and it has none; start it without terminal"
+# A terminal session's (P87): the relay ($2) runs bash -c "$1" on a pty, and needs the container's python3
+_TERMINAL_WRAPPER = (f'echo "{SESSION_PID}$$"; command -v python3 >/dev/null 2>&1 || {{ echo "{NO_TERMINAL_PYTHON}"; exit 127; }}; '
+                     'exec python3 -I -c "$2" bash -c "$1" 2>&1')
 DOCKER_SESSION_STOP = 15.0  # seconds a session's kill inside the container may take
 
 
@@ -1054,10 +1065,12 @@ class DockerWorkspace:
             raise WorkspaceError(f"container {self.name} is not running any more (stopped or removed outside flightdeck)")
         return RunResult(_exit_status(code), output)
 
-    async def open_session(self, command: str) -> SessionProcess:
+    async def open_session(self, command: str, *, terminal: bool = False) -> SessionProcess:
         """Start `command` in the lane's container as a long-lived process the lane talks to,
         through a `docker exec -i` of its own: pipes, not a terminal, stderr merged into stdout
-        inside the container so the order holds. Its first line is SESSION_PID and its pid in
+        inside the container so the order holds. With `terminal`, bash runs on a pty under the
+        relay (agent/terminal.py), on the container's python3 (none: the session says so and
+        ends with 127); the docker client still has pipes, so no `-t`. Its first line is SESSION_PID and its pid in
         the container, which stop() needs: `docker exec` passes no signal on, so the process
         and everything under it are killed in the container (SIGNAL_TREE), and then the docker
         client. close() kills the client too, and removing the container ends the rest.
@@ -1066,6 +1079,8 @@ class DockerWorkspace:
             raise WorkspaceError("workspace is closed" if self._closed else "workspace not prepared: call prepare() first")
         _check_call(command, 1.0)
         argv = ["docker", "exec", "-i", "-w", CONTAINER_ROOT, self.name, "bash", "-c", _SESSION_WRAPPER, "flightdeck-session", command]
+        if terminal:
+            argv = [*argv[:-5], "bash", "-c", _TERMINAL_WRAPPER, "flightdeck-session", command, RELAY]
         proc = await asyncio.create_subprocess_exec(
             *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,

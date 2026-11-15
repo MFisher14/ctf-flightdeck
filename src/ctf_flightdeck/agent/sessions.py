@@ -10,7 +10,10 @@ it and everything it started.
 The process gets pipes, not a terminal, so a program that asks whether it has one acts as if
 it were scripted: it may show no prompt, or hold its output in a buffer (python3 does both
 unless started as python3 -u -i). That is what keeps its output plain text: no echo of what was sent, no
-escape sequences of a line editor.
+escape sequences of a line editor. A session started with `terminal` (P87) runs on a pty
+instead (agent/terminal.py: no controlling terminal, TERM=dumb, no echo), and its escapes and
+carriage returns are taken out as it is read, before it is stored, so what is stored is plain
+text either way.
 
 Limits, so that a lane cannot leave its processes running or fill memory: at most
 MAX_SESSIONS open at once; a session nobody sent to or read for IDLE_SECONDS is closed (and
@@ -34,6 +37,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from .terminal import TerminalText
 from .workspace import SessionProcess
 
 MAX_SESSIONS = 3
@@ -69,10 +73,12 @@ class Session:
     """One long-lived process and the output it has written that nobody has read yet."""
 
     def __init__(self, name: str, command: str, process: SessionProcess, *, cap: int = BUFFER_BYTES,
-                 unfinished: Callable[[bytes], int] | None = None) -> None:
+                 unfinished: Callable[[bytes], int] | None = None, terminal: bool = False) -> None:
         self.name = name
         self.command = command
         self.process = process
+        self.terminal = terminal  # it runs on a pty (agent/terminal.py): its escapes come out before it is stored
+        self._text = TerminalText() if terminal else None
         self.cap = cap
         self.unfinished = unfinished  # bytes at the end of a read that may start a secret: held for the next
         self.pid: int | None = None  # where it runs, when the workspace says (process.marker)
@@ -97,13 +103,15 @@ class Session:
             while chunk := await stream.read(64 * 1024):
                 if self._head is not None:
                     chunk = self._take_head(chunk)
-                self._add(chunk)
+                self._add(self._plain(chunk))
         except (OSError, ValueError):
             pass  # the pipe broke: the same as its end
         finally:
             if self._head:  # the first line never came whole: it is output (docker's own error, say)
-                self._add(bytes(self._head))
+                self._add(self._plain(bytes(self._head)))
             self._head = None
+            if self._text is not None:
+                self._add(self._text.flush())
             self.eof = True
             self._changed.set()
 
@@ -121,6 +129,10 @@ class Session:
             self.pid = int(number)
             return rest
         return line + newline + rest
+
+    def _plain(self, chunk: bytes) -> bytes:
+        """`chunk` as it is stored: a terminal session's with its escapes taken out."""
+        return chunk if self._text is None else self._text.feed(chunk)
 
     def _add(self, data: bytes) -> None:
         if not data:
@@ -230,13 +242,15 @@ class Sessions:
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._closing: set[asyncio.Task] = set()
 
-    async def start(self, command: str) -> Session:
+    async def start(self, command: str, *, terminal: bool = False) -> Session:
+        """A new session running `command`; with `terminal`, on a pty (the workspace's
+        open_session(command, terminal=True))."""
         if len(self.open) >= self.limit:
             listed = ", ".join(f"{s.name} ({'ended' if s.eof else 'running'}: {_short(s.command)})" for s in self.open.values())
             raise SessionMistake(f"{self.limit} sessions are open already ({listed}); close one with session_close first")
-        process = await self._open(command)
+        process = await (self._open(command, terminal=True) if terminal else self._open(command))
         self._count += 1
-        session = Session(f"s{self._count}", command, process, cap=self.cap, unfinished=self.unfinished)
+        session = Session(f"s{self._count}", command, process, cap=self.cap, unfinished=self.unfinished, terminal=terminal)
         self.open[session.name] = session
         self.touch(session)
         return session

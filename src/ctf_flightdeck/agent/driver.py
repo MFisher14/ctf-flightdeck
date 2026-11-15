@@ -1225,7 +1225,8 @@ class AgentDriver:
                                          instance=self.instance, shell_hosts=getattr(run.workspace, "shell_hosts", None),
                                          toolkit=self.l1.toolkit if self.l1 is not None else "",
                                          view_image=self._no_images(run) is None,
-                                         tools=getattr(run.workspace, "shell_tools", ())),
+                                         tools=getattr(run.workspace, "shell_tools", ()),
+                                         sessions=callable(getattr(run.workspace, "open_session", None))),
             },
         ]
         if run.handover is not None:

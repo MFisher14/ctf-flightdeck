@@ -525,9 +525,32 @@ the process tree in the container (`SIGNAL_TREE`, the script the coding-agent la
 
 The process gets pipes, not a terminal: no echo and no line editor's escapes in what comes back,
 and a program that looks for a terminal acts as it would in a script: it may print no prompt, or
-hold its output in a buffer (`python3` does both unless started as `python3 -u -i`). A pty was the
-other choice; it would make prompts appear, and would
-bring echo, colour and readline's sequences into the model's context with them.
+hold its output in a buffer (`python3` does both unless started as `python3 -u -i`).
+
+`session_start(command, terminal: true)` gives it a terminal instead (`agent/terminal.py`, P87).
+The command runs under a short Python relay (`RELAY`) that opens a pty, starts bash on its far
+side and copies between its own pipes and the pty, so flightdeck still talks to it through pipes
+and every cap, the idle close and the kill are the same. On the host the relay is the Python that
+runs flightdeck; in Docker it is the container's `python3` (an image without one: the session
+says so and ends with 127, and nothing starts without the terminal asked for). The command gets
+no controlling terminal (no setsid), so it stays in the relay's process group, which is the group
+the host kills and the tree under the pid the container's first line names; the price is that
+ctrl+c sends no signal and `/dev/tty` cannot be opened. `TERM` is `dumb` and the pty's echo is
+off, so a line editor and a colour library mostly leave their escapes out; what is left is taken
+out by `TerminalText` on the host side as the output is read, before the session stores it, so
+the relay (which in a container is the lane's own python3) is trusted with nothing. The filter
+takes CSI, the control strings (OSC, DCS, APC, PM, SOS) and the other ESC forms, carriage returns
+and bells; it keeps its state between chunks, so a sequence split across reads still goes whole,
+and an escape that never ends gives its bytes back, less the ESC, after 4 KiB. A pty takes a line
+at a time up to `MAX_CANON` (1024 bytes on macOS), so a send to a terminal session refuses a line
+over `TERMINAL_LINE` (1000 bytes, its newline included) rather than let the terminal cut it.
+The pty's line discipline edits nothing that is sent: the relay turns off its input processing
+(ICRNL, INLCR, IGNCR, IXON, IXOFF, ISTRIP, ISIG, IEXTEN, and the erase, kill and extra
+end-of-line characters), so DEL, ctrl+u, ctrl+w, ctrl+v, ctrl+s, ctrl+c and a carriage return
+reach the program as the bytes they are. What is left is canonical mode: a line at a time, a line
+ending only at a newline, and ctrl+d (`END_OF_FILE`) taken as the end of the input, which is how
+the end of the relay's own input reaches the program; a send to a terminal session that holds
+ctrl+d is refused and says to write it to a file or use a session without a terminal.
 
 Limits: at most three sessions open in a lane (`MAX_SESSIONS`); one nobody sends to or reads for
 ten minutes is closed (`IDLE_SECONDS`), and naming it later says why; at most 1 MiB of output
@@ -543,7 +566,11 @@ A few bytes at the end of a read that could begin a held secret (`Secrets.unfini
 next read, so a secret written across two reads is found whole. The read says how many it held;
 the next read releases them when nothing came after them (a prompt with no newline), and a read
 that matched `until` shows the match whole. Sessions are a tool of
-flightdeck's own lanes; a coding-agent CLI has its own.
+flightdeck's own lanes; a coding-agent CLI has its own. The brief (`prompts.brief`'s `sessions`,
+which the driver sets when the lane's workspace can open one) names them in one line after the
+challenge's fence (`prompts.SESSIONS`), when the lane has a file or an instance it may reach, and
+the debugger line says a session can drive gdb or r2; a coding-agent lane, which shares the brief,
+is told neither (P87).
 
 ### Lane network
 

@@ -14,7 +14,7 @@ import threading
 
 import pytest
 
-from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN, FIRST_LOOK
+from ctf_flightdeck.agent.prompts import FENCE_CLOSE, FENCE_OPEN, FIRST_LOOK, SESSIONS
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.model import AlertKind, EventKind
 from ctf_flightdeck.light import BRIEF_CHARS
@@ -31,7 +31,8 @@ TODAY = (  # the brief a lane of this challenge got before recon, byte for byte
     "Flag format (a regular expression): t\\{[a-z0-9_]+\\}\n"
     "Description:\n"
     "About the note.\n"
-    "challenge-text>>>"
+    "challenge-text>>>\n"
+    + SESSIONS  # flightdeck's own lane has sessions and a file to drive them on (P87)
 )
 BRIEF = "Files: note.txt is plain text.\nLikely: a rotation cipher.\nFirst steps: cat note.txt; try rot13 with tr."
 

@@ -2,7 +2,8 @@
 
 Every process here is synthetic: bash, cat, sleep and a shell loop, never a challenge's
 binary. The host runtime always runs. The docker tests run only when docker answers and
-debian:bookworm-slim is already on this machine (tests never pull); otherwise they are
+debian:bookworm-slim is already on this machine (tests never pull), and the docker terminal
+session's also needs python:3.12-slim (a container with python3); otherwise they are
 skipped with the reason, so they report as not run. Each test runs in one event loop, since
 a session lives across calls.
 """
@@ -22,8 +23,9 @@ import pytest
 from ctf_flightdeck.agent import sessions as sessions_module
 from ctf_flightdeck.agent.held import Secrets
 from ctf_flightdeck.agent.sessions import Sessions
+from ctf_flightdeck.agent.terminal import ESCAPE_LIMIT, TERMINAL_LINE, TerminalText
 from ctf_flightdeck.agent.tools import TOOLS, Toolbox, ToolResult
-from ctf_flightdeck.agent.workspace import DockerWorkspace, HostWorkspace, docker_unavailable
+from ctf_flightdeck.agent.workspace import NO_TERMINAL_PYTHON, DockerWorkspace, HostWorkspace, docker_unavailable
 from l1_kit import docker_not_run
 
 IMAGE = "debian:bookworm-slim"
@@ -74,6 +76,7 @@ def gone_soon(pid: int, seconds: float = 5.0) -> bool:
 def test_the_session_tools_are_offered_with_their_arguments():
     schemas = {t["function"]["name"]: t["function"]["parameters"] for t in TOOLS}
     assert schemas["session_start"]["required"] == ["command"]
+    assert set(schemas["session_start"]["properties"]) == {"command", "terminal", "wait_seconds"}
     assert set(schemas["session_send"]["properties"]) == {"session", "input", "newline", "until", "wait_seconds"}
     assert schemas["session_send"]["required"] == ["session"]
     assert schemas["session_close"]["required"] == ["session"]
@@ -371,6 +374,127 @@ def test_a_workspace_without_sessions_says_so(tmp_path):
     assert result.error and result.content == "error: sessions are not available in this lane's workspace; use shell"
 
 
+# ---------------------------------------------------------------- on a terminal (P87)
+
+
+def test_the_terminal_filter_takes_escapes_out_even_split_across_chunks():
+    text = TerminalText()
+    stream = (b"\x1b[?2004h>>> \x1b[31mred\x1b[0m\r\n\x1b]0;title\x07ok\x1b]8;;http://x\x1b\\link\x1b(B\x1b=\a"
+              b"\x1b[1;2Hend\r\n")
+    whole = TerminalText().feed(stream)
+    assert whole == b">>> red\noklinkend\n"
+    pieces = b"".join(text.feed(stream[i:i + 1]) for i in range(len(stream)))  # one byte at a time
+    assert pieces + text.flush() == whole
+
+
+def test_an_escape_that_never_ends_gives_its_bytes_back_and_hides_nothing():
+    text = TerminalText()
+    out = text.feed(b"\x1b]" + b"F" * ESCAPE_LIMIT) + text.feed(b"LAG{x}\n")
+    assert out.endswith(b"FLAG{x}\n") and b"\x1b" not in out
+    unfinished = TerminalText()
+    assert unfinished.feed(b"before \x1b[12") == b"before "
+    assert unfinished.flush() == b"[12"  # the stream ended inside it: the bytes come back, the ESC does not
+    assert TerminalText().feed(b"a\x1b\nb") == b"a\nb"  # an ESC that starts no sequence goes alone
+
+
+def test_a_terminal_session_runs_on_a_tty_and_reads_back_as_plain_text(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout)
+        piped = await call(box, "session_start", {"command": "bash", "wait_seconds": 0.2})
+        tty = await call(box, "session_start", {"command": "PS1= bash --norc", "terminal": True, "wait_seconds": 0.2})  # on a tty bash prompts
+        probe = "test -t 0 && test -t 1 && echo tty $TERM || echo pipe"
+        on_pipe = await call(box, "session_send", {"session": "s1", "input": probe})
+        on_tty = await call(box, "session_send", {"session": "s2", "input": probe})
+        coloured = await call(box, "session_send", {"session": "s2", "input": r"printf '\033[31mred\033[0m\r\nnext\n'"})
+        group = os.getpgid(box.sessions.open["s2"].process.proc.pid)
+        child = await call(box, "session_send", {"session": "s2", "input": "ps -o pgid= -p $$"})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return piped, tty, on_pipe, on_tty, coloured, group, child
+
+    piped, tty, on_pipe, on_tty, coloured, group, child = asyncio.run(go())
+    assert piped.action == "session s1 start: bash" and tty.action == "session s2 start (terminal): PS1= bash --norc"
+    assert on_pipe.content.split("\n", 1)[1] == "pipe\n"
+    assert on_tty.content.split("\n", 1)[1] == "tty dumb\n"  # no echo of what was sent
+    assert coloured.content.split("\n", 1)[1] == "red\nnext\n"  # no escape and no carriage return reaches the model
+    assert int(child.content.split("\n", 1)[1]) == group  # no session of its own: the group flightdeck kills holds it
+
+
+def test_closing_a_terminal_session_kills_what_runs_on_its_terminal(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout)
+        started = await call(box, "session_start", {"command": "sleep 300 & echo child $!; cat", "terminal": True,
+                                                    "wait_seconds": 1})
+        await call(box, "session_close", {"session": "s1"})
+        await box.workspace.close()
+        return started
+
+    started = asyncio.run(go())
+    pid = int(started.content.split("child ", 1)[1].split()[0])
+    assert gone_soon(pid)
+
+
+def test_a_terminal_session_ends_with_its_programs_status(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout)
+        ended = await call(box, "session_start", {"command": "echo bye; exit 3", "terminal": True, "wait_seconds": 5})
+        await box.workspace.close()
+        return ended
+
+    ended = asyncio.run(go())
+    assert ended.content == "session s1: ended, exit 3\nbye\n"
+
+
+def test_a_line_too_long_for_a_terminal_is_refused_not_cut(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout)
+        await call(box, "session_start", {"command": "cat", "terminal": True, "wait_seconds": 0})
+        await call(box, "session_start", {"command": "cat", "wait_seconds": 0})
+        refused = await call(box, "session_send", {"session": "s1", "input": "x" * TERMINAL_LINE})
+        fits = await call(box, "session_send", {"session": "s1", "input": "y" * (TERMINAL_LINE - 1), "until": "\n"})
+        piped = await call(box, "session_send", {"session": "s2", "input": "z" * TERMINAL_LINE, "until": "\n"})
+        wrong = await call(box, "session_start", {"command": "cat", "terminal": "yes"})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return refused, fits, piped, wrong
+
+    refused, fits, piped, wrong = asyncio.run(go())
+    assert refused.error and refused.content == (
+        f"error: a line of the input is {TERMINAL_LINE} bytes; a terminal takes at most {TERMINAL_LINE - 1} in one line: "
+        "write it to a file and send a command that reads it")
+    assert fits.content.split("\n", 1)[1] == "y" * (TERMINAL_LINE - 1) + "\n"  # the longest line it takes, whole
+    assert not piped.error  # pipes have no such limit
+    assert wrong.error and wrong.content == "error: terminal must be true or false"
+
+
+def test_a_terminal_session_hands_the_program_its_bytes_as_sent(tmp_path, handout):
+    """The pty's line discipline would erase on DEL, kill on ctrl+u and ctrl+w, quote on ctrl+v,
+    stop on ctrl+s, signal on ctrl+c and ctrl+z and turn a carriage return into a newline: a
+    payload would reach the program changed. The relay turns that off; ctrl+d, which still ends
+    the input, is refused rather than taken."""
+    read_line = "python3 -c 'import sys; print(repr(sys.stdin.buffer.readline()))'"
+    payload = "AB\x7fC\x15DE\x17F\rG\x16H\x08I\x13J\x11K\x03L\x1aM\x19N\x12O\x0fP\x14Q\x00R"
+
+    async def go():
+        box = await host_box(tmp_path, handout)
+        await call(box, "session_start", {"command": read_line, "terminal": True, "wait_seconds": 0})
+        read = await call(box, "session_send", {"session": "s1", "input": payload, "until": "\n", "wait_seconds": 10})
+        await call(box, "session_start", {"command": "cat", "terminal": True, "wait_seconds": 0})
+        await call(box, "session_start", {"command": "cat", "wait_seconds": 0})
+        refused = await call(box, "session_send", {"session": "s2", "input": "a\x04b"})
+        piped = await call(box, "session_send", {"session": "s3", "input": "a\x04b", "until": "b"})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return read, refused, piped
+
+    read, refused, piped = asyncio.run(go())
+    assert read.content.split("\n", 1)[1] == repr((payload + "\n").encode()) + "\n"
+    assert refused.error and refused.content == (
+        "error: the input holds ctrl+d (\\x04), which a terminal takes as the end of the input, not as a byte: "
+        "write it to a file and send a command that reads it, or use a session without a terminal")
+    assert not piped.error  # pipes take it as a byte
+
+
 # ---------------------------------------------------------------- in a container
 
 
@@ -412,4 +536,50 @@ def test_a_docker_session_keeps_its_state_and_close_kills_it_in_the_container(tm
     assert started.content.splitlines()[1].startswith("child ")  # the workspace's pid line is not output
     assert isinstance(pid, int) and pid > 1
     assert answer.content.endswith("\n42 /work\n")  # stderr comes through, merged
+    assert "sleep 300" not in left
+
+
+def test_a_docker_terminal_session_runs_on_a_tty_in_the_container(tmp_path, handout, container_name):
+    """The relay runs on the container's python3; debian:bookworm-slim has none, so the session
+    says so and ends, and nothing is started without the terminal that was asked for."""
+    async def go():
+        ws = DockerWorkspace(tmp_path / "lane", handout, image=IMAGE, name=container_name)
+        await ws.prepare()
+        box = Toolbox(ws)
+        started = await call(box, "session_start", {"command": "bash", "terminal": True, "wait_seconds": 10})
+        await ws.close()
+        return started
+
+    started = asyncio.run(go())
+    assert started.content == f"session s1: ended, exit 127\n{NO_TERMINAL_PYTHON}\n"
+
+
+PY_IMAGE = "python:3.12-slim"
+
+
+def test_a_docker_terminal_session_with_python_in_the_container_is_a_tty_and_close_kills_it(tmp_path, handout):
+    reason = docker_unavailable()
+    if not reason and subprocess.run(["docker", "image", "inspect", PY_IMAGE], capture_output=True, timeout=60).returncode:
+        reason = f"image {PY_IMAGE} is not present locally (these tests never pull it)"
+    if reason:
+        docker_not_run(f"not run: {reason}")
+    name = f"flightdeck-test-{uuid.uuid4().hex[:12]}"
+
+    async def go():
+        ws = DockerWorkspace(tmp_path / "lane", handout, image=PY_IMAGE, name=name)
+        await ws.prepare()
+        box = Toolbox(ws)
+        await call(box, "session_start", {"command": "sleep 300 & PS1= bash --norc", "terminal": True, "wait_seconds": 5})
+        answer = await call(box, "session_send", {"session": "s1", "input": "test -t 0 && echo tty $TERM; printf 'a\\033[1mb\\r\\n'",
+                                                  "wait_seconds": 5})
+        await call(box, "session_close", {"session": "s1"})
+        left = (await ws.run("cat /proc/[0-9]*/cmdline | tr '\\0' ' '", timeout=30)).output.decode()
+        await ws.close()
+        return answer, left
+
+    try:
+        answer, left = asyncio.run(go())
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=60)
+    assert answer.content.split("\n", 1)[1] == "tty dumb\nab\n"
     assert "sleep 300" not in left
