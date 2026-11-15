@@ -240,8 +240,8 @@ class SetupForm(Screen):
     def _docker_found(self, reason: str | None) -> None:
         """Offer the runtime Docker's answer decides, unless the player chose one meanwhile:
         any choice of theirs stands, docker too. "Not decided" is no choice from here on."""
-        if not self.is_mounted:
-            return
+        if not self.is_attached:  # the form has closed. Not is_mounted: an answer that comes while
+            return  # the form's on_mount is still being handled (no Docker on PATH answers at once) would be dropped
         select = self.query_one("#runtime", Select)
         chosen = str(select.value)  # "" when the player has chosen none
         found = "Docker is running here" if reason is None else f"Docker cannot run lanes here ({reason})"

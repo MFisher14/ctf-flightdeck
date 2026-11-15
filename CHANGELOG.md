@@ -17,6 +17,26 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   no longer refreshes its context on nearly every call, which hid each tool's output from its
   model. When a fresh context alone takes most of what the server keeps, the lane says once
   that the server's context is too small and what to set, and goes on in its context.
+- On a machine without Docker the setup form now says so and offers host, instead of showing
+  "Looking for Docker…" for good with no runtime chosen, so that `ctrl+s` would not save.
+- When the host governor holds lanes back as a run starts (a busy machine), the board's line in
+  the status line says so and why (`· no new lane starts for now: load 4.0 per CPU …`): the
+  warning that said it came just before that line, which hid it. It also says `1 lane started`,
+  not `1 lanes started`.
+- Approving more budget says the new cap and what is used of it, `L01's cap is now 15k tokens
+  (12k used)`, where `11k of 15k tokens` read as a cap of 11k. Approving a lane on a model with
+  no price says `L01 carries on with no dollar cap; its token cap is 400k tokens (120 used)`, not
+  `L01's cap is now 120 of 400k tokens`.
+- `/` alone in the command bar, sent after esc closed its list, says `/ alone is no command:
+  type a command's name after it, the list shows them; esc clears the bar` instead of
+  `Unknown command /: type / to see the list`.
+- The practice score says once which lanes had turns with no price (`L01, L02 and L08 had
+  turns with no price, …`), not the same line for every lane.
+- A lane on a model with no price asks whether to `carry on with no dollar cap` (1) or `stop the
+  lane` (0), as its question says; its answers said `more budget`, which is not what approving
+  does there.
+- `/settings` in a run names its `c` key `change this run's settings`, where it said `change
+  this run's` and stopped.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes

@@ -114,6 +114,17 @@ PENDING_ANSWERS = {
     PendingKind.BUDGET: ("more budget", "stop the lane"),
     PendingKind.LIVE_BOX: ("use the live box", "stay off it"),
 }
+NO_PRICE_ANSWERS = ("carry on with no dollar cap", "stop the lane")  # a budget question that is about no price, not the cap
+
+
+def pending_answers(lane: Lane) -> tuple[str, str]:
+    """(approve, decline) in words for what the lane waits for: a budget question on a model
+    with no price is whether to go on without the dollar cap, which approving drops; "more
+    budget" would say the cap is raised."""
+    assert lane.pending is not None
+    if lane.pending.kind is PendingKind.BUDGET and lane.dollar_cap and lane.no_price():
+        return NO_PRICE_ANSWERS
+    return PENDING_ANSWERS[lane.pending.kind]
 
 
 COMPACT_MAX_WIDTH = 64  # columns: at this width or narrower both views use the compact layout (a phone over SSH)
@@ -211,7 +222,7 @@ def quick_answers(lane: Lane) -> list[QuickAnswer]:
     if lane.finished:
         return []
     if lane.pending is not None:
-        yes, no = PENDING_ANSWERS[lane.pending.kind]
+        yes, no = pending_answers(lane)
         if lane.pending.kind is PendingKind.SUBMIT:
             yes = lane.pending.detail
         return [QuickAnswer("1", "a", "", yes), QuickAnswer("0", "d", "", no)]
@@ -1576,7 +1587,7 @@ def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = Fa
     numbered = {(answer.key, answer.text): answer.number for answer in quick_answers(lane)}
     top = top_answerable(lane)
     if lane.pending is not None:  # first: its numbers are the ones a digit answers, and the first rows are never the ones cut
-        yes, no = PENDING_ANSWERS[lane.pending.kind]
+        yes, no = pending_answers(lane)
         rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (untrusted(lane_text(deck, lane, lane.pending.detail), one_line=True), theme.TEXT)))
         indent = " " if compact else "   "
         rows.append(Text.assemble((indent, ""), _number("1"), ("/approve", f"bold {theme.ACCENT}"), (f"   {yes}", theme.MUTED), **one_row))
@@ -1728,7 +1739,7 @@ def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
         rows.extend(folded)
         # in the approval's own words: a flag's answer in quick_answers is the detail, which row 1 has
         rows.extend(_packed([Text.assemble((answer.number, f"bold {theme.ACCENT}"), (f" {label}", theme.MUTED))
-                             for answer, label in zip(quick_answers(lane), PENDING_ANSWERS[pending.kind])], width))
+                             for answer, label in zip(quick_answers(lane), pending_answers(lane))], width))
     else:
         asked = top.kind
         rows.append(Text.assemble((f"▲ {top.kind.label}: ", alert_style(top.kind)), (lane_line(deck, lane, top.reason), theme.TEXT)))

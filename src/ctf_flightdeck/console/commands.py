@@ -256,6 +256,8 @@ def parse(text: str) -> Parsed:
         return Parsed(None, None, text)
     head, _, rest = text[1:].partition(" ")
     command = find(head)  # whole, or not at all: the menu's loose matching stops here
+    if not head:  # `/` alone, sent once its list was closed: "unknown command /, type /" would send the player round
+        raise CommandError("/ alone is no command: type a command's name after it, the list shows them; esc clears the bar")
     if command is None:
         raise CommandError(f"Unknown command /{head}: type / to see the list")
     rest = rest.strip()

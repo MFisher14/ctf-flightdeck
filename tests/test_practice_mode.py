@@ -576,6 +576,18 @@ def test_an_unpriced_lane_makes_its_cost_unknown_and_the_known_part_a_floor(play
     assert result.notes == ("L02 had turns with no price, so its cost is not fully known: the dollars count only what had a price.",)
 
 
+def test_lanes_that_all_had_turns_with_no_price_are_one_note_not_one_each(tmp_path):
+    """On a model with no price every lane has such turns: the score once said the same line
+    for each of them, eight lines for eight lanes."""
+    played = Played(tmp_path).at(0)  # alpha -> L01, bravo -> L02
+    for lane in ("L02", "L01"):
+        played.deck.report(lane, TurnReport(action="ls", tokens=10, dollars=None))
+    result = score(played.close(), played.board)
+    assert [note for note in result.notes if "had turns with no price" in note] == [
+        "L01 and L02 had turns with no price, so their cost is not fully known: the dollars count only what had a price."
+    ]
+
+
 def test_the_known_dollars_count_every_priced_turn_of_a_lane_whose_cost_became_unknown(tmp_path):
     played = Played(tmp_path)
     deck = played.at(0).deck

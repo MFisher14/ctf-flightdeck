@@ -223,7 +223,7 @@ class HealthScreen(Screen):
     HealthScreen #form .q { margin-top: 1; }
     """
     BINDINGS = [Binding("escape", "back", "back"), Binding("q", "back", "back"), Binding("r", "again", "check again"),
-                Binding("c", "change", "change this run's")]
+                Binding("c", "change", "change this run's settings")]
     TICK = 1.0  # seconds: how often the line of the lanes that need the player is drawn again
 
     def __init__(self, run: Runner | None = None, *, in_run: InRun | None = None) -> None:
@@ -244,7 +244,7 @@ class HealthScreen(Screen):
         keys = Text()
         shown: tuple[tuple[str, str], ...] = (("r", "check again"), ("↑↓", "scroll"), ("esc", "back"))
         if self.in_run is not None:
-            shown = (("c", "change this run's"), *shown)
+            shown = (("c", "change this run's settings"), *shown)
         for key, what in shown:
             keys.append_text(theme.key_chip(key))
             keys.append(f" {what}   ")

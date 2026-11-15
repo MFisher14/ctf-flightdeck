@@ -1155,6 +1155,29 @@ def test_a_cost_with_no_price_asks_about_the_cap_naming_the_model_that_spent_it_
     assert lane.pending.kind is PendingKind.BUDGET and lane.pending.detail == "carry on with no dollar cap (no price for small)"
 
 
+@pytest.mark.parametrize("token_cap, said", [
+    (400_000, "L01 carries on with no dollar cap; its token cap is 400k tokens (120 used)"),
+    (None, "L01 carries on with no cap"),
+])
+def test_approving_a_cost_with_no_price_says_the_dollar_cap_is_gone_not_that_the_cap_is_what_was_used(token_cap, said):
+    """It once said `L01's cap is now 120 of 400k tokens`: a cap of 120, read as it stands."""
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0, token_cap=token_cap)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=120, dollars=None))
+    assert lane.pending.kind is PendingKind.BUDGET
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok and out.message == said and lane.dollar_cap is None and lane.pending is None
+
+
+def test_approving_more_budget_says_the_new_cap_and_what_is_used_of_it():
+    deck, _, _ = make_deck(n=1, token_cap=10_000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=12_000, dollars=0.0))
+    assert lane.pending.kind is PendingKind.BUDGET
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok and out.message == "L01's cap is now 15k tokens (12k used)"
+
+
 def test_a_turn_with_no_action_text_still_emits_its_turn_event_and_a_non_turn_never_does():
     deck, _, _ = make_deck(n=1)
     lane = lane_on(deck, "c0")

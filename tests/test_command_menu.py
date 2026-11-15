@@ -115,6 +115,26 @@ def test_what_names_no_command_is_said_in_one_muted_row_and_enter_reports_it():
     drive(app, script, SIZE)
 
 
+def test_a_slash_alone_sent_after_esc_closed_its_list_says_what_to_do_and_changes_nothing():
+    """`/`, esc (the list closes, the `/` stays), enter: it once said "Unknown command /: type /
+    to see the list", which was what the player had just done."""
+    deck, app = three_lanes("simple")
+    before = {lane.id: (lane.state, lane.pending) for lane in deck.lanes.values()}
+
+    async def script(pilot):
+        await press(pilot, "slash")
+        menu = bar(app)
+        assert menu.menu_open
+        await press(pilot, "escape")
+        assert not menu.menu_open and menu.field.value == "/"
+        await press(pilot, "enter")
+        assert_warning(app, "/ alone is no command: type a command's name after it, the list shows them; esc clears the bar")
+        assert "Unknown command" not in status_line(app)
+        assert {lane.id: (lane.state, lane.pending) for lane in deck.lanes.values()} == before
+
+    drive(app, script, SIZE)
+
+
 def test_a_stray_word_after_approve_is_still_refused_and_the_menu_offers_no_lane_for_it():
     deck, app = three_lanes("simple")
 

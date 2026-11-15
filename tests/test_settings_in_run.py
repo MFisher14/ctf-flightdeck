@@ -136,6 +136,8 @@ def test_c_on_settings_opens_configs_dialog_in_its_place(machine, checks):
         checks.gate.set()
         await press(pilot, "slash", *"settings", "enter")
         await app.workers.wait_for_complete()
+        keys = str(app.screen.query_one("#formkeys").render())
+        assert "c change this run's settings" in " ".join(keys.split()), keys  # once cut at "this run's"
         await press(pilot, "c")
         assert type(app.screen).__name__ == "ConfigPrompt"
         assert not any(isinstance(s, screen.HealthScreen) for s in app.screen_stack)
@@ -293,7 +295,7 @@ def test_on_the_home_screen_c_is_no_key(machine, monkeypatch):
 
     async def script(app, pilot):
         page = await open_health(app, pilot)
-        assert "change this run's" not in body(app)
+        assert "change this run" not in body(app)
         await pilot.press("c")
         await pilot.pause()
         assert app.screen is page  # nothing to change from home: c is not bound there
