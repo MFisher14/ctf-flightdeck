@@ -88,6 +88,34 @@ ROUTES_HEAD = """\
 # front of you (its browser's network tab shows its routes). `flightdeck http check` tries them.
 """
 LABELS = {"rctf": "rCTF", "rctf2": "rCTF v2", "noctf": "noCTF", "gzctf": "GZCTF"}  # each preset's name as the platform writes it
+_GAME_LINE = 'game = "1"                          '
+
+
+_QUOTED = (", whole and in quotes", ", in quotes")  # how the example says to export a token: a keys file holds it bare
+
+
+def preset_table(preset: str, game: str | None = None, *, keys_file: bool = False) -> str:
+    """The [http] table of `flightdeck http example --preset NAME`, with the event's game
+    (GZCTF's number, which only its routes name) in place of the example's. `flightdeck start`
+    writes it under the event file it fills in (`keys_file`: the token is kept in the keys
+    file, which takes it without the quotes an export needs, so the table does not ask for
+    them). ValueError for a preset flightdeck has not, a GZCTF table without its game, or a
+    game for a preset whose routes name none."""
+    import json
+
+    if preset not in PRESET:
+        raise ValueError(f"no preset of that name (known: {', '.join(PRESET)})")
+    text = PRESET[preset]
+    if (_GAME_LINE in text) != (game is not None):
+        raise ValueError(f"{LABELS[preset]}'s routes {'name the game: give its number' if game is None else 'name no game'}")
+    if game is not None:
+        text = text.replace(_GAME_LINE, f"game = {json.dumps(game, ensure_ascii=False)}".ljust(len(_GAME_LINE)))
+    if keys_file:
+        for words in _QUOTED:
+            text = text.replace(words, "")
+    return text
+
+
 _TOKEN_LINE = 'token_env = "RCTF_TOKEN"            # the NAME of the variable that holds your token: RCTF_..., HTTP_TOKEN or HTTP_TOKEN_...'
 
 

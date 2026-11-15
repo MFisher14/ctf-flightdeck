@@ -3,8 +3,9 @@
     flightdeck start                 # asks for the event, makes its folder, launches
     flightdeck start ~/ctf/example   # the same, in that folder; a folder already set up is launched
 
-It writes FOLDER/event.toml and FOLDER/board/ (start.py), puts a CTFd token you paste into
-your keys file (never into the event file, never shown), says whether the solver pack is
+It writes FOLDER/event.toml and FOLDER/board/ (start.py), puts a token you paste (CTFd's, or
+rCTF's, noCTF's or GZCTF's for the http platform's presets) into your keys file (never into
+the event file, never shown), says whether the solver pack is
 installed, and then plays the event as `flightdeck play FOLDER` does. With no config yet it
 asks init's questions first. Away from a terminal it asks nothing: give the answers as options.
 
@@ -34,10 +35,27 @@ PLATFORM_MENU = (
     "               flightdeck pulls the board, adds new challenges as they appear and submits flags.\n"
     "  2  by hand   any other site: you put each challenge in the event's board folder and submit\n"
     "               flags on the site yourself.\n"
-    "     On rCTF, noCTF or GZCTF flightdeck can pull and submit for you instead: press ctrl+c,\n"
-    "     then `flightdeck http example --preset NAME > event.toml` (rctf, rctf2, noctf or gzctf).\n"
-    "Choose 1 or 2"
+    "  3  json api  the site runs rCTF, rCTF v2, noCTF or GZCTF: flightdeck pulls and submits through\n"
+    "               its API, as for CTFd.\n"
+    "Choose 1, 2 or 3"
 )
+PRESET_MENU = (
+    "Which platform does the event's site run?\n"
+    "  1  rCTF      redpwn's: the challenges are at /challs, and your team signs in with a login link\n"
+    "  2  rCTF v2   OtterSec's rewrite of rCTF (it can start a challenge's instance for your team);\n"
+    "               when you cannot tell the two apart, 1 plays both, without the instances\n"
+    "  3  noCTF     the platform DownUnderCTF wrote, which other events run too\n"
+    "  4  GZCTF     its games are at /games/NUMBER on the site\n"
+    "Choose 1 to 4"
+)
+URL_QUESTION = {
+    "ctfd": "The event site's address (like https://ctf.example.org)",
+    "rctf": "The event site's address (like https://ctf.example.org)",
+    "rctf2": "The event site's address (like https://ctf.example.org)",
+    "noctf": ("The address of the event's noCTF API, which may not be the page's (the browser's network tab shows the host "
+              "the requests to /challenges go to; like https://api.ctf.example.org)"),
+    "gzctf": "The event site's address, or its game's page (like https://ctf.example.org/games/3)",
+}
 SUBMIT_MENU = (
     "When a lane finds a flag:\n"
     "  1  confirm   it waits for you; one key sends it (the safe choice)\n"
@@ -47,22 +65,24 @@ SUBMIT_MENU = (
 _VARIABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _TOKEN_SHAPE = re.compile(r"ctfd_[0-9a-f]{16,}|[0-9a-f]{32,}", re.IGNORECASE)  # a token pasted where a variable's name goes
 MAX_SHOWN_NAME = 32  # a variable name longer than this is not echoed: it may be a token pasted in its place (as `ctfd pull` does)
-TOKEN_QUESTION = ("Paste your CTFd access token (on the event's site: Settings, then Access Tokens, then Generate). "
-                  "Nothing shows as you paste; Enter alone skips it for now")
+TOKEN_QUESTION = "Paste {what}. Nothing shows as you paste; Enter alone skips it for now"
 
 
 def start(
     folder: Annotated[Path | None, typer.Argument(metavar="FOLDER", show_default=False, file_okay=False,
                                                   help="The event's folder (default: asked; ~/ctf/<the event's name>). One already set up is played.")] = None,
     name: Annotated[str | None, typer.Option("--name", help="The event's name.")] = None,
-    platform: Annotated[str | None, typer.Option("--platform", metavar="ctfd|manual", help="ctfd: flightdeck pulls and submits through the site; manual: a board you fill by hand.")] = None,
-    url: Annotated[str | None, typer.Option("--url", help="The event site's address (ctfd).")] = None,
+    platform: Annotated[str | None, typer.Option("--platform", metavar="ctfd|http|manual", help="ctfd: flightdeck pulls and submits through the site; "
+                                                  "http: the same, on rCTF, rCTF v2, noCTF or GZCTF (--preset); manual: a board you fill by hand.")] = None,
+    preset: Annotated[str | None, typer.Option("--preset", metavar="NAME", help="The JSON-API platform the site runs (http): rctf, rctf2, noctf or gzctf.")] = None,
+    url: Annotated[str | None, typer.Option("--url", help="The event site's address (ctfd, http; noCTF: its API's).")] = None,
+    game: Annotated[str | None, typer.Option("--game", metavar="NUMBER", help="The game's number, as its page's address shows it (GZCTF: https://.../games/3).")] = None,
     flag: Annotated[str | None, typer.Option("--flag", metavar="PREFIX", help="What comes before the { in a flag (PP for PP{...}), an example flag, or a regular expression.")] = None,
     submit: Annotated[str | None, typer.Option("--submit", metavar="confirm|auto", help="confirm: you approve each flag; auto: a flag a lane claims is sent at once.")] = None,
     vpn_file: Annotated[Path | None, typer.Option("--vpn", metavar="FILE", dir_okay=False, help="The event's VPN file for its live targets (WireGuard .conf or OpenVPN .ovpn).")] = None,
-    token_from: Annotated[str | None, typer.Option("--token-env", metavar="NAME", help="The environment variable that holds your CTFd access token (ctfd): start "
+    token_from: Annotated[str | None, typer.Option("--token-env", metavar="NAME", help="The environment variable that holds your access token for the site (ctfd, http): start "
                                                    "keeps the token in your keys file. No option takes the token itself.")] = None,
-    token_stdin: Annotated[bool, typer.Option("--token-stdin", metavar="", help="Read your CTFd access token from standard input (ctfd): one line, from a pipe.")] = False,
+    token_stdin: Annotated[bool, typer.Option("--token-stdin", metavar="", help="Read your access token for the site from standard input (ctfd, http): one line, from a pipe.")] = False,
     ai_allowed: Annotated[bool, typer.Option("--ai-allowed", metavar="", help="The event's rules allow AI agents on the challenges, with each challenge's "
                                              "text and files given to a model (asked at a terminal).")] = False,
     label: Annotated[str | None, typer.Option("--label", metavar="TEXT", help="The label your team declared to the event for its AI use, in the event's "
@@ -78,7 +98,8 @@ def start(
 
     interactive = cli._at_terminal()
     as_options = [option for option, was_given in (  # the answers that came as options, before any is asked for
-        ("--name", name is not None), ("--platform", platform is not None), ("--url", url is not None), ("--flag", flag is not None),
+        ("--name", name is not None), ("--platform", platform is not None), ("--preset", preset is not None), ("--url", url is not None),
+        ("--game", game is not None), ("--flag", flag is not None),
         ("--submit", submit is not None), ("--vpn", vpn_file is not None), ("--label", label is not None), ("--token-env", token_from is not None),
         ("--token-stdin", token_stdin)) if was_given]
 
@@ -141,10 +162,13 @@ def start(
     token = _token_given(token_from, token_stdin, interactive)  # None: none was handed over
 
     # ---- the questions
+    if platform is None and preset is not None:
+        platform = "http"  # --preset names a JSON-API platform: the http platform is the one that plays it
     if not interactive:
         missing = [text for text, absent in (
-            ("--name NAME", name is None), ("--platform ctfd|manual", platform is None),
-            ("--url URL", platform == "ctfd" and url is None),
+            ("--name NAME", name is None), ("--platform ctfd|http|manual", platform is None),
+            ("--preset rctf|rctf2|noctf|gzctf", platform == "http" and preset is None),
+            ("--url URL", platform in events.SIGNS_IN and url is None),
             ("--ai-allowed (the event's rules allow AI agents that are given the challenges' text and files)", not ai_allowed),
         ) if absent]
         if missing:
@@ -176,16 +200,43 @@ def start(
         label = ask(events.LABEL_QUESTION, events.label_answer, "", show_default=False)
     platform = given(platform, "--platform", events.platform_answer) if platform is not None else ask(PLATFORM_MENU, events.platform_answer, "1")
     chosen = None
-    if platform == "ctfd":
-        url = given(url, "--url", events.url_answer) if url is not None else ask("The event site's address (like https://ctf.example.org)", events.url_answer)
-        try:
-            chosen = events.token_variable_for(name, url)  # this site's variable: never one that is another site's
+    if platform != "http":
+        if preset is not None or game is not None:
+            _fail(f"{'--preset' if preset is not None else '--game'} is for --platform http (rCTF, rCTF v2, noCTF or GZCTF)")
+    else:
+        preset = given(preset, "--preset", events.preset_answer) if preset is not None else ask(PRESET_MENU, events.preset_answer)
+    if platform in events.SIGNS_IN:
+        question = URL_QUESTION[preset or "ctfd"]
+        if platform == "ctfd":
+            url = given(url, "--url", events.url_answer) if url is not None else ask(question, events.url_answer)
+        else:
+            read = lambda typed: events.http_url_read(preset, typed)  # noqa: E731
+            url, from_url, understood = given(url, "--url", read) if url is not None else ask(question, read)
+            if understood is not None:
+                typer.echo(f"address: {understood}")
+            if preset == "gzctf":
+                if game is not None:
+                    game = given(game, "--game", events.game_answer)
+                    if from_url is not None and from_url != game:
+                        _fail(f"--game {game} and the address's game ({from_url}) differ: give one of them")
+                elif from_url is not None:
+                    game = from_url
+                elif interactive:
+                    game = ask("The game's number, as its page's address shows it (3 for https://.../games/3)", events.game_answer)
+                else:
+                    _fail("start is not at a terminal, so it cannot ask: give --game NUMBER (the number in the game's page's "
+                          "address, https://.../games/3), or the game's page as --url")
+            elif game is not None:
+                _fail(f"--game is for GZCTF (--preset gzctf): {events.PRESET_LABELS[preset]}'s routes name no game")
+        try:  # this site's variable: never one that is another site's
+            chosen = events.token_variable_for(name, url, prefix=events.token_prefix(platform, preset))
         except (keys.KeysError, events.StartError) as exc:
             _fail(str(exc))
     elif url is not None:
-        _fail("--url is for --platform ctfd")
+        _fail("--url is for --platform ctfd or http")
     elif token is not None:
-        _fail(f"{'--token-env' if token_from is not None else '--token-stdin'} is for --platform ctfd (by hand, flightdeck never signs in to the site)")
+        _fail(f"{'--token-env' if token_from is not None else '--token-stdin'} is for --platform ctfd or http "
+              "(by hand, flightdeck never signs in to the site)")
     token_env = chosen.name if chosen is not None else None
     flag_format = None
     if flag is not None:
@@ -195,9 +246,9 @@ def start(
                                       events.flag_format_read, "", show_default=False)
     if flag_format is not None:
         typer.echo(f"flag format: {understood}")  # what was made of the answer: an example flag is read as its prefix
-    if platform != "ctfd":
+    if platform not in events.SIGNS_IN:
         if submit is not None:
-            _fail("--submit is for --platform ctfd (by hand, you submit each flag on the site)")
+            _fail("--submit is for --platform ctfd or http (by hand, you submit each flag on the site)")
         submit = "confirm"
     elif submit is not None:
         submit = given(submit, "--submit", events.submit_answer)
@@ -218,7 +269,8 @@ def start(
                     raise typer.BadParameter(f"the token {problem}")
                 return typed.strip()
 
-            token = typer.prompt(TOKEN_QUESTION, default="", hide_input=True, show_default=False, value_proc=token_answer)
+            token = typer.prompt(TOKEN_QUESTION.format(what=events.token_help(platform, preset)), default="", hide_input=True,
+                                 show_default=False, value_proc=token_answer)
 
     # ---- the event's VPN file, when its live targets are behind one
     if vpn_source is None and interactive:
@@ -240,7 +292,7 @@ def start(
 
     # ---- the folder and the event file: the first thing written
     answers = events.EventAnswers(name=name, platform=platform, url=url, token_env=token_env, flag_format=flag_format, submit=submit,
-                                  label=label)
+                                  label=label, preset=preset, game=game)
     try:
         written = events.write(folder, answers)
     except events.StartError as exc:
@@ -252,7 +304,7 @@ def start(
     # ---- the token, to the keys file: after the event, so no token is kept for an event that was not set up
     token_note = ""
     if chosen is not None:
-        where_to_put = f"Put {token_env}=<your CTFd access token> in {_keys_file()} (chmod 600)"
+        where_to_put = f"Put {token_env}=<{events.token_name(platform, preset)}> in {_keys_file()} (chmod 600)"
         if token is not None:
             try:
                 saved = keys.save(token_env, token)
@@ -265,7 +317,7 @@ def start(
             token_note = (f"token: {token_env} is already set in your {chosen.source}: it is the token for "
                           f"{events.site_name(events.site_of(url))}, as an event of yours there says")
         else:
-            token_note = f"token: not set yet. {where_to_put} before you play: the site's Settings, then Access Tokens"
+            token_note = f"token: not set yet. {where_to_put} before you play: {events.token_help(platform, preset)}"
             if not interactive:
                 token_note += ("\n       Or let start keep it: --token-env NAME (the environment variable that holds it) or "
                                "--token-stdin (from a pipe)")
@@ -273,8 +325,9 @@ def start(
     typer.echo(f"event: {_show(name)}")
     typer.echo(f"  {written}   the event's rules, from your answers (edit it any time)")
     board = folder / events.BOARD_DIR
-    if platform == "ctfd":
-        typer.echo(f"  {board}/   the challenges: pulled from {_show(url)} when you play")
+    if platform in events.SIGNS_IN:
+        typer.echo(f"  {board}/   the challenges: pulled from {_show(url)} when you play"
+                   + (f" ({events.PRESET_LABELS[preset]}'s API, by the http platform)" if platform == "http" else ""))
     else:
         typer.echo(f"  {board}/   the challenges: one folder each, with its files and a challenge.json")
     if token_note:
@@ -292,14 +345,14 @@ def start(
         if vpn_cli.ensure_tool(kept):  # installs wg-quick or openvpn when it is missing, on a yes
             typer.echo(f"vpn: ready; `flightdeck play` offers to connect it, and `flightdeck vpn up {folder}` does it now")
     _status(folder, config_path, offer_pack=interactive, config=config, token_said=bool(token_note))
-    if platform != "ctfd":
+    if platform == "manual":
         typer.echo("The board starts empty. In the console, type /new to hand over a challenge: its name, then its text, files and\n"
                    "screenshots (drag them in). A lane starts on it at once. From another terminal: flightdeck add --help")
     _launch(folder, config, launch, interactive, ready=chosen is None or token is not None or chosen.source is not None)
 
 
 def _token_given(variable: str | None, from_stdin: bool, interactive: bool) -> str | None:
-    """The CTFd token handed over without a prompt: the value of the environment variable
+    """The event's token handed over without a prompt: the value of the environment variable
     --token-env names, or what --token-stdin reads from a pipe. None when neither was given.
     Neither puts the token on the command line, where the shell's history and the process
     list would keep it. A token that is not there, or that the keys file cannot hold, stops

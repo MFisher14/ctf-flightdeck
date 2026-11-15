@@ -269,6 +269,67 @@ def test_the_new_ctf_form_never_takes_another_sites_token_for_this_event(home, t
     assert "ctfd_new_synthetic" not in result.output and "ctfd_old_synthetic" not in result.output
 
 
+def test_the_new_ctf_form_sets_up_an_event_on_a_json_api_platform_and_says_where_its_token_is(home, tmp_path, monkeypatch):
+    """rCTF, noCTF and GZCTF are a choice in the form as in `flightdeck start` (P95): the
+    preset, the address (a GZCTF game's page gives the game), and the token, whose question
+    says where that platform keeps it. Answers that do not fit are said while the form is open."""
+    from ctf_flightdeck import keys
+    from ctf_flightdeck.console import home as homes
+    from ctf_flightdeck.preflight import load_profile
+
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(tmp_path / "keys.env"))
+
+    async def script(app, pilot):
+        await pilot.press("enter")
+        await pilot.pause()
+        form = app.screen
+        problem = lambda: str(form.query_one("#problem").render())  # noqa: E731
+        asked = lambda: str(form.query_one("#tokenq").render())  # noqa: E731
+        assert "CTFd access token" in asked()
+        fill(form, platform="http", preset="noctf")
+        await pilot.pause()
+        assert "noctf-session-token" in asked() and "CTFd" not in asked()
+        fill(form, preset="gzctf")
+        await pilot.pause()
+        assert "GZCTF_Token cookie" in asked()
+        fill(form, name="Example CTF", url="ctf.example.org", ai="yes", folder=str(tmp_path / "example"), token="synthetic-cookie")
+        await pilot.press("ctrl+s")
+        assert "Game: give the game's number" in problem() and app.return_value is None
+        fill(form, url="https://ctf.example.org/games/3/challenges", game="4")
+        await pilot.press("ctrl+s")
+        assert "Game: 4, and the address names game 3" in problem() and app.return_value is None
+        fill(form, preset="rctf", game="3")
+        await pilot.press("ctrl+s")
+        assert "only GZCTF's routes name a game" in problem() and app.return_value is None
+        fill(form, preset="gzctf", game="")
+        await pilot.press("ctrl+s")
+
+    kind, new = drive_home(homes.items(have_config=True), script)
+    assert kind == "new"
+    assert (new.answers.platform, new.answers.preset, new.answers.game, new.answers.url, new.answers.token_env) == (
+        "http", "gzctf", "3", "https://ctf.example.org", "GZCTF_TOKEN_EXAMPLE_CTF")
+    choose(monkeypatch, (kind, new))
+    result = CliRunner().invoke(cli.app, [])
+    assert result.exit_code == 0, result.output
+    assert keys.load_keys(tmp_path / "keys.env") == {"GZCTF_TOKEN_EXAMPLE_CTF": "synthetic-cookie"}
+    assert "synthetic-cookie" not in result.output
+    profile, _ = load_profile(tmp_path / "example" / "event.toml")
+    assert (profile.platform, profile.http.preset, profile.http.game) == ("http", "gzctf", "3")
+
+
+def test_a_json_api_event_from_the_form_with_no_token_says_which_platforms_token_to_put_where(home, tmp_path, monkeypatch):
+    from ctf_flightdeck.console import home as homes
+
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(tmp_path / "keys.env"))
+    answers = start.EventAnswers(name="Example CTF", platform="http", url="https://ctf.example.org", token_env="NOCTF_TOKEN_EXAMPLE_CTF",
+                                 preset="noctf")
+    choose(monkeypatch, ("new", homes.NewEvent(answers, tmp_path / "example", "", None)))
+    result = CliRunner().invoke(cli.app, [])
+    assert result.exit_code == 2
+    assert "no token yet: put NOCTF_TOKEN_EXAMPLE_CTF=<your noCTF token> in" in result.output
+    assert (tmp_path / "example" / "event.toml").is_file() and home[1] == []  # set up, not played without its token
+
+
 def test_no_token_is_kept_for_an_event_from_the_form_that_could_not_be_set_up(home, tmp_path, monkeypatch):
     from ctf_flightdeck import keys
     from ctf_flightdeck.console.home import NewEvent
