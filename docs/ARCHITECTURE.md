@@ -1331,8 +1331,9 @@ ctf_flightdeck.health`, a process group of its own that prints the checks as JSO
 when the screen closes), given the terminal's size because its own output is a pipe.
 A running console opens the same screen for `/settings` (P90, `FlightdeckApp.open_settings`)
 with a `health.InRun`: the run's own settings on top, a count of the lanes that need the
-player, `c` for `/config`'s dialog, and the checks of the run's config file
-(`COLUMNS LINES CONFIG`), kept for the run until `r`. The child lowers its own priority first
+player, `c` for `/config`'s dialog, and the checks of the run's config file and coding agent
+(`COLUMNS LINES [--agent KIND] CONFIG`: `doctor(agent=...)`, as `flightdeck doctor --agent`),
+kept for the run until `r`. The child lowers its own priority first
 (`health.lower_priority`, nice 10), so in a run it and the docker it starts yield to the
 console and the lanes.
 

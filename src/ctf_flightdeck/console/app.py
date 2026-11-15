@@ -105,6 +105,7 @@ class FlightdeckApp(App[None]):
         copier: Callable[[str], str] | None = None,
         terminal_title: bool = True,
         terminal_bell: bool = True,
+        agent: str = "",
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -119,7 +120,9 @@ class FlightdeckApp(App[None]):
         must be told when it could not, "" when it did (None: clipboard.put).
         `terminal_title`: the terminal's title says how many lanes need the player, and is put
         back when the console leaves; `terminal_bell`: the terminal's bell rings once each time
-        that count goes up (terminal.Beacon; a run passes the config's [console] title and bell)."""
+        that count goes up (terminal.Beacon; a run passes the config's [console] title and bell).
+        `agent`: the coding agent the run's lanes are (play --agent; "": flightdeck's own), which
+        /settings' checks are told."""
         if layout not in LAYOUTS:
             raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {layout!r}")
         self.layout = layout
@@ -157,6 +160,7 @@ class FlightdeckApp(App[None]):
         self.stager = stager
         self.unstager = unstager
         self._staging = asyncio.Lock()  # one drop is copied at a time, in the order they came
+        self.agent = agent  # the run's coding agent, "claude" or "codex" ("": flightdeck's own lanes), for /settings
         self.config_path = config_path  # the player's config file, named by /config ("": none, as in the mock)
         self._in_run = None  # /settings' part of the run (health.InRun), made when it is first opened, kept for the run
         self._exiting = False
@@ -1465,7 +1469,7 @@ class FlightdeckApp(App[None]):
             return
         if self._in_run is None:
             self._in_run = InRun(rows=self._run_rows, needing=lambda: len(self.deck.needing()), change=self.config_dialog,
-                                 config=Path(self.config_path) if self.config_path else None)
+                                 config=Path(self.config_path) if self.config_path else None, agent=self.agent or None)
         self.push_screen(HealthScreen(in_run=self._in_run))
 
     def _run_rows(self) -> list:

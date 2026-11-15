@@ -22,7 +22,7 @@ from ctf_flightdeck import health
 from ctf_flightdeck.console import health as screen
 from ctf_flightdeck.console.fleet import FleetScreen
 from ctf_flightdeck.core.driver import TurnReport
-from ctf_flightdeck.setup import Check
+from ctf_flightdeck.setup import API_CHECKS, Check
 
 
 def body(app) -> str:
@@ -30,15 +30,18 @@ def body(app) -> str:
 
 
 class StandIn:
-    """Checks the test answers: each call is recorded with its config, and waits for `gate`."""
+    """Checks the test answers: each call is recorded with its config, and waits for `gate`.
+    The run's agent, when the screen names one, is recorded in `agents`."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[int, int, str | None]] = []
         self.gate = asyncio.Event()
         self.cancelled = 0
+        self.agents: list[str | None] = []
 
-    async def __call__(self, columns, lines, *, config=None):
+    async def __call__(self, columns, lines, *, config=None, agent=None):
         self.calls.append((columns, lines, config))
+        self.agents.append(agent)
         try:
             await self.gate.wait()
         except asyncio.CancelledError:
@@ -157,6 +160,79 @@ def test_settings_in_the_mock_says_it_reads_no_config_and_checks_the_one_flightd
     drive(app, script, SIZE)
 
 
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+def test_settings_in_an_agent_run_checks_that_agent_as_doctor_agent_does(machine, checks, agent):
+    deck, app = three_lanes("simple", config_path=str(machine), agent=agent)
+
+    async def script(pilot):
+        checks.gate.set()
+        await press(pilot, "slash", *"settings", "enter")
+        await app.workers.wait_for_complete()
+        assert checks.calls == [(SIZE[0], SIZE[1], str(machine))] and checks.agents == [agent]
+        await press(pilot, "escape")
+
+    drive(app, script, SIZE)
+
+
+def test_settings_in_a_run_of_flightdecks_own_lanes_names_no_agent(machine, checks):
+    deck, app = three_lanes("simple", config_path=str(machine))
+
+    async def script(pilot):
+        checks.gate.set()
+        await press(pilot, "slash", *"settings", "enter")
+        await app.workers.wait_for_complete()
+        assert checks.agents == [None]
+        await press(pilot, "escape")
+
+    drive(app, script, SIZE)
+
+
+def test_a_run_started_with_an_agent_gives_its_console_that_agent(machine):
+    from types import SimpleNamespace
+
+    from test_console import FakeWorld, scenarios
+
+    from ctf_flightdeck.config import load_config
+    from ctf_flightdeck.run import Run
+
+    machine.write_text('[models]\nladder = ["m"]\n')
+    for agent, told in (("claude", "claude"), (None, "")):
+        of_a_run = SimpleNamespace(config=load_config(machine), deck=FakeWorld(scenarios.get("sstv")).deck, dir=machine.parent,
+                                   by_hand=False, release=None, shutdown=None, options=SimpleNamespace(agent=agent))
+        assert Run.app(of_a_run).agent == told
+
+
+def test_the_child_is_told_the_agent_and_checks_it_as_doctor_agent_does(monkeypatch, capsys):
+    from pathlib import Path
+
+    from ctf_flightdeck import setup
+
+    assert health.child_command(80, 24, "/x/event.toml", "codex")[-5:] == ["80", "24", "--agent", "codex", "/x/event.toml"]
+    assert health.child_command(80, 24, "", "claude")[-4:] == ["80", "24", "--agent", "claude"]
+    said = []
+    monkeypatch.setattr(health, "lower_priority", lambda: None)
+    monkeypatch.setattr(setup, "doctor", lambda path, agent, terminal: said.append((path, agent, terminal)) or [])
+    assert health.main(["80", "24", "--agent", "claude", "/x/event.toml"]) == 0
+    assert health.main(["80", "24", "--agent", "codex"]) == 0
+    assert said == [(Path("/x/event.toml"), "claude", (80, 24)), (None, "codex", (80, 24))]
+    for wrong in (["80", "24", "--agent"], ["80", "24", "--agent", "gpt"], ["80", "24", "--agent", "claude", "a", "b"]):
+        assert health.main(wrong) == 64
+    assert said == [(Path("/x/event.toml"), "claude", (80, 24)), (None, "codex", (80, 24))]
+
+
+def test_the_childs_checks_for_an_agent_run_make_the_api_key_a_warning(machine):
+    """The real child, with no key in the environment (machine): for flightdeck's own lanes
+    the [api] key is essential; told the run's agent, it is a warning, and that agent's CLI
+    is checked."""
+    own = {c.name: c for c in asyncio.run(health.run_checks(0, 0, config=str(machine)))}
+    told = {c.name: c for c in asyncio.run(health.run_checks(0, 0, config=str(machine), agent="claude"))}
+    api = [name for name in API_CHECKS if name in own and not own[name].ok]
+    assert api, f"the test's machine has no failing [api] check to compare: {sorted(own)}"
+    for name in api:
+        assert own[name].essential and not told[name].essential
+    assert set(told) - set(own), "told the agent, the child checks something more: that agent's CLI"
+
+
 def test_settings_with_a_word_is_refused_with_where_configs_went_and_changes_nothing(machine, checks):
     deck, app = three_lanes("simple", config_path=str(machine))
 
@@ -200,7 +276,7 @@ def test_the_childs_main_lowers_its_priority_before_doctor_runs(monkeypatch, cap
 
     said = []
     monkeypatch.setattr(health, "lower_priority", lambda: said.append("lowered"))
-    monkeypatch.setattr(setup, "doctor", lambda path, terminal: said.append(("doctor", path, terminal)) or [])
+    monkeypatch.setattr(setup, "doctor", lambda path, agent, terminal: said.append(("doctor", path, terminal)) or [])
     assert health.main(["80", "24", "/x/event.toml"]) == 0
     assert said == ["lowered", ("doctor", __import__("pathlib").Path("/x/event.toml"), (80, 24))]
     assert health.main(["80", "24", ""]) == 64 and health.main(["80"]) == 64

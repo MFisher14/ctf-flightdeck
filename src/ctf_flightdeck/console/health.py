@@ -71,7 +71,7 @@ def settings(path: Path | None = None) -> list[Row]:
     else:
         path = usual
         named = f"named by ${CONFIG_ENV}" if os.environ.get(CONFIG_ENV) else "the usual place"
-    rows =[Row("Config", str(path), named)]
+    rows = [Row("Config", str(path), named)]
     if not path.exists():
         return [*rows, Row("Settings", "none yet", "there is no config: \"Get started\" on the home screen writes one, "
                                                    "or `flightdeck init`")]
@@ -166,7 +166,7 @@ def checks_text(checks: list[Check]) -> Text:
     return text
 
 
-Runner = Callable[..., Awaitable[list[Check]]]  # (columns, lines[, config=path]): health.run_checks
+Runner = Callable[..., Awaitable[list[Check]]]  # (columns, lines[, config=path][, agent=kind]): health.run_checks
 
 
 @dataclass
@@ -174,7 +174,9 @@ class InRun:
     """What the screen needs from a running console (P90), kept by the console for the whole
     run. `rows`: the run's own settings as they are now, which /config changes; `needing`:
     how many lanes need the player; `change`: opens /config's dialog; `config`: the run's
-    config file (None: the one flightdeck reads, as in the mock). `checked` and `at`
+    config file (None: the one flightdeck reads, as in the mock); `agent`: the coding agent
+    the run's lanes are (play --agent claude|codex; None: flightdeck's own), which the checks
+    are told, as `flightdeck doctor --agent` is. `checked` and `at`
     (time.monotonic) are the checks the screen last found in this run, shown again when it
     opens until the player asks for new ones (r)."""
 
@@ -182,6 +184,7 @@ class InRun:
     needing: Callable[[], int]
     change: Callable[[], None]
     config: Path | None = None
+    agent: str | None = None
     checked: list[Check] | None = None
     at: float = 0.0
 
@@ -279,12 +282,13 @@ class HealthScreen(Screen):
 
     async def _check(self) -> None:
         size = self.app.size
-        config = self.in_run.config if self.in_run is not None else None
+        told: dict[str, str] = {}  # the run's part, named only when there is one: the home screen's checks are doctor's own
+        if self.in_run is not None and self.in_run.config is not None:
+            told["config"] = str(self.in_run.config)
+        if self.in_run is not None and self.in_run.agent:
+            told["agent"] = self.in_run.agent
         try:
-            if config is None:
-                found = await self.run_checks(size.width, size.height)
-            else:
-                found = await self.run_checks(size.width, size.height, config=str(config))
+            found = await self.run_checks(size.width, size.height, **told)
         except health.HealthError as exc:
             shown = Text.assemble(("Health\n", "bold"), (f"The checks could not be run: {untrusted(str(exc), one_line=True)}",
                                                           theme.YELLOW))

@@ -9,12 +9,14 @@ cancels the task that waits for it, and the whole group is killed, docker with i
 could not be stopped that way. The child prints the checks as JSON on its standard output,
 and nothing else; it never prints a key (doctor never returns one).
 
-    python -P -m ctf_flightdeck.health COLUMNS LINES [CONFIG]
+    python -P -m ctf_flightdeck.health COLUMNS LINES [--agent claude|codex] [CONFIG]
 
 COLUMNS and LINES are the size of the player's terminal, which the child cannot ask (its
 output is a pipe): the terminal check measures the console at that size. 0 0: no terminal
 check. CONFIG is the config file to check, as a running console names its run's (P90);
-without it, the one flightdeck reads (config.default_config_path). `-P` keeps the folder
+without it, the one flightdeck reads (config.default_config_path). --agent is the coding
+agent a run's lanes are (play --agent): the checks are then `flightdeck doctor --agent`'s,
+that CLI and its credential checked and the [api] checks warnings. `-P` keeps the folder
 the player is in off the child's import path.
 
 The child lowers its own priority first (lower_priority, nice 10), and what it starts
@@ -42,17 +44,20 @@ class HealthError(Exception):
     """The checks could not be run or read: what happened, in words for the player."""
 
 
-def child_command(columns: int, lines: int, config: str = "") -> list[str]:
-    return [sys.executable, "-P", "-m", "ctf_flightdeck.health", str(columns), str(lines), *([config] if config else [])]
+def child_command(columns: int, lines: int, config: str = "", agent: str = "") -> list[str]:
+    return [sys.executable, "-P", "-m", "ctf_flightdeck.health", str(columns), str(lines),
+            *(["--agent", agent] if agent else []), *([config] if config else [])]
 
 
-async def run_checks(columns: int, lines: int, *, config: str = "", timeout: float = CHECKS_TIMEOUT) -> list[Check]:
+async def run_checks(columns: int, lines: int, *, config: str = "", agent: str = "",
+                     timeout: float = CHECKS_TIMEOUT) -> list[Check]:
     """doctor's checks, as the child process ran them; HealthError when it could not.
-    `config`: the config file to check ("": the one flightdeck reads). Cancelled, the child
-    and everything it started are killed at once."""
+    `config`: the config file to check ("": the one flightdeck reads); `agent`: the coding
+    agent the run's lanes are ("": flightdeck's own). Cancelled, the child and everything it
+    started are killed at once."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            *child_command(columns, lines, config),
+            *child_command(columns, lines, config, agent),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -115,13 +120,19 @@ def lower_priority() -> None:
 def main(argv: list[str]) -> int:
     from pathlib import Path
 
+    from .agent.external import KINDS
     from .setup import doctor
 
-    if len(argv) not in (2, 3) or not all(arg.isdigit() for arg in argv[:2]) or (len(argv) == 3 and not argv[2]):
-        sys.stderr.write("usage: python -P -m ctf_flightdeck.health COLUMNS LINES [CONFIG]\n")
+    agent = None
+    rest = argv[2:]
+    if rest[:1] == ["--agent"]:
+        agent, rest = (rest[1] if len(rest) > 1 else ""), rest[2:]
+    if (len(argv) < 2 or not all(arg.isdigit() for arg in argv[:2]) or len(rest) > 1 or (rest and not rest[0])
+            or (agent is not None and agent not in KINDS)):
+        sys.stderr.write(f"usage: python -P -m ctf_flightdeck.health COLUMNS LINES [--agent {'|'.join(KINDS)}] [CONFIG]\n")
         return 64
     lower_priority()
-    checks = doctor(Path(argv[2]) if len(argv) == 3 else None, terminal=(int(argv[0]), int(argv[1])))
+    checks = doctor(Path(rest[0]) if rest else None, agent=agent, terminal=(int(argv[0]), int(argv[1])))
     sys.stdout.write(json.dumps([asdict(check) for check in checks]))
     return 0
 
