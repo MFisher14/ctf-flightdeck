@@ -1198,6 +1198,34 @@ def test_what_claude_reports_when_a_turn_ends_is_logged_with_why_and_the_model_t
     run(main())
 
 
+def test_output_tokens_claudes_events_left_out_of_a_turn_escalation_cut_still_count(tmp_path):
+    """The old model's last turn ends after the lane moved on: its result is not the lane's work
+    any more, but the output its assistant events had not reported yet (1 of 300 here) was spent,
+    and its modelUsage has it, so it counts on the lane as that model's."""
+    script = {"turns": [
+        {"calls": [{"tools": [bash("echo small")], "usage": [100, 10, 0, 0]}], "cost": 0.01},
+        {"calls": [{"text": "still thinking", "usage": [30, 300, 0, 0], "streamed": 1, "cost": 0.005}, {"think": 30.0}]},
+        {"calls": [{"tools": [bash("echo big")]}]},
+    ]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: len(lab.fake.messages()) == 2 and lab.run(lane).pending_tokens, "the second turn under way")
+            assert lab.deck.apply(iv.Escalate(lane.id)).ok
+            await until(lambda: "$ echo big" in steps(lane), "the stronger model's step")
+            await until(lambda: len(spends(lab.deck)) >= 2, "the cut turn's spend")
+            cut = spends(lab.deck)[1]
+            assert cut["why"] == external.CUT_TURN.format(kind="claude")
+            assert (cut["model"], cut["tokens"]) == ("small", 30 + 300)  # not 30 + 1
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
 def test_what_codex_reports_when_a_turn_ends_is_logged_with_why_and_the_model_that_spent_it(tmp_path):
     script = {"turns": [{"items": [{"command": "echo one"}, {"message": "done"}], "usage": [300, 100, 50]}]}
 
