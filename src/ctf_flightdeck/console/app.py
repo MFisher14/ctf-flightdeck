@@ -1220,7 +1220,7 @@ class FlightdeckApp(App[None]):
         ran is finished, which tells the lane what changed, even when it ended at once."""
         from textual.app import SuspendNotSupported
 
-        from .takeover import not_started, run_in_terminal
+        from .takeover import not_started, run_in_terminal, takeover_banner
 
         if getattr(session, "busy", False):
             self.inform(f"{lane_id} is finishing a command; your shell opens when it ends")
@@ -1229,7 +1229,7 @@ class FlightdeckApp(App[None]):
         except TakeoverRefused as exc:
             return str(exc), str(exc)
         try:
-            ended = await run_in_terminal(self, shell.argv, shell.cwd, shell.env)
+            ended = await run_in_terminal(self, shell.argv, shell.cwd, shell.env, banner=takeover_banner(lane_id, shell.cwd))
         except BaseException as exc:
             abandon = getattr(session, "abandon", None)
             if abandon is not None:

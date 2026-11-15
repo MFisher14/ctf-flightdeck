@@ -488,8 +488,9 @@ SSH. If neither can be shown to have worked, the status line says so and what to
 (iTerm2) or Shift while you drag. That selection is also the way to copy from the full
 needs-you card, the diff and the lane list, which flightdeck's own selection does not reach.
 
-`t` takes over a lane's shell (its container in Docker): exit it to hand the lane back, and the
-lane hears what you changed. The shell starts clean: it reads no startup file, and with `--host`
+`t` takes over a lane's shell (its container in Docker), under a line that names the lane and
+its folder: exit it (or `ctrl+d`) to hand the lane back, and the lane hears what you changed.
+The shell starts clean: it reads no startup file, and with `--host`
 its HOME is a new folder only you can read, outside the workspace, so nothing the lane wrote runs
 before you type. `e` escalates a lane to the next model in your ladder with a summary of what it
 did, and `f` forks it.

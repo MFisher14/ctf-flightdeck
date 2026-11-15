@@ -372,7 +372,7 @@ def test_the_host_take_over_shell_opens_in_the_lane_dir_with_the_allowlisted_env
     spec = lane.interactive_shell()
     assert (spec.argv, spec.cwd) == (["bash", "--noprofile", "--norc", "-i"], lane.root)
     assert FAKE_KEY not in json.dumps(spec.env) and "planted" not in json.dumps(spec.env)
-    assert set(spec.env) <= ALLOWED | {"HISTFILE"}
+    assert set(spec.env) <= ALLOWED | {"HISTFILE", "BASH_SILENCE_DEPRECATION_WARNING"}  # the second: our own, "1"
     assert spec.env["HISTFILE"] == str(lane.root / ".flightdeck" / "takeover_history")
     home = spec.home
     assert spec.env["HOME"] == str(home) and spec.env["TMPDIR"] == str(home / "tmp")  # outside the workspace, its own
@@ -448,6 +448,7 @@ def test_the_host_take_over_shell_runs_nothing_the_lane_planted_and_keeps_its_hi
     spec = lane.interactive_shell()
     code, out = in_terminal(spec, [b"echo took-$((6*7))\r", b"bash -c 'echo child-$((6*7))'\r", b"exit\r"])
     assert code == 0 and b"took-42" in out and b"child-42" in out, out
+    assert b"default interactive shell is now zsh" not in out  # macOS's bash says so at every start: not to the player
     assert sorted(p.name for p in marks.iterdir()) == []
     assert history.read_text().splitlines() == ["echo took-$((6*7))", "bash -c 'echo child-$((6*7))'", "exit"]
     assert remove_shell_home(spec) == "" and not os.path.lexists(spec.home)

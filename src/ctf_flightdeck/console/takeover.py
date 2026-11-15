@@ -52,6 +52,13 @@ class ShellExit:
         return f"the shell exited at once with status {self.status}{meaning}"
 
 
+def takeover_banner(lane_id: str, cwd: Path | None) -> str:
+    """The line the take-over's shell opens under: whose shell, where (the lane's container
+    when there is no folder on this machine), and how to hand it back."""
+    where = f"in {cwd}" if cwd is not None else "in its container"
+    return f"flightdeck: {lane_id}'s shell, {where}. The lane is paused; exit (or ctrl+d) hands it back."
+
+
 def not_started(exc: OSError, argv: Sequence[str]) -> str:
     """Why the shell's program did not start, in words: the program or folder it names, never
     its environment."""
@@ -78,8 +85,12 @@ def hand_terminal(tty: int, group: int) -> None:
     os.tcsetpgrp(tty, group)
 
 
-async def run_in_terminal(app: App, argv: Sequence[str], cwd: Path | None, env: Mapping[str, str] | None) -> ShellExit:
-    """Run `argv` with the terminal until it exits; say how it ended.
+async def run_in_terminal(
+    app: App, argv: Sequence[str], cwd: Path | None, env: Mapping[str, str] | None, *, banner: str = ""
+) -> ShellExit:
+    """Run `argv` with the terminal until it exits; say how it ended. `banner`, when given, is
+    written to the terminal first, on a line of its own: where the player is and how to get
+    back (a take-over's shell starts at a bare prompt).
 
     Raises textual.app.SuspendNotSupported where the console cannot let go of the terminal
     (a headless or web console), OSError when there is no terminal or the program cannot be
@@ -89,7 +100,10 @@ async def run_in_terminal(app: App, argv: Sequence[str], cwd: Path | None, env: 
     with app.batch_update():  # nothing is drawn while the player has the terminal
         with app.suspend():
             try:
-                ended = await _foreground(terminal(), argv, cwd, env)
+                tty = terminal()
+                if banner:
+                    os.write(tty, f"\r\n{banner}\r\n".encode("utf-8", "replace"))
+                ended = await _foreground(tty, argv, cwd, env)
             except BaseException as exc:  # raised once the console is back (see the module's doc)
                 failure = exc
     if failure is not None:
