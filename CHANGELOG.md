@@ -17,6 +17,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - `/` alone in the command bar, sent after esc closed its list, says `/ alone is no command:
   type a command's name after it, the list shows them; esc clears the bar` instead of
   `Unknown command /: type / to see the list`.
+- The practice score says once which lanes had turns with no price (`L01, L02 and L08 had
+  turns with no price, …`), not the same line for every lane.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
