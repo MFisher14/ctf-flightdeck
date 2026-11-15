@@ -26,7 +26,7 @@ from ctf_flightdeck.setup import API_CHECKS, Check
 
 
 def body(app) -> str:
-    return "\n".join(str(w.render()) for w in app.screen.query("Static"))
+    return "\n".join(str(w.content) for w in app.screen.query("Static"))  # what each shows, as text (a Sheet is its plain)
 
 
 class StandIn:

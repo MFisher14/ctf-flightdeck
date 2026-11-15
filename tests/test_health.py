@@ -4,10 +4,12 @@ set, and doctor's checks, run in a child process the screen stops when the playe
 from __future__ import annotations
 
 import asyncio
+import io
 import sys
 import time
 
 import pytest
+from rich.console import Console
 from test_home import SLOW_DOCKER, docker_asked, drive_home, ended, slow_docker
 
 from ctf_flightdeck import health, setup
@@ -125,6 +127,45 @@ def test_check_text_from_a_file_cannot_draw_on_the_screen():
     assert "\x1b" not in text and "bad" in line and "second line" in line  # one line, and no escape reaches the terminal
 
 
+def drawn(renderable, width: int) -> list[str]:
+    """`renderable` as a terminal `width` columns wide draws it, without colours."""
+    console = Console(file=io.StringIO(), width=width, color_system=None, legacy_windows=False)
+    with console.capture() as captured:
+        console.print(renderable)
+    return [line.rstrip() for line in captured.get().splitlines()]
+
+
+def test_a_long_value_or_where_wraps_under_its_own_column_never_under_the_name():
+    folder = "/home/player/" + "a-folder-with-a-long-name/" * 4 + "config.toml"  # no space to wrap at
+    rows = [screen.Row("Config", folder, "named by $FLIGHTDECK_CONFIG"),
+            screen.Row("API key", "OPENROUTER_API_KEY: not set",
+                       "put OPENROUTER_API_KEY=<your key> in /home/player/.config/flightdeck/keys.env, or export it")]
+    lines = drawn(screen.settings_text(rows), 60)
+    assert lines[0] == "Settings" and lines[1].startswith("Config    /home/player/")
+    starts = [n for n, line in enumerate(lines) if line[:1].strip()]
+    assert starts == [0, 1, starts[2]] and lines[starts[2]].startswith("API key   OPENROUTER")  # only the heading and names at 0
+    assert all(line.startswith(" " * screen.NAME_WIDTH) and line[screen.NAME_WIDTH] != " " for line in lines[2:starts[2]])
+    assert "".join(line[screen.NAME_WIDTH:] for line in lines[1:starts[2]]).startswith(folder)  # the whole path, in order
+    assert len(lines) - starts[2] >= 3  # the where line wrapped too, under the value
+    assert all(line.startswith(" " * screen.NAME_WIDTH) for line in lines[starts[2] + 1:])
+
+
+def test_a_long_check_detail_and_fix_wrap_under_the_check_never_under_its_mark():
+    checks = [Check("lane image", False, "Docker did not answer within 60 seconds, so the lane image could not be checked",
+                    "start Docker Desktop, or set [lanes] runtime = \"host\" in your config to run lanes on this machine",
+                    essential=False)]
+    lines = drawn(screen.checks_text(checks), 50)
+    (first,) = [n for n, line in enumerate(lines) if line.startswith("warn lane image: Docker")]
+    assert len(lines) - first >= 4  # the detail and the fix each took more than a line
+    assert all(line.startswith(" " * (screen.MARK_WIDTH + 1)) and line[screen.MARK_WIDTH + 1] != " " for line in lines[first + 1:])
+    assert any(line.strip().startswith("fix: start Docker") for line in lines[first + 1:])
+
+
+def test_the_plain_sheet_has_the_lines_under_the_grid_too():
+    sheet = screen.checks_text([Check("python", True, "Python 3.12")]).then(screen.Text("Checked just now."))
+    assert sheet.plain.splitlines()[-2:] == ["ok   python: Python 3.12", "Checked just now."] and str(sheet) == sheet.plain
+
+
 def test_doctor_measures_the_terminal_its_caller_names(machine):
     (check,) = [c for c in setup.doctor(machine, terminal=(80, 24)) if c.name == "terminal"]
     assert check.detail.startswith("80x24:")
@@ -182,7 +223,7 @@ async def open_health(app, pilot):
 
 
 def body(app) -> str:
-    return "\n".join(str(w.render()) for w in app.screen.query("Static"))
+    return "\n".join(str(w.content) for w in app.screen.query("Static"))  # what each shows, as text (a Sheet is its plain)
 
 
 def test_the_home_menu_offers_settings_and_health_last_and_after_setup_home_names_it(machine):
