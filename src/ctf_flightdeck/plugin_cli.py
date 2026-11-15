@@ -172,6 +172,8 @@ def pull_and_report(caller, board: Path, *, name: str, url: str) -> None:
             return written, None, str(exc)
         return written, solved, None
 
+    # A pull may take minutes (a plugin's has 300 s): said first, so a slow one is not a frozen terminal.
+    typer.echo(f"pulling the board through {caller.label}...", err=True)
     try:
         written, solved, why = asyncio.run(run())
     except manifest.PluginError as exc:

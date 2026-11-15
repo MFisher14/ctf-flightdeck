@@ -26,6 +26,7 @@ from ctf_flightdeck.plugins.manifest import PluginError
 
 from plugin_kit import TOKEN, calls, challenge, make_plugin, set_replies
 from serving import Serving
+from test_http_event import pulled
 
 runner = CliRunner()
 URL = "https://ctf.example.test"
@@ -814,7 +815,7 @@ def test_plugin_pull_writes_the_board_reads_the_solved_list_and_submits_nothing(
     board = tmp_path / "quals" / "board"
     result = invoke("pull", event)
     assert result.exit_code == 0, result.output
-    assert result.output == f"pulled into {board}: 3 challenges (misc 2, web 1), 1 listed as solved; nothing was submitted\n"
+    assert pulled(result) == f"pulled into {board}: 3 challenges (misc 2, web 1), 1 listed as solved; nothing was submitted\n"
     assert [seen["request"]["op"] for seen in calls(root)] == ["pull", "solved"]
     for seen in calls(root):
         assert seen["env"]["FLIGHTDECK_PLUGIN_TOKEN"] == TOKEN and seen["request"]["url"] == URL and seen["request"]["event"] == "Quals"
@@ -824,9 +825,9 @@ def test_plugin_pull_writes_the_board_reads_the_solved_list_and_submits_nothing(
     set_replies(root, {**LISTED, "pull": {**LISTED["pull"], "answer": {"challenges": more}}})
     other = tmp_path / "elsewhere"
     again = invoke("pull", event)
-    assert again.output == f"pulled into {board}: 4 challenges (misc 2, web 2), 1 new, 1 listed as solved; nothing was submitted\n"
+    assert pulled(again) == f"pulled into {board}: 4 challenges (misc 2, web 2), 1 new, 1 listed as solved; nothing was submitted\n"
     named = invoke("pull", event, other)  # FOLDER: another board folder than the profile's
-    assert named.exit_code == 0 and named.output.startswith(f"pulled into {other}: 4 challenges")
+    assert named.exit_code == 0 and pulled(named).startswith(f"pulled into {other}: 4 challenges")
     assert [seen["request"]["op"] for seen in calls(root)] == ["pull", "solved"] * 3
 
 
@@ -965,13 +966,13 @@ def test_plugin_pull_says_why_the_plugin_failed_and_never_shows_the_token(tmp_pa
     monkeypatch.setenv("ACME_TOKEN", TOKEN)
     event = event_file(tmp_path)
     result = invoke("pull", event)
-    assert (result.exit_code, result.output) == (
+    assert (result.exit_code, pulled(result)) == (
         2, "flightdeck: the acme plugin could not pull the board: it exited with status 1: 401 for token <token>\n")
     set_replies(root, {"pull": LISTED["pull"], "solved": {"raw": "<html>"}})
     result = invoke("pull", event)
     board = tmp_path / "quals" / "board"
     assert result.exit_code == 2 and TOKEN not in result.output
-    assert result.output == (
+    assert pulled(result) == (
         f"pulled into {board}: 3 challenges (misc 2, web 1); nothing was submitted\n"
         f"flightdeck: could not read the solved list from the acme plugin: its answer is not one JSON object; what was pulled "
         f"stays in {board}\n")

@@ -269,6 +269,15 @@ def invoke(*args):
     return runner.invoke(http_cli.app, [str(a) for a in args], prog_name="flightdeck http")
 
 
+def pulled(result) -> str:
+    """A pull's output after its first line, which must say that the pull has started (a slow
+    platform or plugin would otherwise look like a frozen terminal)."""
+    first, _, rest = result.output.partition("\n")
+    assert first.startswith("pulling the board through ") and first.endswith("..."), result.output
+    assert first + "\n" in result.stderr and first not in result.stdout  # said on stderr: stdout stays the report
+    return rest
+
+
 @pytest.fixture
 def own_config(tmp_path, monkeypatch) -> Path:
     """The player's config for the commands: a file in tmp_path, never the real one."""
@@ -368,7 +377,7 @@ def test_http_pull_writes_the_board_reads_the_solved_list_and_submits_nothing(tm
         event = event_file(tmp_path, fake.url)
         result = invoke("pull", event)
         assert result.exit_code == 0, result.output
-        assert result.output == f"pulled into {board}: 3 challenges (misc 2, web 1), 1 listed as solved; nothing was submitted\n"
+        assert pulled(result) == f"pulled into {board}: 3 challenges (misc 2, web 1), 1 listed as solved; nothing was submitted\n"
         assert fake.kinds() == ["login", "challs", "file", "me"]  # one sign-in serves the pull and the solved list
         assert json.loads((board / "plugin.json").read_text()) == {
             "format": 1, "plugin": "http", "url": fake.url, "refs": {"done-before": "done-a4d0", "warm-up": "warm-7f3a", "web-thing": "web-19c2"}}
@@ -376,11 +385,11 @@ def test_http_pull_writes_the_board_reads_the_solved_list_and_submits_nothing(tm
         assert [item.challenge.id for item in load_board(board).challenges] == ["done-before", "warm-up", "web-thing"]
         fake.add(RTask("new-55aa", "Newer", category="web", files={"more.txt": b"more\n"}))
         again = invoke("pull", event)
-        assert again.output == f"pulled into {board}: 4 challenges (misc 2, web 2), 1 new, 1 listed as solved; nothing was submitted\n"
+        assert pulled(again) == f"pulled into {board}: 4 challenges (misc 2, web 2), 1 new, 1 listed as solved; nothing was submitted\n"
         assert len(fake.of("file")) == 2 and fake.of("submit") == []  # the first file was not fetched a second time
         other = tmp_path / "elsewhere"
         named = invoke("pull", event, other)  # FOLDER: another board folder than the profile's
-        assert named.exit_code == 0 and named.output.startswith(f"pulled into {other}: 4 challenges")
+        assert named.exit_code == 0 and pulled(named).startswith(f"pulled into {other}: 4 challenges")
     assert TEAM_TOKEN not in (board / "plugin.json").read_text()
 
 
@@ -402,7 +411,7 @@ def test_http_pull_refuses_a_folder_that_holds_another_board(tmp_path, own_confi
         result = invoke("pull", event_file(tmp_path, fake.url))
         assert fake.requests == []
     assert result.exit_code == 2
-    assert result.output == (f"flightdeck: {board} holds a board pulled by something other than the http adapter or from another address: "
+    assert pulled(result) == (f"flightdeck: {board} holds a board pulled by something other than the http adapter or from another address: "
                              "use a new folder\n")
 
 

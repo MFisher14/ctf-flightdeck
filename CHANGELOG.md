@@ -15,6 +15,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - "The token variable ... is not set" (from `http check`, `http pull`, `plugin pull` and
   `play --event`) now says where your keys file is: `put RCTF_TOKEN=<token> in your keys file
   (~/.config/ctf-flightdeck/keys.env) or export it`.
+- `flightdeck plugin pull` and `flightdeck http pull` say `pulling the board through ...` (on
+  stderr) before they start, so a plugin that takes its time (a pull may take five minutes)
+  no longer looks like a frozen terminal.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
