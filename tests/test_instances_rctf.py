@@ -68,6 +68,8 @@ def test_rctfs_shape_is_one_route_with_four_methods_for_the_http_platform():
     ({"plugin": "rctf", "pending_states": ["running"]}, "running_states, pending_states and failed_states must not share a word"),
     ({"plugin": "rctf", "failed_states": ["starting"]}, "running_states, pending_states and failed_states must not share a word"),
     ({"plugin": "rctf", "failed_states": "errored"}, "instances.failed_states must be a list of up to 16 distinct words"),
+    ({"plugin": "rctf", "running_states": [["running"]]}, "instances.running_states must be a list of up to 16 distinct words"),
+    ({"plugin": "rctf", "pending_states": [{"a": 1}]}, "instances.pending_states must be a list of up to 16 distinct words"),
     ({"plugin": "docker_per_team", "running_states": ["up"]}, "running_states, pending_states and failed_states need state_key"),
     ({"plugin": "docker_per_team", "failed_states": ["dead"]}, "running_states, pending_states and failed_states need state_key"),
     ({"plugin": "chall_manager", "endpoints_key": "a b"}, "instances.endpoints_key must be a JSON key name"),

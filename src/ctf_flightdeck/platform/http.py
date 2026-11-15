@@ -353,7 +353,7 @@ class HttpConfig:
     def variable_prefix(self) -> str | None:
         """With a preset, what the name of the event's token variable may start with: the
         preset's name in capitals and a _ (RCTF_), with no version number: rctf2's is RCTF_ too."""
-        return re.sub(r"[0-9]+$", "", self.preset).upper().replace("-", "_") + "_" if self.preset else None
+        return variable_prefix(self.preset) if self.preset else None
 
     def names_token(self, name: str) -> bool:
         """Whether `name` is a variable named for an event's token on this platform:
@@ -387,6 +387,12 @@ NOT_BUILT = {
 }
 """Keys a table for another platform may want, which this engine does not have: named, with
 what they stand for, so the answer is never "unknown key" alone."""
+
+
+def variable_prefix(preset: str) -> str:
+    """What the name of a token variable for `preset` may start with: its name in capitals
+    and a _, with no version number (RCTF_ for rctf and rctf2)."""
+    return re.sub(r"[0-9]+$", "", preset).upper().replace("-", "_") + "_"
 
 
 def preset_text(name: str) -> str:

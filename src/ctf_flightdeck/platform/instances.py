@@ -436,8 +436,8 @@ def parse_config(table: object) -> InstancesConfig:
 
 def _words(name: str, value: object) -> tuple[str, ...]:
     """running_states, pending_states or failed_states: a list of the words the state key may hold."""
-    if not isinstance(value, list) or len(value) > MAX_STATES or len(set(value)) != len(value) or \
-            not all(isinstance(word, str) and word.strip() and len(word) <= 64 for word in value):
+    if not isinstance(value, list) or len(value) > MAX_STATES or \
+            not all(isinstance(word, str) and word.strip() and len(word) <= 64 for word in value) or len(set(value)) != len(value):
         raise ValueError(f'instances.{name} must be a list of up to {MAX_STATES} distinct words, such as ["running"]')
     return tuple(value)
 
