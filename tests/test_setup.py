@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
 from dataclasses import replace
 
@@ -1110,6 +1111,54 @@ def test_answers_for_a_provider_are_the_config_init_writes_for_it():
     assert (custom.base_url, custom.key_env, custom.dollar_cap) == ("https://models.example.test/v1", "", 2.0)
     with pytest.raises(ValueError, match="no address or key variable of its own"):
         setup.answers_for("custom", ("m",), "host")
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:8000/v1", "http://localhost:8000/v1", "http://LOCALHOST:8000/v1", "http://[::1]:8000/v1"])
+def test_a_custom_server_on_this_machine_gets_no_dollar_cap_and_keeps_the_token_cap(tmp_path, url):
+    """P92: like Ollama and MLX, a custom server here bills nothing flightdeck can price, so a
+    dollar cap would stop every lane on its first turn to ask about it. The token cap stays."""
+    from ctf_flightdeck import setup
+
+    here = setup.answers_for("custom", ("m",), "host", base_url=url, key_env="")
+    assert (here.dollar_cap, here.token_cap) == (None, 400_000)
+    config = load_config(write_config(here, tmp_path / "config.toml"))
+    assert (config.lanes.dollar_cap, config.lanes.token_cap) == (None, 400_000)
+    assert setup.server_lines(here, "custom")[0] == setup.LOCAL_PROXY_NOTE
+
+
+@pytest.mark.parametrize("provider, url", [
+    ("custom", "https://models.example.test/v1"),  # a remote API: it may bill
+    ("custom", "http://127.0.0.1.example.test/v1"),  # only looks local
+    ("openai", "http://127.0.0.1:8000/v1"),  # OpenAI's own provider through a local proxy: OpenAI bills it
+    ("openrouter", "http://localhost:8000/v1"),
+])
+def test_a_server_that_may_bill_keeps_the_dollar_cap_and_hears_no_proxy_note(provider, url):
+    from ctf_flightdeck import setup
+
+    answers = setup.answers_for(provider, ("m",), "host", base_url=url, key_env="MY_MODEL_KEY" if provider == "custom" else None)
+    assert answers.dollar_cap == 2.0
+    assert setup.LOCAL_PROXY_NOTE not in setup.server_lines(answers, provider)
+
+
+def test_ollama_and_mlx_hear_no_proxy_note():
+    from ctf_flightdeck import setup
+
+    for provider in setup.LOCAL_PROVIDERS:
+        answers = setup.answers_for(provider, ("m",), "host")
+        assert answers.dollar_cap is None and setup.LOCAL_PROXY_NOTE not in setup.server_lines(answers, provider)
+
+
+def test_the_proxy_note_names_the_keys_that_load():
+    """The note names [lanes] dollar_cap and [prices]: a config with both set as it says loads, and caps the lane."""
+    from ctf_flightdeck import setup
+    from ctf_flightdeck.config import parse_config
+
+    assert "dollar_cap under [lanes]" in setup.LOCAL_PROXY_NOTE and "[prices]" in setup.LOCAL_PROXY_NOTE
+    answers = setup.answers_for("custom", ("m",), "host", base_url="http://127.0.0.1:8000/v1", key_env="")
+    text = setup.render(answers).replace("dollar_cap = false", "dollar_cap = 2")
+    text = text.replace("[lanes]", '[prices]\nm = { input = 1.0, output = 2.0 }\n\n[lanes]')
+    config = parse_config(text, Path("config.toml"))
+    assert config.lanes.dollar_cap == 2.0 and "m" in config.prices
 
 
 def test_a_setup_that_cannot_be_written_keeps_no_key_and_a_key_that_cannot_be_kept_leaves_no_config(tmp_path, monkeypatch):

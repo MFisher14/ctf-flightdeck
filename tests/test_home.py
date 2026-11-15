@@ -921,6 +921,22 @@ def test_after_setup_the_wait_for_docker_is_said_before_it_and_a_docker_that_is_
     assert len(heard) == 2 and not (folder / "asked").exists() and "asking Docker" not in capsys.readouterr().err
 
 
+def test_after_setup_for_a_custom_server_here_the_notes_say_it_has_no_dollar_cap(home, fresh):
+    """P92: the home screen's setup writes no dollar cap for a custom server on this machine, and
+    its notes carry the one line for a local proxy to a paid API; a remote one hears nothing of it."""
+    from ctf_flightdeck import setup
+    from ctf_flightdeck.config import load_config
+    from ctf_flightdeck.console.home import Setup
+
+    here = setup.answers_for("custom", ("m",), "host", base_url="http://127.0.0.1:8000/v1", key_env="")
+    ready = cli._set_up(Setup(here, "custom", "", "practice"))
+    assert setup.LOCAL_PROXY_NOTE in ready.notes and load_config(fresh).lanes.dollar_cap is None
+    fresh.unlink()
+    away = setup.answers_for("custom", ("m",), "host", base_url="https://models.example.test/v1", key_env="")
+    ready = cli._set_up(Setup(away, "custom", "", "practice"))
+    assert setup.LOCAL_PROXY_NOTE not in ready.notes and load_config(fresh).lanes.dollar_cap == 2.0
+
+
 def test_a_setup_that_cannot_be_kept_stops_with_nothing_written_and_never_shows_the_key(home, fresh, tmp_path, monkeypatch):
     from ctf_flightdeck import keys, setup
     from ctf_flightdeck.console.home import Setup

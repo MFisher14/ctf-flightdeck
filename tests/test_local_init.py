@@ -114,6 +114,9 @@ def test_a_custom_server_on_this_machine_gets_them_too(tmp_path, monkeypatch):
                           "--key-env", "", "--models", "m", "--host")
     assert result.exit_code == 0, result.output
     assert (load_config(target).api.timeout, load_config(target).api.max_tokens) == (600.0, 8192)
+    assert load_config(target).lanes.dollar_cap is None  # P92: nothing here to price, so no first-turn budget question
+    assert "dollar cap: none, for a server on this machine (the token cap still holds); if it passes calls on to a paid " \
+           "API, set dollar_cap under [lanes] and the models' prices under [prices]" in one_line(result.output)
 
 
 # ---------------------------------------------------------------------- Ollama's context
