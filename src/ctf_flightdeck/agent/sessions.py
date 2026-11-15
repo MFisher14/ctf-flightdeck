@@ -31,7 +31,7 @@ many it held; a read that sees no more output after them releases them (a prompt
 without a newline, say), and a read that matched `until` shows the match whole. What such a
 read showed that could start a secret is scrubbed again with the next read's output, so the
 rest of the secret is still found; and the oldest bytes dropped from a full buffer never end
-partway into a secret.
+partway into a secret, one whose start such a read showed included.
 """
 
 from __future__ import annotations
@@ -148,13 +148,15 @@ class Session:
         self.added += len(data)
         over = len(self.buffer) - self.cap
         if over > 0 and self.unfinished is not None:
-            # a secret the cut would split is kept whole, so that the scrubber finds it: the
-            # buffer may then pass the cap by less than a secret's length
-            over -= self.unfinished(bytes(self.buffer[:over]))
+            # a secret the cut would split is kept whole, so that the scrubber finds it, and so is
+            # the rest of one whose start a read showed (the carry): the buffer may then pass the
+            # cap by less than a secret's length
+            over -= self.unfinished(self.carry + bytes(self.buffer[:over]))
         if over > 0:
             del self.buffer[:over]
             self.dropped += over
             self.held = max(0, self.held - over)
+            self.carry = b""  # what follows it is gone, and no secret it starts runs past the cut
         self._last = asyncio.get_running_loop().time()
         self._changed.set()
 

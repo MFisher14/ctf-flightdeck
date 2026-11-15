@@ -315,6 +315,28 @@ def test_dropping_the_oldest_bytes_never_cuts_a_secret_in_two(tmp_path, handout)
     assert result.content.endswith("\n[API_KEY]" + "a" * 990)  # kept whole, so found
 
 
+def test_dropping_the_oldest_bytes_never_cuts_the_rest_of_a_secret_whose_start_a_read_showed(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout, scrub=Secrets({"API_KEY": KEY}))
+        box.sessions = Sessions(box.workspace.open_session, cap=1000, unfinished=box.scrub.unfinished)
+        # the key's start, released by a read; then its rest and 984 bytes: a cut at the cap
+        # would land 2 bytes into the rest
+        await call(box, "session_start", {"command": f"printf 'half={KEY[:7]}'; sleep 2; printf -- '{KEY[7:]}'; "
+                                                     "head -c 984 /dev/zero | tr '\\0' a; sleep 30", "wait_seconds": 0.3})
+        released = await call(box, "session_send", {"session": "s1", "wait_seconds": 0.3})
+        await asyncio.sleep(2.5)
+        rest = await call(box, "session_send", {"session": "s1", "wait_seconds": 2})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return released, rest
+
+    released, rest = asyncio.run(go())
+    assert released.content.endswith("\n" + KEY[:7])
+    for text in (rest.content, rest.output, rest.excerpt):
+        assert KEY[9:] not in text
+    assert rest.content.endswith("\n[API_KEY]" + "a" * 984)  # kept whole with the shown start, so found
+
+
 def test_long_output_is_cut_and_saved_like_the_shells(tmp_path, handout):
     async def go():
         box = await host_box(tmp_path, handout, max_chars=500)
