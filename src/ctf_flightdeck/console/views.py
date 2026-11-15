@@ -357,6 +357,7 @@ class HeaderFacts:
     mock: str = ""  # the mock's tag; "" in a run
     later: bool = False  # a lane's coding-agent CLI turn is under way (an ended lane's too): its cost is still to come
     autopilot: bool = False  # autopilot is engaged (Deck.autopilot): the header says so
+    gated: str = ""  # why the start gate holds new lanes back (Deck.gated: the machine is busy); "" while they start
 
 
 def header_facts(deck: Deck, mock: str = "") -> HeaderFacts:
@@ -367,10 +368,12 @@ def header_facts(deck: Deck, mock: str = "") -> HeaderFacts:
         len(deck.needing()), deck.held, tokens, dollars, unpriced, deck.now, mock,
         later=any(lane.dollars_later for lane in deck.lanes.values()),
         autopilot=deck.autopilot is not None and bool(deck.autopilot.engaged),
+        gated=deck.gated if deck.queue else "",  # with nothing queued, nothing waits for it
     )
 
 
 HELD = "queue held"
+GATED = "lanes wait"  # the start gate (the governor) holds new lanes back: no hold for the player to lift
 AUTOPILOT, AUTOPILOT_SHORT = "AUTOPILOT", "AP"  # the header's chip while autopilot is engaged; the compact layout's
 HELD_WHY_MIN = 12  # cells: less room than this after the other pieces, and the header names no reason
 WHY_OUTRANKS = 3  # pieces of this drop rank or more (the event's name, the clock, tokens, dollars) make room for it
@@ -437,10 +440,10 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = F
         out.append(("autopilot", 0, (AUTOPILOT_SHORT if compact else AUTOPILOT, theme.INK, theme.GREEN, True)))
     if facts.need:
         out.append(("need", 0, (f"▲ {facts.need} need you", theme.WHITE, theme.RED, True)))
-    elif not facts.held and (compact or not simple):  # a held queue is not all clear: nothing starts until the player lifts it
+    elif not (facts.held or facts.gated) and (compact or not simple):  # a held queue is not all clear: nothing starts
         out.append(("need", 0, ("all clear", theme.MUTED, theme.SEGMENT, False)))
-    if facts.held:
-        out.append(("held", 0, (HELD, theme.INK, theme.YELLOW, True)))
+    if facts.held or facts.gated:
+        out.append(("held", 0, (HELD if facts.held else GATED, theme.INK, theme.YELLOW, True)))
     dollars = f"${fmt.dollars(facts.dollars)}" + ("+" if facts.unpriced else "") + (LATER if facts.later else "")  # as lane_dollars
     if compact or simple:
         out.append(("dollars", 0, plain(dollars) if simple and not compact else (dollars, theme.TEXT, theme.SEGMENT, False)))
@@ -473,16 +476,17 @@ def fit_header(facts: HeaderFacts, width: int, *, compact: bool = False, simple:
 
     while text.cell_len > width and any(rank for _, rank, _ in pieces):
         drop()
-    if not facts.held:
+    if not (facts.held or facts.gated):
         return text, left_out
-    why = untrusted(facts.held, one_line=True)
+    label = HELD if facts.held else GATED
+    why = untrusted(facts.held or facts.gated, one_line=True)
     while width - text.cell_len - len(": ") < cell_len(why) and any(rank >= WHY_OUTRANKS for _, rank, _ in pieces):
         drop()
     room = width - text.cell_len - len(": ")
     if room >= HELD_WHY_MIN:
         index = next(i for i, (name, _, _) in enumerate(pieces) if name == "held")
         name, rank, (_, fg, bg, bold) = pieces[index]
-        pieces[index] = (name, rank, (f"{HELD}: {_cut(why, room)}", fg, bg, bold))
+        pieces[index] = (name, rank, (f"{label}: {_cut(why, room)}", fg, bg, bold))
         text = theme.segments([part for _, _, part in pieces])
     return text, left_out
 

@@ -190,8 +190,8 @@ class FleetScreen(Screen, inherit_bindings=False):
         Binding("o", "open_lane", "open"),
         Binding("question_mark", "app.help", "help", key_display="?"),
         Binding("p", "lane('pause')", "pause"),
-        Binding("h", "lane('hint')", "hint"),
-        Binding("r", "lane('redirect')", "redirect"),
+        Binding("h", "lane('hint')", "hint", priority=True),  # these two open the bar: acted on as they arrive (action_command)
+        Binding("r", "lane('redirect')", "redirect", priority=True),
         Binding("f", "lane('fork')", "fork"),
         Binding("k", "lane('kill')", "kill"),
         Binding("e", "lane('escalate')", "escalate"),
@@ -201,7 +201,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         Binding("A", "approve_all", "approve all"),
         Binding("x", "lane('dismiss')", "dismiss"),
         Binding("c", "claim", "claim"),
-        Binding("slash", "command", "commands", key_display="/"),
+        Binding("slash", "command", "commands", key_display="/", priority=True),  # acted on as it arrives (action_command)
         Binding("s", "sort", "sort"),
         Binding("tab", "app.focus_next", "focus"),
         Binding("shift+tab", "app.focus_previous", "focus back", show=False),
@@ -513,6 +513,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         lane = deck.lanes.get(self.selected_lane or "")
         if lane is None:
             why.update(Text(" No lanes yet.", theme.MUTED))
+        elif not views.lane_matches(deck, lane, self.filter_text, simple=self.simple):
+            # every key refuses a lane the filter hides (target_lane), so its answers are not offered
+            why.update(Text(f" {lane.id} is hidden by the filter: esc clears it", theme.MUTED))
         elif self.compact:
             why.update(views.compact_why(deck, lane, why.size.width or self.size.width - 2))
         else:
@@ -656,6 +659,8 @@ class FleetScreen(Screen, inherit_bindings=False):
     # ------------------------------------------------------------------ actions
 
     def action_lane(self, verb: str) -> None:
+        if verb in ("hint", "redirect") and self.query_one("#bar", CommandBar).field.has_focus:
+            raise SkipAction()  # a priority key (see action_command): in the bar, h and r are text
         lane = self.target_lane()
         if lane is None:
             return
@@ -715,6 +720,13 @@ class FleetScreen(Screen, inherit_bindings=False):
             table.move_cursor(row=table.cursor_row, animate=False, scroll=True)
 
     def action_command(self) -> None:
+        """`/`: the bar, with the focus in it before the next key is handed on. The binding is a
+        priority one, acted on as the key arrives: keys typed straight after it (a terminal
+        hands over keys typed fast all at once) are the command's name and go into the bar,
+        never to the fleet's keys (the a of /approve is no approval, the q of /queue no quit).
+        A `/` typed in the bar is text: the key goes on to the field."""
+        if self.query_one("#bar", CommandBar).field.has_focus:
+            raise SkipAction()
         self.start_command("/")
 
     def action_attach(self) -> None:

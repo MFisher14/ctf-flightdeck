@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import time
 
 import pytest
 from textual.app import App
@@ -253,8 +254,9 @@ def test_an_editor_that_cannot_be_run_is_named_and_the_other_variable_is_not_tri
     drive(app, script, SIZE)
 
 
-def test_an_editor_that_exits_badly_leaves_the_bar_as_it_was(editor_env):
-    stand_in = StandIn(writes="half written", status=1)
+@pytest.mark.parametrize("status, said", [(1, "exited with status 1"), (-15, "was ended by SIGTERM")])
+def test_an_editor_that_exits_badly_leaves_the_bar_as_it_was(editor_env, status, said):
+    stand_in = StandIn(writes="half written", status=status)
     editor_env.setattr(takeover, "run_in_terminal", stand_in)
     editor_env.setenv("EDITOR", TRUE)
     deck, app = three_lanes("simple")
@@ -265,7 +267,7 @@ def test_an_editor_that_exits_badly_leaves_the_bar_as_it_was(editor_env):
         await press(pilot, "ctrl+g")
         await pilot.pause()
         assert bar(app).field.value == "kept" and not os.path.exists(stand_in.calls[0][0][-1])
-        assert_warning(app, "exited with status 1: the box keeps what it had")
+        assert_warning(app, f"{said}: the box keeps what it had")
 
     drive(app, script, SIZE)
 
@@ -407,3 +409,33 @@ def test_help_lists_the_history_and_the_editor_key():
         assert f"ctrl+g {rows['ctrl+g']}" in said and f"↑ ↓ {rows['↑ ↓']}" in said
 
     drive(app, script, (160, 200))
+
+
+def test_on_a_real_terminal_ctrl_g_hands_it_to_the_editor_and_brings_back_what_it_wrote(tmp_path):
+    """The whole way, with no stand-in: `flightdeck mock` on a pty, the bar opened with `/`,
+    ctrl+g, and an editor of the test's own (a shell script that adds a word to the file).
+    The real hand-over answers with how the editor ended (takeover.ShellExit), which the bar
+    reads as the editor's status: an editor that exits 0 gives back its text."""
+    from test_play_signals import Terminal, env_for, wait_for
+
+    script = tmp_path / "add-a-word"
+    seen = tmp_path / "seen.txt"
+    script.write_text(f'#!/bin/sh\ncp "$1" {seen}\nprintf \'%s EDITED\\n\' "$(cat "$1")" > "$1"\n')
+    script.chmod(0o700)
+    term = Terminal(["mock"], env_for(tmp_path, EDITOR=str(script)), tmp_path)
+    try:
+        wait_for(lambda: "Welcome to flightdeck" in term.text(), "the welcome", term)
+        time.sleep(1.0)
+        os.write(term.master, b"\x1b")  # esc: the console
+        time.sleep(1.0)
+        os.write(term.master, b"/hint a draft")
+        time.sleep(1.0)  # drawn a key at a time, so not read off the output: the editor's file says it arrived
+        os.write(term.master, b"\x07")  # ctrl+g
+        wait_for(seen.exists, "the editor run", term)
+        wait_for(lambda: "Back from your editor" in term.text() or "the box keeps what it had" in term.text(),
+                 "the console back from the editor", term)
+        assert seen.read_text() == "/hint a draft\n"  # the bar's text, in the editor's file
+        assert "the box keeps what it had" not in term.text()
+        wait_for(lambda: "a draft EDITED" in term.text(), "the editor's text in the bar", term)
+    finally:
+        term.close()

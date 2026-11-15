@@ -660,6 +660,7 @@ class HostWorkspace:
         env["TMPDIR"] = str(home / "tmp")
         env["TERM"] = os.environ.get("TERM", "dumb")  # the player's own terminal, so editors and pagers work
         env["HISTFILE"] = str(self.root / PRIVATE / "takeover_history")
+        env["BASH_SILENCE_DEPRECATION_WARNING"] = "1"  # macOS's bash opens with a note to change to zsh: not ours to say
         return ShellSpec([self.shell, "--noprofile", "--norc", "-i"], self.root, env, home=home)
 
     def _ready(self) -> str:

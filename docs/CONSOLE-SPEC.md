@@ -38,7 +38,9 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   API failure every lane would hit, or a model API that keeps failing: two lanes in a row ended on
   a rate limit, a 5xx or an overload within a few minutes, with no reply in between), "queue held" stands where "all clear" would be (or beside
   "▲ N need you"), followed by why: never "all clear", since nothing starts until the player
-  lifts the hold with `/unhold`.
+  lifts the hold with `/unhold`. While the host governor holds new lanes back and challenges
+  wait for it, "lanes wait" stands there instead, followed by why (the reading over its limit):
+  there is nothing to lift, and lanes start by themselves once the machine is back within it.
 - **Board**: every challenge with category, points, solve count, status (new ·, queued …, running ▶,
   solved by us ✓, solved by a teammate ✓ in cyan, blocked ✗, parked ‖) and owner (lane, me,
   teammate, or `L1·<engine>` when the flag that engine found solved it, whichever lane submitted

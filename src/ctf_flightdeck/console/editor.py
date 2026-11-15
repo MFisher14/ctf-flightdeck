@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+import signal
 import tempfile
 from collections.abc import Mapping
 
@@ -82,6 +83,12 @@ async def edit(app: App, text: str, environ: Mapping[str, str] | None = None) ->
             raise EditorError("this console cannot hand the terminal to an editor") from None
         except OSError as exc:
             raise EditorError(f"the editor did not start: {exc}") from None
+        if ended.status < 0:
+            try:
+                name = signal.Signals(-ended.status).name
+            except ValueError:
+                name = f"signal {-ended.status}"
+            raise EditorError(f"the editor ({argv[0]}) was ended by {name}: the box keeps what it had")
         if ended.status != 0:
             raise EditorError(f"the editor ({argv[0]}) exited with status {ended.status}: the box keeps what it had")
         try:

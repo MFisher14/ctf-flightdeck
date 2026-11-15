@@ -2554,7 +2554,7 @@ def test_the_focus_view_has_no_clock_keys_in_its_header_and_tab_goes_to_the_file
     world, app = make("sstv")
 
     async def script(pilot):
-        assert "▶ live: , freezes" in region_text(app, "#header")  # in the fleet, `,` does
+        assert "▶ live · ',' freezes" in region_text(app, "#header")  # in the fleet, `,` does
         focus = await open_focus(pilot, app, "L01")
         header = region_text(app, "#header")
         assert "▶ live" in header and "freezes" not in header
@@ -3148,7 +3148,7 @@ def test_a_take_over_whose_workspace_cannot_be_checked_still_hands_the_lane_back
     from ctf_flightdeck.agent.workspace import WorkspaceError
     from ctf_flightdeck.console import takeover
 
-    async def the_shell_ran(app, argv, cwd, env):
+    async def the_shell_ran(app, argv, cwd, env, banner=""):
         return takeover.ShellExit(0, 30.0)
 
     monkeypatch.setattr(takeover, "run_in_terminal", the_shell_ran)
@@ -3229,7 +3229,7 @@ def test_a_take_over_whose_shell_program_is_missing_hands_back_with_why_and_the_
     program, and the shell's session is abandoned, not finished: nothing ran in the workspace."""
     from ctf_flightdeck.console import takeover
 
-    async def no_docker(app, argv, cwd, env):
+    async def no_docker(app, argv, cwd, env, banner=""):
         raise FileNotFoundError(2, "No such file or directory", "docker")
 
     monkeypatch.setattr(takeover, "run_in_terminal", no_docker)
@@ -3252,7 +3252,7 @@ def test_a_take_over_whose_shell_exits_at_once_with_an_error_says_so_and_a_pause
     printed is drawn over when the console comes back: the status line keeps the status."""
     from ctf_flightdeck.console import takeover
 
-    async def exits_at_once(app, argv, cwd, env):
+    async def exits_at_once(app, argv, cwd, env, banner=""):
         return takeover.ShellExit(1, 0.1)
 
     monkeypatch.setattr(takeover, "run_in_terminal", exits_at_once)
@@ -3273,7 +3273,10 @@ def test_a_take_over_whose_shell_exits_at_once_with_an_error_says_so_and_a_pause
 def test_a_take_over_whose_shell_the_player_used_and_left_with_an_error_status_is_no_problem(monkeypatch):
     from ctf_flightdeck.console import takeover
 
-    async def used(app, argv, cwd, env):
+    banners = []
+
+    async def used(app, argv, cwd, env, banner=""):
+        banners.append(banner)
         return takeover.ShellExit(1, 300.0)  # bash exits with the last command's status
 
     monkeypatch.setattr(takeover, "run_in_terminal", used)
@@ -3282,6 +3285,8 @@ def test_a_take_over_whose_shell_the_player_used_and_left_with_an_error_status_i
     async def script(pilot):
         await press(pilot, "t")
         await until_handed_back(pilot, lane)
+        # the shell opens under a line that says whose it is and how to hand it back
+        assert banners == ["flightdeck: L01's shell, in its container. The lane is paused; exit (or ctrl+d) hands it back."]
         assert lane.state is LaneState.RUNNING
         assert lane.actions[-1].text.endswith("handed back by the player: no files changed")
         await pilot.pause()
@@ -3307,7 +3312,7 @@ def test_a_take_over_cancelled_while_the_player_has_the_shell_still_hands_the_la
 
     inside = asyncio.Event()
 
-    async def in_the_shell(app, argv, cwd, env):
+    async def in_the_shell(app, argv, cwd, env, banner=""):
         inside.set()
         await asyncio.Event().wait()
 

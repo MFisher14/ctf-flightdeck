@@ -19,10 +19,6 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   that the server's context is too small and what to set, and goes on in its context.
 - On a machine without Docker the setup form now says so and offers host, instead of showing
   "Looking for Docker…" for good with no runtime chosen, so that `ctrl+s` would not save.
-- When the host governor holds lanes back as a run starts (a busy machine), the board's line in
-  the status line says so and why (`· no new lane starts for now: load 4.0 per CPU …`): the
-  warning that said it came just before that line, which hid it. It also says `1 lane started`,
-  not `1 lanes started`.
 - Approving more budget says the new cap and what is used of it, `L01's cap is now 15k tokens
   (12k used)`, where `11k of 15k tokens` read as a cap of 11k. Approving a lane on a model with
   no price says `L01 carries on with no dollar cap; its token cap is 400k tokens (120 used)`, not
@@ -37,6 +33,27 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   does there.
 - `/settings` in a run names its `c` key `change this run's settings`, where it said `change
   this run's` and stopped.
+- A command typed fast straight after the `/` in the lane list is no longer cut short or
+  turned into keys: a letter that came before the bar had opened went to the list (`/layout`
+  arrived as `/ayout`), and there it could act (the `a` of `/approve` approved the selected
+  lane's flag, the `q` of `/queue` quit). Every key after the `/` now goes into the bar, and
+  so does every key after `h` and `r`, which open the bar with `/hint` and `/redirect`.
+- While the host governor holds new lanes back (the machine is busy) and challenges wait, the
+  header says `lanes wait` and why, and the line that says the board loaded says it too
+  (`· no new lane starts for now: load 4.0 per CPU …`): before, the governor's warning came
+  just before that line, which hid it, and the queued lanes waited with no reason on the
+  screen. That line also counts in words: `1 challenge`, `1 lane started`, not `1 lanes started`.
+- `ctrl+g` brings back what your editor wrote again. Every editor, even one that exited
+  cleanly, was taken as failed (`the editor ... exited with status ShellExit(status=0, ...): the
+  box keeps what it had`), so the box never got the edited text. An editor a signal ends now
+  says which signal.
+- A take-over's shell opens under a line that says whose shell it is, where, and that `exit`
+  (or `ctrl+d`) hands the lane back, instead of at a bare `bash-3.2$` prompt. On macOS it no
+  longer opens with bash's note about changing to zsh.
+- While the filter hides the selected lane, the line under the list says so (`L02 is hidden by
+  the filter: esc clears it`) instead of offering that lane's answers, which every key refused.
+- In `flightdeck mock`, the header's clock note quotes its keys (`▶ live · ',' freezes`, `⏸ frozen
+  · ',' resumes '.' steps`): a bare comma read as punctuation (`▶ live: , freezes`).
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes

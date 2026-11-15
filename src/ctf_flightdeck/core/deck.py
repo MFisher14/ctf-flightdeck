@@ -515,13 +515,16 @@ class Deck:
         before = len(self.lanes)
         self._fill()
         started = len(self.lanes) - before  # a lane whose start failed is gone again
+        many = len(challenges)
+        line = (f"{label}: {many} challenge{'' if many == 1 else 's'} · {started} lane{'' if started == 1 else 's'} started"
+                f" · {len(self.queue)} queued")
         # The start gate's warning, when it holds lanes back now, came just before this line, which the
         # status line shows in its place: so this line says it too, or a player sees one lane of 4 and no why
-        held = f" · no new lane starts for now: {self.gated}" if self.gated and self.queue else ""
+        if self.queue and self.gated:
+            line += f" · no new lane starts for now: {self.gated}"
         self._emit(
             EventKind.RELEASE,
-            f"{label}: {len(challenges)} challenges · {started} {'lane' if started == 1 else 'lanes'} started · "
-            f"{len(self.queue)} queued{held}",
+            line,
             data={
                 "label": label, "challenges": [ch.id for ch in challenges], "started": started, "queued": len(self.queue),
                 "event": self.config.event,  # with the names and points below, a run log names its own board

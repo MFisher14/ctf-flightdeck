@@ -267,6 +267,27 @@ def test_a_filter_that_hides_the_selected_lane_leaves_the_bar_with_no_lane():
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_filter_that_hides_the_selected_lane_takes_its_answers_off_the_why_line(layout):
+    """The why line offered the hidden lane's answers (`1 submit flag{synthetic}`) under a bar
+    that says no lane, and its keys refused them: it says the lane is hidden instead."""
+    from test_console import region_text
+
+    deck, app = three_lanes(layout)
+
+    async def script(pilot):
+        assert "submit flag{synthetic}" in region_text(app, "#why")  # L02's flag waits for a yes
+        app.fleet.set_filter("gamma")
+        await pilot.pause()
+        why = " ".join(region_text(app, "#why").split())
+        assert "flag{synthetic}" not in why and "L02 is hidden by the filter: esc clears it" in why
+        app.fleet.set_filter("")
+        await pilot.pause()
+        assert "submit flag{synthetic}" in region_text(app, "#why")
+
+    drive(app, script, SIZE)
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
 def test_an_empty_board_has_no_lane_and_its_own_placeholder_until_a_lane_starts(layout):
     deck, app = console(by_hand=True, layout=layout)
 

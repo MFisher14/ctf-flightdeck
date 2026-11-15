@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import signal
 
 import pytest
 from textual.app import App
 
 from ctf_flightdeck.console import takeover
-from ctf_flightdeck.console.takeover import QUICK_EXIT, ShellExit, not_started, run_in_terminal
+from ctf_flightdeck.console.takeover import QUICK_EXIT, ShellExit, not_started, run_in_terminal, takeover_banner
 
 
 class Driver:
@@ -111,6 +112,31 @@ def test_a_take_over_cancelled_in_the_shell_gives_the_console_back(monkeypatch, 
 
     asyncio.run(main())
     assert console.back
+
+
+def test_the_banner_is_written_to_the_terminal_before_the_shell_starts(monkeypatch, tmp_path):
+    read, write = os.pipe()
+    monkeypatch.setattr(takeover, "terminal", lambda: write)
+    monkeypatch.setattr(takeover, "hand_terminal", lambda tty, group: None)
+    banner = takeover_banner("L03", tmp_path)
+    assert banner == f"flightdeck: L03's shell, in {tmp_path}. The lane is paused; exit (or ctrl+d) hands it back."
+    marker = tmp_path / "ran"
+    try:
+        asyncio.run(run_in_terminal(Console(), ["sh", "-c", f"test -e {marker} || touch {marker}"], None, None, banner=banner))
+        os.close(write)
+        write = -1
+        with os.fdopen(read, "rb") as pipe:
+            assert pipe.read() == f"\r\n{banner}\r\n".encode()
+    finally:
+        if write >= 0:
+            os.close(write)
+    assert marker.exists()
+    no_banner_read, no_banner_write = os.pipe()
+    monkeypatch.setattr(takeover, "terminal", lambda: no_banner_write)
+    asyncio.run(run_in_terminal(Console(), ["sh", "-c", "exit 0"], None, None))  # the editor's: no banner
+    os.close(no_banner_write)
+    with os.fdopen(no_banner_read, "rb") as pipe:
+        assert pipe.read() == b""
 
 
 def test_a_shell_that_exits_with_an_error_says_its_status_and_the_terminal_comes_back_to_the_console(a_terminal):

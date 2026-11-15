@@ -152,11 +152,16 @@ class CommandBar(Vertical):
         return self.menu.has_class("-open")
 
     def start(self, text: str = "") -> None:
-        """Focus the bar with `text` in it."""
+        """Focus the bar with `text` in it. At once, and not only as Widget.focus() does it
+        (after the messages already queued): keys typed straight after the `/` are on their way
+        already, and they are the command's name, never the fleet's keys (the a of /approve
+        approves nothing). And again after those messages, so a focus asked for before this
+        (the list's, as the screen was drawn) does not take it back."""
         self._recalled = None
         field = self.field
         field.value = text
         field.cursor_position = len(text)
+        self.screen.set_focus(field)
         field.focus()
         self.refresh_menu()
 

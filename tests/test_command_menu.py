@@ -10,6 +10,9 @@ test's own under tmp_path, and nothing needs a model or a network.
 
 from __future__ import annotations
 
+import pytest
+from textual import events
+
 from ctf_flightdeck.console import theme
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.commands import COMMANDS
@@ -73,6 +76,45 @@ def test_an_alias_typed_whole_runs_its_command():
 
 
 # ---------------------------------------------------------------------- the loose list, the strict enter
+
+
+@pytest.mark.parametrize("layout", ["simple", "deck"])
+def test_keys_typed_straight_after_the_slash_go_into_the_bar_and_never_act_on_the_lane(layout):
+    """A terminal hands over keys typed fast (or held) all at once: each is queued before the
+    one before it was acted on. The `/` opens the bar, and what follows it is the command's
+    name, never the fleet's keys: the a of /approve is no approval, the q of /queue no quit."""
+    deck, app = three_lanes(layout)
+
+    async def script(pilot):
+        assert app.screen.selected_lane == "L02" and deck.lanes["L02"].pending is not None  # its flag waits for a yes
+        for key in ("slash", "a", "d", "q"):  # with no wait between them, as a terminal sends them
+            app.post_message(events.Key(key, "/" if key == "slash" else key))
+        for _ in range(4):
+            await pilot.pause()
+        assert bar(app).field.value == "/adq" and bar(app).field.has_focus
+        assert deck.lanes["L02"].pending is not None and app.is_running  # nothing was approved, declined or quit
+        await press(pilot, "slash")
+        assert bar(app).field.value == "/adq/"  # in the bar, a / is text
+
+    drive(app, script, SIZE)
+
+
+@pytest.mark.parametrize("key, command", [("h", "/hint L02 "), ("r", "/redirect L02 ")])
+def test_keys_typed_straight_after_h_or_r_go_into_the_bar_they_open(key, command):
+    """h and r open the bar on the lane as / does, so what is typed straight after them is the
+    message, never the fleet's keys (the e of a hint is no escalation, its o no open)."""
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        for typed in (key, "e", "o", "h", "r"):  # with no wait between them, as a terminal sends them
+            app.post_message(events.Key(typed, typed))
+        for _ in range(4):
+            await pilot.pause()
+        assert isinstance(app.screen, FleetScreen) and bar(app).field.has_focus
+        value = bar(app).field.value
+        assert value.startswith(command) and value.endswith("eohr"), value  # h and r in the bar are text
+
+    drive(app, script, SIZE)
 
 
 def test_enter_on_a_name_found_loosely_fills_the_bar_and_runs_nothing():

@@ -488,8 +488,9 @@ SSH. If neither can be shown to have worked, the status line says so and what to
 (iTerm2) or Shift while you drag. That selection is also the way to copy from the full
 needs-you card, the diff and the lane list, which flightdeck's own selection does not reach.
 
-`t` takes over a lane's shell (its container in Docker): exit it to hand the lane back, and the
-lane hears what you changed. The shell starts clean: it reads no startup file, and with `--host`
+`t` takes over a lane's shell (its container in Docker), under a line that names the lane and
+its folder: exit it (or `ctrl+d`) to hand the lane back, and the lane hears what you changed.
+The shell starts clean: it reads no startup file, and with `--host`
 its HOME is a new folder only you can read, outside the workspace, so nothing the lane wrote runs
 before you type. `e` escalates a lane to the next model in your ladder with a summary of what it
 did, and `f` forks it.
@@ -1622,7 +1623,8 @@ lane starts:
 
 The lanes at work carry on: the governor never stops or pauses one, and the queue keeps its
 order. One warning says when starts begin to be held and which limit it is, with the reading,
-and one says when they start again; that happens by itself (the machine is read every 15
+and while challenges wait for it the header says `lanes wait` and why; one warning says when
+they start again; that happens by itself (the machine is read every 15
 seconds), with nothing for you to lift, and autopilot stays engaged. With no lane at work, one
 lane always starts. A limit of 0 is off, and `enabled = false` turns the governor off. A reading
 flightdeck cannot take (it reads macOS and Linux) holds nothing back, and the run says so before

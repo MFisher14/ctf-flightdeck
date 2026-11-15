@@ -17,6 +17,7 @@ import pytest
 
 from ctf_flightdeck import governor
 from ctf_flightdeck.config import GovernorConfig
+from ctf_flightdeck.console import views
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.model import Challenge, DeckConfig, EventKind, LaneState
@@ -273,15 +274,30 @@ def test_while_the_gate_names_a_limit_one_lane_starts_and_the_rest_stay_queued_w
     assert driver.started() == ["c0"] and len(gate_warnings(deck)) == 1
 
 
-def test_the_release_line_says_why_lanes_wait_when_the_gate_holds_them_back():
+def test_the_release_line_counts_in_words_and_says_why_the_queued_lanes_wait():
     """The status line shows the release's line, which comes after the gate's warning: it says
-    the reason too, or a player sees one lane at work of three and nothing that says why."""
+    the reason too, or a player sees one lane at work of four and nothing that says why."""
     deck, _, _ = gated_deck()
     (released,) = events(deck, EventKind.RELEASE)
     assert released.text == f"Release: 4 challenges · 1 lane started · 3 queued · no new lane starts for now: {BUSY}"
     deck, _, _ = gated_deck(gate="")
     (released,) = events(deck, EventKind.RELEASE)
     assert released.text == "Release: 4 challenges · 3 lanes started · 1 queued"
+    calm, _, _ = gated_deck(n=1, gate="")
+    (released,) = events(calm, EventKind.RELEASE)
+    assert released.text == "Release: 1 challenge · 1 lane started · 0 queued"
+
+
+def test_the_header_says_lanes_wait_for_the_machine_and_why_until_the_gate_clears():
+    deck, _, answer = gated_deck()
+    facts = views.header_facts(deck)
+    for simple in (False, True):
+        text, _ = views.fit_header(facts, 200, simple=simple)
+        assert f"{views.GATED}: {BUSY}" in text.plain and "all clear" not in text.plain and views.HELD not in text.plain
+    answer[0] = ""
+    deck.recheck_starts()
+    text, _ = views.fit_header(views.header_facts(deck), 200)
+    assert views.GATED not in text.plain
 
 
 def test_the_gate_is_no_hold_and_stops_or_pauses_no_lane():
