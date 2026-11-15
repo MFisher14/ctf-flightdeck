@@ -99,6 +99,24 @@ def test_keys_typed_straight_after_the_slash_go_into_the_bar_and_never_act_on_th
     drive(app, script, SIZE)
 
 
+@pytest.mark.parametrize("key, command", [("h", "/hint L02 "), ("r", "/redirect L02 ")])
+def test_keys_typed_straight_after_h_or_r_go_into_the_bar_they_open(key, command):
+    """h and r open the bar on the lane as / does, so what is typed straight after them is the
+    message, never the fleet's keys (the e of a hint is no escalation, its o no open)."""
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        for typed in (key, "e", "o", "h", "r"):  # with no wait between them, as a terminal sends them
+            app.post_message(events.Key(typed, typed))
+        for _ in range(4):
+            await pilot.pause()
+        assert isinstance(app.screen, FleetScreen) and bar(app).field.has_focus
+        value = bar(app).field.value
+        assert value.startswith(command) and value.endswith("eohr"), value  # h and r in the bar are text
+
+    drive(app, script, SIZE)
+
+
 def test_enter_on_a_name_found_loosely_fills_the_bar_and_runs_nothing():
     deck, app = three_lanes("simple")
 

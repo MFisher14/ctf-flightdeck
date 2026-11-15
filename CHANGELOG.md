@@ -7,7 +7,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A command typed fast straight after the `/` in the lane list is no longer cut short or
   turned into keys: a letter that came before the bar had opened went to the list (`/layout`
   arrived as `/ayout`), and there it could act (the `a` of `/approve` approved the selected
-  lane's flag, the `q` of `/queue` quit). Every key after the `/` now goes into the bar.
+  lane's flag, the `q` of `/queue` quit). Every key after the `/` now goes into the bar, and
+  so does every key after `h` and `r`, which open the bar with `/hint` and `/redirect`.
 - While the host governor holds new lanes back (the machine is busy) and challenges wait, the
   header says `lanes wait` and why, and the line that says the board loaded says it too:
   before, its warning was overwritten at once and the queued lanes waited with no reason on

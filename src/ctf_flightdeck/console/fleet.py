@@ -190,8 +190,8 @@ class FleetScreen(Screen, inherit_bindings=False):
         Binding("o", "open_lane", "open"),
         Binding("question_mark", "app.help", "help", key_display="?"),
         Binding("p", "lane('pause')", "pause"),
-        Binding("h", "lane('hint')", "hint"),
-        Binding("r", "lane('redirect')", "redirect"),
+        Binding("h", "lane('hint')", "hint", priority=True),  # these two open the bar: acted on as they arrive (action_command)
+        Binding("r", "lane('redirect')", "redirect", priority=True),
         Binding("f", "lane('fork')", "fork"),
         Binding("k", "lane('kill')", "kill"),
         Binding("e", "lane('escalate')", "escalate"),
@@ -659,6 +659,8 @@ class FleetScreen(Screen, inherit_bindings=False):
     # ------------------------------------------------------------------ actions
 
     def action_lane(self, verb: str) -> None:
+        if verb in ("hint", "redirect") and self.query_one("#bar", CommandBar).field.has_focus:
+            raise SkipAction()  # a priority key (see action_command): in the bar, h and r are text
         lane = self.target_lane()
         if lane is None:
             return
