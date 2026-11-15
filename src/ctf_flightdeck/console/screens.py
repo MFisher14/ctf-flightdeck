@@ -688,6 +688,7 @@ class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
     Picker OptionList > .option-list--option-disabled { color: $text-muted; }
     Picker OptionList > .option-list--option-hover { background: $fd-selected; }
     Picker #picker-note { margin-top: 1; }
+    Picker #picker-note.-none { display: none; }
     Picker #picker-said { margin-top: 1; }
     Picker.-short > Vertical { max-height: 100%; padding: 0 2; margin: 0; }
     Picker.-short #picker-title { height: 1; }
@@ -697,9 +698,11 @@ class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
     BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("s", "save", "keep and save")]
 
     def __init__(self, what: str, choices: list[Choice], *, in_use: str, preview: Callable[[str], None], save_to: str = "",
-                 note: str = "") -> None:
+                 note: str | Callable[[int], str] = "") -> None:
         """`what`: the thing chosen, as a word ("theme"). `in_use`: the choice the console is
-        drawn in now, where the cursor starts. `note`: one muted line under the list."""
+        drawn in now, where the cursor starts. `note`: one muted line under the list, or what
+        gives it for a terminal so many columns wide ("": none), asked again when the terminal
+        is resized."""
         super().__init__()
         self.what, self.choices, self.in_use, self.preview, self.save_to, self.note = what, choices, in_use, preview, save_to, note
         self.answered = False
@@ -731,13 +734,23 @@ class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
             yield OptionList(*(Option(self._row(choice), id=choice.name, disabled=bool(choice.problem)) for choice in self.choices),
                              id="picker-list")
             with Container(id="picker-foot"):
-                notes = [self.note] if self.note else []
-                if not self.save_to:
-                    notes.append(f"This console has no config file, so a {self.what} lasts for this run.")
-                if notes:
-                    yield Static(Text("\n".join(notes)), classes="muted", id="picker-note")
+                yield Static(Text(""), classes="muted", id="picker-note")
                 yield Static(Text(""), id="picker-said")
                 yield Static(self._key_rows(), classes="keys", id="picker-keys")
+
+    def _notes(self, columns: int) -> str:
+        note = self.note(columns) if callable(self.note) else self.note
+        notes = [note] if note else []
+        if not self.save_to:
+            notes.append(f"This console has no config file, so a {self.what} lasts for this run.")
+        return "\n".join(notes)
+
+    def _fit(self, rows: int) -> None:
+        super()._fit(rows)
+        if self.query("#picker-note"):  # the note, for the terminal's width now
+            notes = self._notes(self.app.size.width)
+            self.query_one("#picker-note", Static).update(Text(notes))
+            self.query_one("#picker-note", Static).set_class(not notes, "-none")
 
     def on_mount(self) -> None:
         super().on_mount()
