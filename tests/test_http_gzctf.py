@@ -157,6 +157,17 @@ def test_a_game_the_site_does_not_have_names_the_game_key_to_fix(tmp_path):
     assert right == {"13"}
 
 
+def test_a_challenge_gone_between_the_list_and_its_detail_does_not_blame_the_game(tmp_path):
+    """The list was read from the game, so the game is right: one challenge's 404 (hidden or
+    removed since) is that challenge's, and the pull names it without the game hint."""
+    with FakeGZCTF(sample()) as fake:
+        fake.script("challenge", problem(404, "Challenge not found"))
+        reply = run(gz(fake).pull(tmp_path))
+    assert len(reply.problems) == 1 and "HTTP 404 (Not Found)" in reply.problems[0], reply.problems
+    assert "is game =" not in reply.problems[0]
+    assert len(reply.challenges) == len(sample()) - 1
+
+
 @pytest.mark.parametrize("pasted", [f"GZCTF_Token={COOKIE}", f"GZCTF_Token= {COOKIE}"])
 def test_the_cookie_may_be_pasted_with_its_name_in_front(pasted):
     """A browser's tools copy a cookie as NAME=value; sent as it is, the site would be given GZCTF_Token=GZCTF_Token=..."""

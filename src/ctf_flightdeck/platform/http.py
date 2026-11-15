@@ -1288,7 +1288,9 @@ class HttpCaller:
             hint = ""
             if answer.status in (401, 403) and self.config.auth.kind != "exchange":
                 hint = " (is the token the right one for this event, and still valid?)"
-            elif answer.status == 404 and "{game}" in route.path and self.config.game is not None:
+            elif answer.status == 404 and "{game}" in route.path and "{ref}" not in route.path and self.config.game is not None:
+                # a route of the game alone (the list, the solved one): one challenge's 404 is that
+                # challenge gone, on a game the list has just read
                 hint = (f" (is game = {json.dumps(self.config.game, ensure_ascii=False)} under [http] this event's game? "
                         "It is the number in the game's address on the site)")
             raise CallFailed(f"{answer.endpoint} was answered with HTTP {answer.status}{_phrase(answer.status)}"
