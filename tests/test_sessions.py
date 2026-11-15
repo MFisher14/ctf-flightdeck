@@ -138,6 +138,37 @@ def test_without_until_a_read_ends_once_the_output_is_quiet(tmp_path, handout):
     assert silent.action == "session s1 read"
 
 
+def test_output_from_before_a_send_does_not_end_the_read_of_its_reply(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout)
+        # a program still loading when the start's read ends: what it writes then waits unread
+        await call(box, "session_start", {"command": "sleep 0.3; echo first; cat", "wait_seconds": 0.1})
+        await asyncio.sleep(1.0)
+        reply = await call(box, "session_send", {"session": "s1", "input": "hi", "wait_seconds": 10})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return reply
+
+    reply = asyncio.run(go())
+    assert reply.content.startswith("session s1: running; quiet after")
+    assert reply.content.endswith("\nfirst\nhi\n")  # the old line comes too, and the reply with it, not a call late
+
+
+def test_until_is_looked_for_only_in_what_came_after_the_send(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout)
+        command = "printf '(gdb) '; while read -r line; do sleep 0.3; echo \"got $line\"; printf '(gdb) '; done"
+        await call(box, "session_start", {"command": command, "wait_seconds": 0})
+        await asyncio.sleep(0.5)  # the first prompt waits unread
+        reply = await call(box, "session_send", {"session": "s1", "input": "break main", "until": "(gdb) ", "wait_seconds": 10})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return reply
+
+    reply = asyncio.run(go())
+    assert reply.content == "session s1: running; '(gdb) ' appeared\n(gdb) got break main\n(gdb) "
+
+
 def test_a_session_that_ends_says_its_status_and_is_gone_after(tmp_path, handout):
     async def go():
         box = await host_box(tmp_path, handout)
@@ -266,6 +297,24 @@ def test_output_past_the_buffer_is_dropped_oldest_first_and_counted(tmp_path, ha
     assert lines[2] == "a" * 997 + "END"
 
 
+def test_dropping_the_oldest_bytes_never_cuts_a_secret_in_two(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout, scrub=Secrets({"API_KEY": KEY}))
+        box.sessions = Sessions(box.workspace.open_session, cap=1000, unfinished=box.scrub.unfinished)
+        # the key, then 990 bytes: a cut at the cap would land 15 bytes into the key
+        await call(box, "session_start", {"command": f"printf {KEY}; head -c 990 /dev/zero | tr '\\0' a; sleep 30",
+                                          "wait_seconds": 0})
+        await asyncio.sleep(0.5)
+        result = await call(box, "session_send", {"session": "s1", "wait_seconds": 2})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return result
+
+    result = asyncio.run(go())
+    assert KEY[15:] not in result.content
+    assert result.content.endswith("\n[API_KEY]" + "a" * 990)  # kept whole, so found
+
+
 def test_long_output_is_cut_and_saved_like_the_shells(tmp_path, handout):
     async def go():
         box = await host_box(tmp_path, handout, max_chars=500)
@@ -331,6 +380,58 @@ def test_a_read_that_matched_until_shows_the_match_whole(tmp_path, handout):
 
     result = asyncio.run(go())
     assert result.content == "session s1: running; 'yes' appeared\nyes"
+
+
+def test_a_secret_whose_start_a_matched_until_showed_is_still_scrubbed_in_the_next_read(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout, scrub=Secrets({"API_KEY": KEY}))
+        await call(box, "session_start", {"command": f"printf 'key: {KEY[:10]}'; sleep 1; printf '{KEY[10:]}\\n'; sleep 30",
+                                          "wait_seconds": 0})
+        matched = await call(box, "session_send", {"session": "s1", "until": "sk-", "wait_seconds": 5})
+        rest = await call(box, "session_send", {"session": "s1", "wait_seconds": 5})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return matched, rest
+
+    matched, rest = asyncio.run(go())
+    assert matched.content.split("\n")[-1] == "key: sk-" and "appeared" in matched.content  # what matched is shown whole, the rest of what may be the key held
+    for text in (rest.content, rest.output, rest.excerpt):
+        assert KEY[3:] not in text and KEY[10:] not in text
+    assert rest.content.endswith("\n[API_KEY]\n")
+
+
+def test_a_secret_whose_start_was_released_after_a_pause_is_still_scrubbed_after(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout, scrub=Secrets({"API_KEY": KEY}))
+        await call(box, "session_start", {"command": f"printf 'half={KEY[:7]}'; sleep 2; printf -- '{KEY[7:]}\\n'; sleep 30",
+                                          "wait_seconds": 0.3})
+        released = await call(box, "session_send", {"session": "s1", "wait_seconds": 0.3})  # nothing new: the held start comes
+        rest = await call(box, "session_send", {"session": "s1", "wait_seconds": 5})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return released, rest
+
+    released, rest = asyncio.run(go())
+    assert released.content.endswith("\n" + KEY[:7])
+    for text in (rest.content, rest.output, rest.excerpt):
+        assert KEY[7:] not in text
+    assert rest.content.endswith("\n[API_KEY]\n")
+
+
+def test_what_a_read_carries_over_is_not_shown_twice_when_no_secret_follows(tmp_path, handout):
+    async def go():
+        box = await host_box(tmp_path, handout, scrub=Secrets({"API_KEY": KEY}))
+        await call(box, "session_start", {"command": "printf 'Are you sure? yes'; sleep 1; printf '\\nok\\n'; sleep 30",
+                                          "wait_seconds": 0.3})
+        released = await call(box, "session_send", {"session": "s1", "wait_seconds": 0.3})
+        rest = await call(box, "session_send", {"session": "s1", "wait_seconds": 5})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return released, rest
+
+    released, rest = asyncio.run(go())
+    assert released.content.endswith("\ns")
+    assert rest.content.split("\n", 1)[1] == "\nok\n"
 
 
 def test_what_the_model_gets_wrong_comes_back_as_an_error(tmp_path, handout):

@@ -751,7 +751,7 @@ class Toolbox:
         left = bytes(session.buffer)  # what it wrote since the last read, the run's secrets out of it like any output
         if not left:
             return ToolResult(status, self._line(action), status)
-        text = self.scrub(left.decode("utf-8", "replace"))
+        text = self._session_text(session.carry, left)
         head = f"{status}; what it wrote since the last read:"
         body = self._fit(text, left, self.max_chars - len(head) - 1, turn, index)
         return ToolResult(f"{head}\n{body}", self._line(action), _brief(text, status, tail=False), excerpt=_excerpt(text, status))
@@ -772,6 +772,17 @@ class Toolbox:
             return DEFAULT_WAIT
         return float(min(max(asked, 0), MAX_WAIT))
 
+    def _session_text(self, carried: bytes, output: bytes) -> str:
+        """`output` with the run's secrets out of it, scrubbed together with `carried` (the end of
+        the last read, which could start a secret) so that a secret cut between the two reads is
+        found. Unless a secret ran across, the carried part, shown already, is not shown again."""
+        text = self.scrub((carried + output).decode("utf-8", "replace"))
+        if carried:
+            shown = carried.decode("utf-8", "replace")
+            if text.startswith(shown):
+                text = text[len(shown):]
+        return text
+
     async def _session_read(self, pool: Sessions, session: Session, action: str, wait: float, until: bytes | None,
                             turn: int, index: int) -> ToolResult:
         read = await session.read(wait, until)
@@ -780,7 +791,7 @@ class Toolbox:
         else:
             pool.touch(session)
         status = f"session {session.name}: {_session_status(read, until)}"
-        text = self.scrub(read.output.decode("utf-8", "replace"))  # before anything cuts it
+        text = self._session_text(read.carried, read.output)  # before anything cuts it
         head = status
         if read.dropped:
             head += f"\n[{read.dropped} earlier bytes dropped: a session keeps at most {session.cap} bytes unread]"
