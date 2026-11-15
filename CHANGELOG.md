@@ -22,6 +22,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A lane on a model with no price asks whether to `carry on with no dollar cap` (1) or `stop the
   lane` (0), as its question says; its answers said `more budget`, which is not what approving
   does there.
+- `/settings` in a run names its `c` key `change this run's settings`, where it said `change
+  this run's` and stopped.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
