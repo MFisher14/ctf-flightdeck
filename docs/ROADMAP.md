@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: twenty-three proposals, P69 to P91 (2026-11-14)
+## Built, not released: twenty-four proposals, P69 to P91 and P98 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P91); the lines for players are under Unreleased in
+[DECISIONS.md](DECISIONS.md) (P69 to P91, then P98); the lines for players are under Unreleased in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -122,6 +122,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   for a flag answer or more budget gives its slot to the queue once it has waited a minute; at
   most `max_waiting` lanes (`[lanes]`, 4) are without a slot at once, and a lane whose sessions
   run on keeps its own.
+- **One vocabulary for an answer** (P98). A lane that waits for you shows `1 0 answer` on the
+  simple layout's key line, in the list and in its view, matching the numbers and words of the
+  why line and the card (`1 more budget  0 stop the lane`); `a` and `d` still act. A budget
+  wait about a model with no price says so when the lane gives its slot up.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

@@ -620,9 +620,10 @@ The console has two layouts.
   the challenges that wait and the ones solved;
 - under the list, why the selected lane is flagged and its numbered answers; nothing for a lane
   that needs nothing;
-- a key line of the keys that apply to the selected lane now: `a approve` and `d decline` while
-  it waits for you, `1-9 answer` and `x dismiss` for an alert, then `enter open`, `/ commands`,
-  `? help` and `q quit`. Every other key still acts, and `?` lists them all.
+- a key line of the keys that apply to the selected lane now: `1 0 answer` while it waits for
+  you (the line above it says what 1 and 0 do, for instance `1 more budget  0 stop the lane`;
+  `a` and `d` do the same), `1-9 answer` and `x dismiss` for an alert, then `enter open`,
+  `/ commands`, `? help` and `q quit`. Every other key still acts, and `?` lists them all.
 
 A lane's own view shows a part only when it has something in it: the files pane once the lane
 has changed a file, the strip of other lanes while one of them needs you. Its title has the
