@@ -662,18 +662,18 @@ def test_in_the_mock_space_peeks_and_comma_freezes_the_clock():
     world, app = make("sstv")
 
     async def script(pilot):
-        assert "▶ live: , freezes" in region_text(app, "#header") and app.frozen is False
+        assert "▶ live · ',' freezes" in region_text(app, "#header") and app.frozen is False
         await press(pilot, "space")
         assert app.frozen is False and peek_open(app)  # space no longer touches the clock
         await press(pilot, "comma")
-        assert app.frozen is True and "⏸ frozen: , resumes · . steps" in region_text(app, "#header")
+        assert app.frozen is True and "⏸ frozen · ',' resumes '.' steps" in region_text(app, "#header")
         before = world.deck.now
         app._on_tick()  # the mock's timer, frozen: the world stands still
         assert world.deck.now == before
         await press(pilot, "full_stop")  # one step by hand
         assert world.deck.now > before
         await press(pilot, "comma")
-        assert app.frozen is False and "▶ live: , freezes" in region_text(app, "#header")
+        assert app.frozen is False and "▶ live · ',' freezes" in region_text(app, "#header")
         await press(pilot, "question_mark")
         assert isinstance(app.screen, HelpScreen)
         assert app.screen.query_one("#help-body").max_scroll_y == 0  # all of the help is on screen, to be read

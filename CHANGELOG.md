@@ -21,6 +21,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   longer opens with bash's note about changing to zsh.
 - While the filter hides the selected lane, the line under the list says so (`L02 is hidden by
   the filter: esc clears it`) instead of offering that lane's answers, which every key refused.
+- In `flightdeck mock`, the header's clock note quotes its keys (`▶ live · ',' freezes`, `⏸ frozen
+  · ',' resumes '.' steps`): a bare comma read as punctuation (`▶ live: , freezes`).
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes

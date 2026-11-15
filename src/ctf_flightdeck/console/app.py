@@ -345,7 +345,7 @@ class FlightdeckApp(App[None]):
         note = ""
         if self._ticker is not None:
             if clock_keys:
-                note = "⏸ frozen: , resumes · . steps" if self.frozen else "▶ live: , freezes"
+                note = "⏸ frozen · ',' resumes '.' steps" if self.frozen else "▶ live · ',' freezes"
             else:
                 note = "⏸ frozen" if self.frozen else "▶ live"
         return views.header(self.deck, mock=self.mock, note=note, width=width, compact=compact, simple=self.layout == "simple")
