@@ -530,6 +530,24 @@ def test_a_paused_lane_waiting_for_a_slot_loses_its_place_until_resumed():
     assert driver.started() == ["c0", "c1", "c2"]
 
 
+def test_a_lane_waiting_for_a_slot_that_is_asked_again_waits_for_the_player_not_the_slot():
+    deck, sent = platform_deck(max_lanes=1)
+    driver = deck.driver
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))  # on its way to the platform
+    assert sent and deck.sending(lane.id)
+    ask_box(deck, lane)
+    assert deck.apply(iv.Approve(lane.id)).ok  # no slot is free: it waits for one
+    assert lane.state is LaneState.QUEUED
+    deck.platform_verdict(lane.id, "t{maybe}", None, "the platform timed out")  # the flag comes back to the player
+    assert lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM
+    assert lane.state is LaneState.WAITING and lane.benched
+    deck.report(lane_on(deck, "c1").id, TurnReport(gave_up="no lead"))  # a slot frees
+    assert lane.state is LaneState.WAITING and driver.named("resume") == []  # not back at work with its question open
+    assert deck.apply(iv.Decline(lane.id)).ok  # answered: it takes the free slot
+    assert lane.state is LaneState.RUNNING and not lane.benched
+
+
 def test_lowering_max_lanes_counts_only_the_lanes_holding_a_slot():
     deck, _, _ = make_deck(n=4, max_lanes=2)
     ask_box(deck, lane_on(deck, "c0"))

@@ -1631,7 +1631,11 @@ class Deck:
     def _became_current(self, lane: Lane) -> None:
         pending = lane.pending
         assert pending is not None
-        if lane.state is LaneState.RUNNING:
+        if lane.state in (LaneState.RUNNING, LaneState.QUEUED):
+            # a lane that waited for a slot to go on waits for the player now (still without
+            # one): it takes no free slot until this is answered, and then asks for one again
+            if lane.state is LaneState.QUEUED:
+                self._returning = [lane_id for lane_id in self._returning if lane_id != lane.id]
             lane.state = LaneState.WAITING
             self._wait_began[lane.id] = self.now
         self._sync_flag_alert(lane)
