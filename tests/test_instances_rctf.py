@@ -14,7 +14,7 @@ import pytest
 from ctf_flightdeck.agent.egress import hosts
 from ctf_flightdeck.platform.http import HttpCaller, parse_config as parse_http
 from ctf_flightdeck.platform.instances import (
-    STATUS_TRIES, UNITS, InstanceClient, InstanceError, InstancePending, InstanceRefused, parse_config,
+    STATUS_TRIES, UNITS, InstanceClient, InstanceError, InstanceFailed, InstancePending, InstanceRefused, parse_config,
 )
 from ctf_flightdeck.plugins.board import pull_into
 
@@ -57,6 +57,7 @@ def test_rctfs_shape_is_one_route_with_four_methods_for_the_http_platform():
     assert config.platform == "http" and config.routes.body_key is None and not config.routes.api and config.routes.empty_body
     assert config.answers.endpoints == ("endpoints",) and config.answers.state == ("status",)
     assert config.answers.running == ("running",) and config.answers.pending == ("starting", "stopping")
+    assert config.answers.failed == ("errored",)
     assert config.answers.expires == ("timeLeftMilliseconds",) and config.answers.expires_unit == UNITS["ms"]
     assert parse_config({"plugin": "docker_per_team"}).platform == "ctfd"
 
@@ -64,8 +65,11 @@ def test_rctfs_shape_is_one_route_with_four_methods_for_the_http_platform():
 @pytest.mark.parametrize(("table", "message"), [
     ({"plugin": "rctf", "expires_unit": "minutes"}, "instances.expires_unit must be one of s, ms"),
     ({"plugin": "rctf", "running_states": "running"}, "instances.running_states must be a list of up to 16 distinct words"),
-    ({"plugin": "rctf", "pending_states": ["running"]}, "running_states and pending_states must not share a word"),
-    ({"plugin": "docker_per_team", "running_states": ["up"]}, "running_states and pending_states need state_key"),
+    ({"plugin": "rctf", "pending_states": ["running"]}, "running_states, pending_states and failed_states must not share a word"),
+    ({"plugin": "rctf", "failed_states": ["starting"]}, "running_states, pending_states and failed_states must not share a word"),
+    ({"plugin": "rctf", "failed_states": "errored"}, "instances.failed_states must be a list of up to 16 distinct words"),
+    ({"plugin": "docker_per_team", "running_states": ["up"]}, "running_states, pending_states and failed_states need state_key"),
+    ({"plugin": "docker_per_team", "failed_states": ["dead"]}, "running_states, pending_states and failed_states need state_key"),
     ({"plugin": "chall_manager", "endpoints_key": "a b"}, "instances.endpoints_key must be a JSON key name"),
 ])
 def test_a_bad_state_or_endpoints_key_is_named(table, message):
@@ -133,6 +137,47 @@ def test_a_start_still_starting_after_its_looks_is_pending_and_may_be_done_and_i
         with pytest.raises(InstancePending, match="is on its way up or down on the platform \\(starting\\)") as later:
             client.status("pwn-box")
         assert not later.value.maybe_done
+
+
+def test_an_errored_instance_is_its_own_error_and_never_read_as_no_instance():
+    """rCTF v2's "errored": the platform could not run the instance. Read as "no instance" it
+    would bring a start a run sends again and again; it is InstanceFailed instead, by name."""
+    with FakeRCTF(tasks(), v2=True) as fake:
+        fake.tasks["pwn-box"].instancer.status = "errored"
+        _, client = connect(fake)
+        with pytest.raises(InstanceFailed, match=r"the platform says the instance of pwn-box failed \(errored\): flightdeck "
+                                                 r"sends no start for it while the platform says so; stop it or start it again on "
+                                                 r"the site") as caught:
+            client.status("pwn-box")
+        assert not caught.value.maybe_done and not caught.value.up
+        assert [m for m, _ in instance_requests(fake)] == ["GET"]
+
+
+def test_a_start_that_ends_errored_is_sent_once_and_may_have_been_done():
+    with FakeRCTF(tasks(), v2=True) as fake:
+        fake.tasks["pwn-box"].instancer.errors = True
+        naps: list = []
+        _, client = connect(fake, naps=naps)
+        with pytest.raises(InstanceFailed, match=r"failed \(errored\)") as caught:
+            client.start("pwn-box")
+        assert caught.value.maybe_done  # the platform took the start
+        assert [m for m, _ in instance_requests(fake)] == ["PUT"] and naps == []  # its own answer says so: no look after it
+
+
+def test_failed_states_of_a_profiles_own_routes_are_read_the_same_way():
+    with FakeRCTF(tasks(), v2=True) as fake:
+        fake.tasks["pwn-box"].instancer.status = "errored"
+        route = ["GET", ROUTE.replace("{}", "{id}")]
+        _, client = connect(fake)
+        client.config = parse_config({"start": ["PUT", route[1]], "stop": ["DELETE", route[1]], "renew": ["PATCH", route[1]],
+                                      "status": route, "endpoints_key": "endpoints", "state_key": "status",
+                                      "running_states": ["running"]})
+        assert client.status("pwn-box") is None  # without failed_states the word is just not a running one
+        client.config = parse_config({"start": ["PUT", route[1]], "stop": ["DELETE", route[1]], "renew": ["PATCH", route[1]],
+                                      "status": route, "endpoints_key": "endpoints", "state_key": "status",
+                                      "running_states": ["running"], "failed_states": ["errored"]})
+        with pytest.raises(InstanceFailed):
+            client.status("pwn-box")
 
 
 def test_a_tcp_ssl_endpoint_is_a_tls_address_for_the_lane_and_is_fenced_to_its_port():

@@ -25,6 +25,7 @@ among them:
     # state_key = "status"          # the answer's key that says what the instance is doing
     # running_states = ["running"]  # ... the words that mean it is up
     # pending_states = ["starting"] # ... the words that mean it is on its way up or down: wait, send nothing
+    # failed_states = ["errored"]   # ... the words that mean the platform could not run it: say so, send no start
 
 Plugins differ in their paths and answers, so nothing is assumed: an [instances] table with
 neither a plugin name nor all four routes is an error. The named shapes (PLUGINS):
@@ -41,7 +42,8 @@ neither a plugin name nor all four routes is an error. The named shapes (PLUGINS
 - `rctf`: rCTF v2's own instancer (github.com/otter-sec/rctf, its API reference), for
   platform = "http". The challenge's string id in the path; the answer a state and a list of
   endpoints, the end in milliseconds; a start may answer "starting" and the status "running"
-  later; a `tcp-ssl` endpoint is a TLS endpoint (tls://). Built from its documentation
+  later, and "errored" when it could not run it (InstanceFailed); a `tcp-ssl` endpoint is a
+  TLS endpoint (tls://). Built from its documentation
   against a fake of it (tests/fake_http.py); not met.
 
 A shape names the platform it is for (Shape.platform): a CTFd plugin's on CTFd only, rCTF's on
@@ -181,6 +183,13 @@ class InstancePending(InstanceError):
         super().__init__(message, maybe_done=maybe_done, up=True)
 
 
+class InstanceFailed(InstanceError):
+    """The platform says the challenge's instance failed: its state is one of failed_states
+    (rCTF v2's "errored"). That is not "no instance": what a start does to such an instance
+    is the platform's own and not known here, so none is sent, and the player sees to it on
+    the site. `maybe_done` when a start of this client's was taken and then failed."""
+
+
 class InstanceBusy(InstanceRefused):
     """The account's one container runs another challenge (Shape.busy): this challenge has
     none, and a start would remove the other. It reads as the cap (`full`): a run waits and
@@ -220,6 +229,7 @@ class Answers:
     state: tuple[str, ...] = ()  # keys of a word that says what the instance is doing
     running: tuple[str, ...] = ()  # the state's words for "up"; with a state key, any other word is "not running"
     pending: tuple[str, ...] = ()  # the state's words for "on its way up or down": InstancePending
+    failed: tuple[str, ...] = ()  # the state's words for "the platform could not run it": InstanceFailed
     expires_unit: float = 1.0  # seconds in one unit of a number of the end (UNITS)
 
 
@@ -279,11 +289,11 @@ PLUGINS: dict[str, Shape] = {
     # rCTF v2's own instancer (github.com/otter-sec/rctf: apps/docs .../api/integrations/instance-*.md and
     # packages/types goodInstanceStatus), read from its documentation and types, not met. One route, four methods;
     # data is {status, timeLeftMilliseconds, endpoints: [{kind, host, port, title?, text?}] or null}. A start may
-    # answer "starting", the status "running" later. Errors are {kind, message, data: {error | message}}.
+    # answer "starting", the status "running" later; "errored" is one the platform could not run. Errors are {kind, message, data: {error | message}}.
     "rctf": Shape(
         Routes(start=("PUT", _RCTF), stop=("DELETE", _RCTF), renew=("PATCH", _RCTF), status=("GET", _RCTF), empty_body=True),
         Answers(address=(), port=(), expires=("timeLeftMilliseconds",), endpoints=("endpoints",), state=("status",),
-                running=("running",), pending=("starting", "stopping"), expires_unit=UNITS["ms"]),
+                running=("running",), pending=("starting", "stopping"), failed=("errored",), expires_unit=UNITS["ms"]),
         platform="http",
     ),
 }
@@ -312,7 +322,7 @@ class InstancesConfig:
 
 _ANSWER_KEYS = {"address_key": "address", "port_key": "port", "expires_key": "expires", "endpoints_key": "endpoints",
                 "state_key": "state"}
-_STATE_WORDS = {"running_states": "running", "pending_states": "pending"}
+_STATE_WORDS = {"running_states": "running", "pending_states": "pending", "failed_states": "failed"}
 _KEYS = ("plugin", "types", "max_running", *ACTIONS, "body_key", "api", *_ANSWER_KEYS, *_STATE_WORDS, "expires_unit")
 
 
@@ -371,10 +381,11 @@ def parse_config(table: object) -> InstancesConfig:
             raise ValueError(f"instances.expires_unit must be one of {', '.join(UNITS)}: what a number of the end counts")
         named["expires_unit"] = UNITS[unit]
     answers = replace(answers, **named)
-    if (answers.running or answers.pending) and not answers.state:
-        raise ValueError("instances.running_states and pending_states need state_key: the answer's key that holds those words")
-    if set(answers.running) & set(answers.pending):
-        raise ValueError("instances.running_states and pending_states must not share a word")
+    if (answers.running or answers.pending or answers.failed) and not answers.state:
+        raise ValueError("instances.running_states, pending_states and failed_states need state_key: the answer's key that holds "
+                         "those words")
+    if set(answers.running) & set(answers.pending) or set(answers.failed) & {*answers.running, *answers.pending}:
+        raise ValueError("instances.running_states, pending_states and failed_states must not share a word")
     if not answers.address and not answers.endpoints:
         raise ValueError("instances needs address_key or endpoints_key: an answer with no address is no instance")
     return InstancesConfig(routes, tuple(types), most, plugin, answers, single, shape.gap if shape is not None else 0.0,
@@ -383,7 +394,7 @@ def parse_config(table: object) -> InstancesConfig:
 
 
 def _words(name: str, value: object) -> tuple[str, ...]:
-    """running_states or pending_states: a list of the words the state key may hold."""
+    """running_states, pending_states or failed_states: a list of the words the state key may hold."""
     if not isinstance(value, list) or len(value) > MAX_STATES or len(set(value)) != len(value) or \
             not all(isinstance(word, str) and word.strip() and len(word) <= 64 for word in value):
         raise ValueError(f'instances.{name} must be a list of up to {MAX_STATES} distinct words, such as ["running"]')
@@ -527,8 +538,11 @@ class InstanceClient:
         assert doc is not None
         pending: InstancePending | None = None
         try:
-            if self._reading(doc) == "up":
+            reading = self._reading(doc)
+            if reading == "up":
                 return self._instance(challenge_id, doc)
+            if reading == "failed":
+                raise self._failed(challenge_id, doc)
             for asked in range(STATUS_TRIES):
                 if asked:
                     self._sleep(STATUS_GAP)
@@ -555,9 +569,12 @@ class InstanceClient:
 
     def status(self, challenge_id: str) -> Instance | None:
         """The challenge's running instance, or None when the plugin names none (or says, by
-        its state, that none runs). InstancePending when it says one is on its way up or down."""
+        its state, that none runs). InstancePending when it says one is on its way up or down,
+        InstanceFailed when it says one failed."""
         doc = self._ask("status", challenge_id, refusal_is_none=True)
         reading = self._reading(doc)
+        if reading == "failed":
+            raise self._failed(challenge_id, doc)
         if reading == "pending":
             word = _dig(doc, self.config.answers.state)
             raise InstancePending(f"the instance of {_show(challenge_id)} is on its way up or down on the platform "
@@ -565,6 +582,11 @@ class InstanceClient:
         if reading is None:
             return None
         return self._instance(challenge_id, doc)
+
+    def _failed(self, challenge_id: str, doc: dict | None) -> InstanceFailed:
+        word = _dig(doc, self.config.answers.state)
+        return InstanceFailed(f"the platform says the instance of {_show(challenge_id)} failed ({self._site.short(str(word))}): "
+                              "flightdeck sends no start for it while the platform says so; stop it or start it again on the site")
 
     def renew(self, challenge_id: str) -> Instance | None:
         """Ask for more time. The instance as the plugin now describes it, or None when its
@@ -670,7 +692,8 @@ class InstanceClient:
 
     def _reading(self, doc: dict | None) -> str | None:
         """What an answer says of the instance: "up" (it names an address, or its state is a
-        running one), "pending" (its state is one of pending_states), or None (no instance)."""
+        running one), "pending" (its state is one of pending_states), "failed" (one of
+        failed_states), or None (no instance)."""
         if doc is None:
             return None
         answers = self.config.answers
@@ -678,6 +701,8 @@ class InstanceClient:
             word = _dig(doc, answers.state)
             if isinstance(word, str) and word in answers.pending:
                 return "pending"
+            if isinstance(word, str) and word in answers.failed:
+                return "failed"
             if answers.running:
                 return "up" if word in answers.running else None  # "running" with no address is one at no usable address
         if _dig(doc, answers.address) is not None or _dig(doc, answers.endpoints) is not None:

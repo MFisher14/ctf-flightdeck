@@ -14,7 +14,7 @@ from ctf_flightdeck.core.model import Challenge, DeckConfig
 from ctf_flightdeck.instancerun import (
     CLAIM_FOR, RENEW_BEFORE, RETRY_FULL, RETRY_MOST, RETRY_PENDING, WAITS, InstanceRunner, Need, on_demand, plan,
 )
-from ctf_flightdeck.platform.instances import Instance, InstanceError, InstancePending, InstanceRefused
+from ctf_flightdeck.platform.instances import Instance, InstanceError, InstanceFailed, InstancePending, InstanceRefused
 
 from test_deck import FLAG_FORMAT, MODELS, Clock, RecordingDriver, RecordingVerifier
 
@@ -287,6 +287,41 @@ def test_a_start_that_is_still_starting_is_this_runs_once_it_is_up_and_is_stoppe
     assert [c for c in platform.calls if c[0] == "start"] == [("start", "c0")]  # sent once
     assert list(runner.running) == ["c0"] and runner.adopted == set() and deck.waits == {}
     assert asyncio.run(runner.close()) == [] and ("stop", "c0") in platform.calls
+
+
+class Errored(Platform):
+    """A platform that says a challenge's instance failed (rCTF v2's "errored") until the
+    player sees to it on the site."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.errored: set[str] = set()
+
+    def status(self, cid):
+        self.calls.append(("status", cid))
+        if cid in self.errored:
+            raise InstanceFailed(f"the platform says the instance of {cid} failed (errored): flightdeck sends no start for it while "
+                                 "the platform says so; stop it or start it again on the site")
+        return self._instance(cid) if cid in self.up else None
+
+
+def test_an_errored_instance_gets_no_start_its_own_warning_once_and_a_start_once_the_platform_no_longer_says_so():
+    deck, runner, _, urls, clock = lab(n=1)
+    platform = runner.client = Errored(clock=clock.now)
+    platform.errored.add("c0")
+    step(runner)
+    assert platform.calls == [("status", "c0")] and "c0" in deck.waits and runner.running == {}
+    assert said(deck) == ["instances: the platform says the instance of c0 failed (errored): flightdeck sends no start for it while "
+                          "the platform says so; stop it or start it again on the site. Its lanes wait, and flightdeck asks the "
+                          "platform again later (queued challenges behind it go on)"]
+    for _ in range(3):  # the wait doubles, and the warning is said once
+        clock.t += RETRY_MOST
+        step(runner)
+    assert set(platform.calls) == {("status", "c0")} and len(platform.calls) == 4 and len(said(deck)) == 1
+    platform.errored.discard("c0")  # the player stopped it on the site
+    clock.t += RETRY_MOST
+    step(runner)
+    assert platform.calls[-2:] == [("status", "c0"), ("start", "c0")] and urls["c0"] == ("http://box.example.test:31000",)
 
 
 def test_a_start_that_wants_a_person_is_not_sent_again_and_the_instance_the_player_starts_is_used():

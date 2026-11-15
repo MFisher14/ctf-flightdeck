@@ -38,7 +38,8 @@ have it (read on 2026-11-14; not run):
   instancer is 404 badEndpoint. A start of a running one, and an extend of a stopped one,
   are 400 badInstancerState with data.error. With `captcha`, a start and an extend with no
   captchaCode are 403 badCaptcha. A task's `instancer` sets its endpoints and lifetime, and
-  how many looks at its status answer "starting" after a start (`slow`).
+  how many looks at its status answer "starting" after a start (`slow`), and whether a start
+  ends "errored" (`errors`: the state, not its cause, is all the reference says of it).
 
 FakeNoCTF answers in the shape of noCTF's player API, as its public source has it
 (github.com/noctf-project/noctf); its own docstring lists the routes.
@@ -124,6 +125,7 @@ class Instancer:
     endpoints: list[tuple[str, str, int]] = field(default_factory=lambda: [("tcp", "pwn-1.chal.example.test", 31337)])
     lifetime: int = 600_000  # milliseconds an instance lives
     slow: int = 0  # looks at the status that answer "starting" after a start
+    errors: bool = False  # a start ends "errored": the platform could not run the instance
     status: str = "stopped"
     left: int = 0  # looks still "starting"
 
@@ -259,7 +261,7 @@ class FakeRCTF(FakeSite):
         if method == "PUT":
             if box.status in ("running", "starting"):
                 return answer(400, "badInstancerState", "Instancer precondition not met.", {"error": "Instance already running."})
-            box.status, box.left = ("starting", box.slow) if box.slow else ("running", 0)
+            box.status, box.left = ("errored", 0) if box.errors else ("starting", box.slow) if box.slow else ("running", 0)
         elif method == "PATCH":
             if box.status != "running":
                 return answer(400, "badInstancerState", "Instancer precondition not met.", {"error": "Instance is not running."})
