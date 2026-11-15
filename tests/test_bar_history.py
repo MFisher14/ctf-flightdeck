@@ -55,7 +55,7 @@ class StandIn:
         self.writes, self.status, self.removes = writes, status, removes
         self.calls: list[tuple[list[str], str, int]] = []  # (argv, the file's text, its mode)
 
-    async def __call__(self, app, argv, cwd, env) -> int:
+    async def __call__(self, app, argv, cwd, env) -> takeover.ShellExit:
         path = argv[-1]
         with open(path, encoding="utf-8") as file:
             self.calls.append((list(argv), file.read(), os.stat(path).st_mode & 0o777))
@@ -64,7 +64,7 @@ class StandIn:
         else:
             with open(path, "w", encoding="utf-8") as file:
                 file.write(self.writes)
-        return self.status
+        return takeover.ShellExit(self.status, 0.1)  # what the real run_in_terminal returns
 
 
 async def typed(pilot, text: str) -> None:
