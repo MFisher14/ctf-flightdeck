@@ -327,3 +327,46 @@ def test_the_instance_field_marks_a_challenge_by_any_value_but_an_empty_one(valu
     caller = HttpCaller(parse_http({"preset": "rctf2"}), "https://ctf.example.test", TEAM_TOKEN)
     item = {"id": "x", "name": "X", "instancerLifetime": value}
     assert ("instance" in caller._challenge(item)) is marked
+
+
+# ---------------------------------------------------------------- the example profile
+
+
+@pytest.mark.parametrize("routes", [False, True])
+def test_the_rctf2_example_profile_prints_loads_and_passes_the_check(tmp_path, routes):
+    """`flightdeck http example --preset rctf2` once crashed (a KeyError): the preset was listed
+    but had no example of its own. Its token variable is named as rCTF's (RCTF_TOKEN)."""
+    from ctf_flightdeck import http_cli
+    from ctf_flightdeck.preflight import check, load_profile
+    from test_http_event import invoke
+
+    result = invoke("example", "--preset", "rctf2", *(["--routes"] if routes else []))
+    assert result.exit_code == 0 and result.exception is None and result.output == http_cli.example_profile(routes, "rctf2")
+    path = tmp_path / "event.toml"
+    path.write_text(result.output)
+    loaded, chosen = load_profile(path)
+    variable = "HTTP_TOKEN" if routes else "RCTF_TOKEN"
+    assert loaded.token_env == variable and (loaded.http.preset == "rctf2") is not routes
+    assert (loaded.http.list.request.method, loaded.http.list.request.path) == ("GET", "/api/v2/challs")
+    assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == []
+    assert ("These are rCTF v2's, written out" in result.output) is routes
+
+
+def test_the_rctf2_examples_instances_lines_once_uncommented_as_it_says_start_instances(tmp_path):
+    """The example says what to change for flightdeck to start rCTF v2's instances; doing just
+    that leaves preflight with no reason to start none."""
+    from ctf_flightdeck import http_cli
+    from ctf_flightdeck.preflight import instances_off, load_profile
+
+    text = http_cli.example_profile(False, "rctf2")
+    assert '# [instances]\n# plugin = "rctf"\n' in text and 'set live_targets = "allowed" under [rules]' in text
+    half = text.replace('# [instances]\n# plugin = "rctf"\n', '[instances]\nplugin = "rctf"\n')
+    (tmp_path / "half.toml").write_text(half)
+    assert instances_off(*load_profile(tmp_path / "half.toml")) == (
+        'the instance policy is "confirm", and flightdeck starts an instance only under "auto" '
+        '(set live_targets = "allowed" under [rules])')
+    whole = half.replace('live_targets = "confirm" ', 'live_targets = "allowed"  ')
+    assert whole != half
+    (tmp_path / "whole.toml").write_text(whole)
+    loaded, chosen = load_profile(tmp_path / "whole.toml")
+    assert loaded.instances is not None and instances_off(loaded, chosen) == ""

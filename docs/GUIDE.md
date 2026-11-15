@@ -1082,7 +1082,7 @@ challenge's text and files given to a model (a lane does both, and flightdeck do
 event that forbids either: a rule that allows asking a model about a concept and forbids
 giving it the challenge is a no); the label your team declared to the event for its AI use, if
 the event asks for one (Enter for none); how the challenges arrive (**ctfd**: the site runs CTFd, and flightdeck pulls the board
-and submits flags; **by hand**: any other site); the site's address; what a flag looks like
+and submits flags; **by hand**: any other site, and on rCTF, noCTF or GZCTF the menu points you to `flightdeck http example`, which pulls and submits there too); the site's address; what a flag looks like
 (`PP` for `PP{...}`); whether a flag waits for you or goes at once; and your CTFd access token
 (on the site: Settings, Access Tokens, Generate). The token goes into your keys file under a
 variable of this event's own, never into the event's folder, and is never shown. Then it says
@@ -1302,8 +1302,10 @@ presets ([Boards](BOARDS.md#a-board-from-a-platform-with-a-json-api)); no code r
 flags gets none from flightdeck: each comes back to you, to submit on the site.
 
 ```sh
-flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset, to edit (--preset noctf for noCTF)
+mkdir -p ~/ctf/quals
+flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset, to edit (--preset rctf2 for rCTF v2, noctf for noCTF)
 flightdeck http example --preset gzctf > ~/ctf/quals/event.toml   # or with the gzctf preset
+# edit event.toml: event.url (the site's address) and [rules]; then put your token in the variable token_env names
 flightdeck http check ~/ctf/quals/event.toml       # tries it: signs in, lists, reads the solved list (and an instance's status); submits nothing
 flightdeck play --event ~/ctf/quals/event.toml
 ```

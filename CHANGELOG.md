@@ -54,6 +54,33 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   the filter: esc clears it`) instead of offering that lane's answers, which every key refused.
 - In `flightdeck mock`, the header's clock note quotes its keys (`▶ live · ',' freezes`, `⏸ frozen
   · ',' resumes '.' steps`): a bare comma read as punctuation (`▶ live: , freezes`).
+- When an `[instances]` table does nothing because the instance policy is not `auto`,
+  `preflight` now says what to change (`live_targets = "allowed"` under `[rules]`).
+- On noCTF, GZCTF and a table whose token is sent as it is, a 401 or 403 from the platform
+  now ends with `(is the token the right one for this event, and still valid?)`, as a refused
+  rCTF sign-in already did, instead of the bare status. A 404 to a route with `{game}` in it
+  (GZCTF's) asks whether `game` under `[http]` is the event's.
+- "The token variable ... is not set" (from `http check`, `http pull`, `plugin pull` and
+  `play --event`) now says where your keys file is: `put RCTF_TOKEN=<token> in your keys file
+  (~/.config/ctf-flightdeck/keys.env) or export it`.
+- `flightdeck plugin pull` and `flightdeck http pull` say `pulling the board through ...` (on
+  stderr) before they start, so a plugin that takes its time (a pull may take five minutes)
+  no longer looks like a frozen terminal.
+- `flightdeck start`'s question of how the challenges arrive no longer leaves "by hand" as the
+  only answer off CTFd: it says that on rCTF, noCTF or GZCTF `flightdeck http example --preset
+  NAME > event.toml` sets up an event flightdeck pulls and submits for.
+- An example profile left unedited no longer sends your token to its placeholder address:
+  `http check`, `http pull`, `plugin pull` and `play --event` refuse an `event.url` that is
+  still `ctf.example.org` and say to put the event's own address there. The http and
+  plugin examples in BOARDS.md and the guide now say to make the folder and edit the profile
+  first.
+- `flightdeck doctor` names a plugin that cannot be read once (`warn plugin myctf: ...`, not
+  `plugin myctf: plugin myctf: ...`), and for one whose folder moved or is gone it says to put
+  the folder back or change its path in the config, not to fix a `plugin.toml` that is not
+  there.
+- `flightdeck start FOLDER` on a folder already set up now says when the event's token
+  variable is not set, before it offers to launch; it used to say nothing, and the run then
+  refused.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
@@ -159,7 +186,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   from rCTF v2's API reference; it has not met a real event yet. The older rCTF keeps
   `preset = "rctf"`, and its instancer (klodd) wants a CAPTCHA, so start those by hand.
   `flightdeck http example --preset rctf2` prints a profile for it, with its token in
-  `RCTF_TOKEN`.
+  `RCTF_TOKEN` and the two `[instances]` lines to take the `#` off, and `--routes` writes
+  rCTF v2's routes out.
 - Containers on GZCTF. With `preset = "gzctf"` under `[http]` and `plugin = "gzctf"` under
   `[instances]`, flightdeck starts a container challenge's container before a lane works it,
   with your `GZCTF_Token` cookie, extends it near its end and stops it when the challenge is

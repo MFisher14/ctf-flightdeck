@@ -547,6 +547,19 @@ NO_CONFIG_FOR_PLUGIN = ("event.platform names a plugin's platform, and your conf
                         "tell whether you added it")
 
 
+EXAMPLE_HOST = "ctf.example.org"  # the address every example profile writes (http example, plugin new, preflight --example)
+
+
+def placeholder_url(url: str) -> str | None:
+    """Why `url` cannot be asked: it is still the example profile's address, so the player's
+    token would go to a host that is not the event's. None for any other address. Said by the
+    commands that send the token (http check and pull, plugin pull, play), before they do."""
+    if (urlsplit(url).hostname or "").lower() != EXAMPLE_HOST:
+        return None
+    return (f"event.url is still the example's address ({EXAMPLE_HOST}): put the event's own address there, "
+            "so your token goes to the event and nowhere else")
+
+
 def no_such_plugin(config: Config) -> str:
     """Why a profile whose platform is not built in and not a plugin of the player's config is
     refused. event.platform is not shown: it is the profile's word, which may be a teammate's
@@ -1040,7 +1053,9 @@ def instances_off(profile: EventProfile, policies: Policies) -> str:
     if not profile.platform_automation:
         return "the rules do not allow flightdeck to use the platform's API (rules.platform_automation is false)"
     if policies.instance is not Policy.AUTO:
-        return f'the instance policy is "{policies.instance}", and flightdeck starts an instance only under "auto"'
+        how = ('set live_targets = "allowed" under [rules]' if profile.live_targets != "allowed"
+               else 'take instance out of [policies], or set it to "auto" there')
+        return f'the instance policy is "{policies.instance}", and flightdeck starts an instance only under "auto" ({how})'
     return ""
 
 

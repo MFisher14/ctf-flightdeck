@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 
 from ctf_flightdeck import __version__, cli, plugin_cli
 from ctf_flightdeck.config import PluginRef, load_config
+from ctf_flightdeck.keys import keys_file_named
 from ctf_flightdeck.platform.manual import load_board
 from ctf_flightdeck.plugins import board as boards
 from ctf_flightdeck.plugins import call, manifest
@@ -25,6 +26,7 @@ from ctf_flightdeck.plugins.manifest import PluginError
 
 from plugin_kit import TOKEN, calls, challenge, make_plugin, set_replies
 from serving import Serving
+from test_http_event import pulled
 
 runner = CliRunner()
 URL = "https://ctf.example.test"
@@ -813,7 +815,7 @@ def test_plugin_pull_writes_the_board_reads_the_solved_list_and_submits_nothing(
     board = tmp_path / "quals" / "board"
     result = invoke("pull", event)
     assert result.exit_code == 0, result.output
-    assert result.output == f"pulled into {board}: 3 challenges (misc 2, web 1), 1 listed as solved; nothing was submitted\n"
+    assert pulled(result) == f"pulled into {board}: 3 challenges (misc 2, web 1), 1 listed as solved; nothing was submitted\n"
     assert [seen["request"]["op"] for seen in calls(root)] == ["pull", "solved"]
     for seen in calls(root):
         assert seen["env"]["FLIGHTDECK_PLUGIN_TOKEN"] == TOKEN and seen["request"]["url"] == URL and seen["request"]["event"] == "Quals"
@@ -823,9 +825,9 @@ def test_plugin_pull_writes_the_board_reads_the_solved_list_and_submits_nothing(
     set_replies(root, {**LISTED, "pull": {**LISTED["pull"], "answer": {"challenges": more}}})
     other = tmp_path / "elsewhere"
     again = invoke("pull", event)
-    assert again.output == f"pulled into {board}: 4 challenges (misc 2, web 2), 1 new, 1 listed as solved; nothing was submitted\n"
+    assert pulled(again) == f"pulled into {board}: 4 challenges (misc 2, web 2), 1 new, 1 listed as solved; nothing was submitted\n"
     named = invoke("pull", event, other)  # FOLDER: another board folder than the profile's
-    assert named.exit_code == 0 and named.output.startswith(f"pulled into {other}: 4 challenges")
+    assert named.exit_code == 0 and pulled(named).startswith(f"pulled into {other}: 4 challenges")
     assert [seen["request"]["op"] for seen in calls(root)] == ["pull", "solved"] * 3
 
 
@@ -885,7 +887,7 @@ def test_plugin_pull_runs_only_a_plugin_the_players_config_allows(tmp_path, conf
     (("board = \"board\"\n", ""), True,
      "flightdeck: name the board folder: `flightdeck plugin pull EVENT.toml FOLDER`, or set event.board in the profile\n"),
     (("", ""), False,
-     "flightdeck: the token variable ACME_TOKEN (event.token_env) is not set or is empty: put ACME_TOKEN=<token> in your keys file "
+     "flightdeck: the token variable ACME_TOKEN (event.token_env) is not set or is empty: put ACME_TOKEN=<token> in {keys} "
      "or export it, then pull again\n"),
     (("ACME_TOKEN", "OPENAI_API_KEY"), True,
      "flightdeck: event.token_env names OPENAI_API_KEY, a variable for another service's key, not a token for this platform: "
@@ -901,7 +903,7 @@ def test_plugin_pull_refuses_before_it_runs_the_plugin(tmp_path, config, monkeyp
     for name in ("ACME_TOKEN", "OPENAI_API_KEY", "MY_API_KEY"):
         monkeypatch.setenv(name, TOKEN) if set_token else monkeypatch.delenv(name, raising=False)
     result = invoke("pull", event_file(tmp_path, text=EVENT.replace(*change) if change[0] else EVENT))
-    assert (result.exit_code, result.output) == (2, message)
+    assert (result.exit_code, result.output) == (2, message.replace("{keys}", keys_file_named()))
     assert calls(root) == []
 
 
@@ -964,13 +966,13 @@ def test_plugin_pull_says_why_the_plugin_failed_and_never_shows_the_token(tmp_pa
     monkeypatch.setenv("ACME_TOKEN", TOKEN)
     event = event_file(tmp_path)
     result = invoke("pull", event)
-    assert (result.exit_code, result.output) == (
+    assert (result.exit_code, pulled(result)) == (
         2, "flightdeck: the acme plugin could not pull the board: it exited with status 1: 401 for token <token>\n")
     set_replies(root, {"pull": LISTED["pull"], "solved": {"raw": "<html>"}})
     result = invoke("pull", event)
     board = tmp_path / "quals" / "board"
     assert result.exit_code == 2 and TOKEN not in result.output
-    assert result.output == (
+    assert pulled(result) == (
         f"pulled into {board}: 3 challenges (misc 2, web 1); nothing was submitted\n"
         f"flightdeck: could not read the solved list from the acme plugin: its answer is not one JSON object; what was pulled "
         f"stays in {board}\n")
@@ -1005,12 +1007,29 @@ def test_doctor_reports_each_enabled_plugin_and_a_broken_one_never_fails_the_set
     assert checks["plugin acme"].detail == "platform acme, runs <flightdeck's python> adapter.py"
     path = broken.resolve() / "plugin.toml"
     assert (checks["plugin harbour"].ok, checks["plugin harbour"].essential) == (False, False)
-    assert checks["plugin harbour"].detail == f"plugin harbour: {path}: unknown key comand (known: {KNOWN})"
+    assert checks["plugin harbour"].detail == f"{path}: unknown key comand (known: {KNOWN})"  # the line names the plugin once
     assert checks["plugin harbour"].fix == f"fix the plugin's plugin.toml, or take [plugins.harbour] out of {config}"
-    assert checks["plugin gone"].detail == f"plugin gone: {tmp_path.resolve() / 'gone' / 'plugin.toml'}: no such file"
+    assert checks["plugin gone"].detail == f"{tmp_path.resolve() / 'gone' / 'plugin.toml'}: no such file"
+    assert checks["plugin gone"].fix == (f"put the plugin's folder back at {tmp_path / 'gone'}, or change [plugins.gone] path in "
+                                         f"{config} to where it is now, or take [plugins.gone] out")  # no plugin.toml to fix
     assert calls(good_one) == [] and calls(broken) == []  # doctor reads the manifests and runs nothing
     result = CliRunner().invoke(cli.app, ["doctor", "--config", str(config)])
-    assert f"warn plugin harbour: plugin harbour: {path}: unknown key comand" in result.output
+    assert f"warn plugin harbour: {path}: unknown key comand" in result.output
     assert f"     fix: fix the plugin's plugin.toml, or take [plugins.harbour] out of {config}" in result.output
     assert "ok   plugin acme: platform acme, runs <flightdeck's python> adapter.py" in result.output
     assert "FAIL plugin" not in result.output
+
+
+def test_plugin_pull_of_the_new_plugins_example_event_left_unedited_runs_nothing(tmp_path, config, monkeypatch):
+    """`plugin new` writes event.example.toml with url = https://ctf.example.org; pulled as it
+    is, the plugin would be handed the player's token for an address that is not the event's."""
+    from ctf_flightdeck.preflight import placeholder_url
+
+    root = make_plugin(tmp_path / "acme", LISTED)
+    enabled(config, root)
+    monkeypatch.setenv("ACME_TOKEN", TOKEN)
+    text = manifest.skeleton("acme")["event.example.toml"]
+    assert 'url = "https://ctf.example.org"' in text
+    result = invoke("pull", event_file(tmp_path, text=text))
+    assert (result.exit_code, result.output) == (2, f"flightdeck: {placeholder_url('https://ctf.example.org')}\n")
+    assert calls(root) == []

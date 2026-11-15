@@ -124,6 +124,7 @@ def test_a_token_noctf_refuses_is_a_failure_that_names_its_answer_and_never_show
             run(engine.pull(tmp_path))
     said = str(failed.value)
     assert "GET /challenges was answered with HTTP 401" in said and "no authorization header supplied" in said
+    assert said.endswith(" (is the token the right one for this event, and still valid?)")  # a refused token is the player's to fix
     assert "fake-expired-session-0000" not in said
 
 

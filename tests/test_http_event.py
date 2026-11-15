@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 from ctf_flightdeck import http_cli, plugin_cli, preflight_cli
 from ctf_flightdeck.config import ConfigError, load_config
 from ctf_flightdeck.core.model import ChallengeStatus, LaneState, PendingKind
+from ctf_flightdeck.keys import keys_file_named
 from ctf_flightdeck.platform.manual import cannot_check, load_board
 from ctf_flightdeck.platform.http import PRESETS
 from ctf_flightdeck.platform.plugin_run import PluginLink
@@ -284,6 +285,15 @@ def invoke(*args):
     return runner.invoke(http_cli.app, [str(a) for a in args], prog_name="flightdeck http")
 
 
+def pulled(result) -> str:
+    """A pull's output after its first line, which must say that the pull has started (a slow
+    platform or plugin would otherwise look like a frozen terminal)."""
+    first, _, rest = result.output.partition("\n")
+    assert first.startswith("pulling the board through ") and first.endswith("..."), result.output
+    assert first + "\n" in result.stderr and first not in result.stdout  # said on stderr: stdout stays the report
+    return rest
+
+
 @pytest.fixture
 def own_config(tmp_path, monkeypatch) -> Path:
     """The player's config for the commands: a file in tmp_path, never the real one."""
@@ -383,7 +393,7 @@ def test_http_pull_writes_the_board_reads_the_solved_list_and_submits_nothing(tm
         event = event_file(tmp_path, fake.url)
         result = invoke("pull", event)
         assert result.exit_code == 0, result.output
-        assert result.output == f"pulled into {board}: 3 challenges (misc 2, web 1), 1 listed as solved; nothing was submitted\n"
+        assert pulled(result) == f"pulled into {board}: 3 challenges (misc 2, web 1), 1 listed as solved; nothing was submitted\n"
         assert fake.kinds() == ["login", "challs", "file", "me"]  # one sign-in serves the pull and the solved list
         assert json.loads((board / "plugin.json").read_text()) == {
             "format": 1, "plugin": "http", "url": fake.url, "refs": {"done-before": "done-a4d0", "warm-up": "warm-7f3a", "web-thing": "web-19c2"}}
@@ -391,11 +401,11 @@ def test_http_pull_writes_the_board_reads_the_solved_list_and_submits_nothing(tm
         assert [item.challenge.id for item in load_board(board).challenges] == ["done-before", "warm-up", "web-thing"]
         fake.add(RTask("new-55aa", "Newer", category="web", files={"more.txt": b"more\n"}))
         again = invoke("pull", event)
-        assert again.output == f"pulled into {board}: 4 challenges (misc 2, web 2), 1 new, 1 listed as solved; nothing was submitted\n"
+        assert pulled(again) == f"pulled into {board}: 4 challenges (misc 2, web 2), 1 new, 1 listed as solved; nothing was submitted\n"
         assert len(fake.of("file")) == 2 and fake.of("submit") == []  # the first file was not fetched a second time
         other = tmp_path / "elsewhere"
         named = invoke("pull", event, other)  # FOLDER: another board folder than the profile's
-        assert named.exit_code == 0 and named.output.startswith(f"pulled into {other}: 4 challenges")
+        assert named.exit_code == 0 and pulled(named).startswith(f"pulled into {other}: 4 challenges")
     assert TEAM_TOKEN not in (board / "plugin.json").read_text()
 
 
@@ -417,7 +427,7 @@ def test_http_pull_refuses_a_folder_that_holds_another_board(tmp_path, own_confi
         result = invoke("pull", event_file(tmp_path, fake.url))
         assert fake.requests == []
     assert result.exit_code == 2
-    assert result.output == (f"flightdeck: {board} holds a board pulled by something other than the http adapter or from another address: "
+    assert pulled(result) == (f"flightdeck: {board} holds a board pulled by something other than the http adapter or from another address: "
                              "use a new folder\n")
 
 
@@ -430,8 +440,8 @@ def test_http_pull_refuses_a_folder_that_holds_another_board(tmp_path, own_confi
                                 "holds your token\n"),
     ({"token_env": "CTFD_TOKEN"}, True, "Name the variable that holds your token for it, like RCTF_TOKEN\n"),
     ({"token_env": "HTTP_PROXY_PASSWORD"}, True, "Name the variable that holds your token for it, like RCTF_TOKEN\n"),
-    ({}, False, f"flightdeck: the token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put {TOKEN_VAR}=<token> in your "
-                "keys file or export it, then try again\n"),
+    ({}, False, f"flightdeck: the token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put {TOKEN_VAR}=<token> in {{keys}} "
+                "or export it, then try again\n"),
     ({"board": None}, True, "flightdeck: name the board folder: `flightdeck http pull EVENT.toml FOLDER`, or set event.board in the profile\n"),
 ])
 def test_http_pull_refuses_before_it_asks_the_platform(tmp_path, own_config, monkeypatch, fields, set_token, message):
@@ -442,7 +452,7 @@ def test_http_pull_refuses_before_it_asks_the_platform(tmp_path, own_config, mon
     with FakeRCTF(sample()) as fake:
         result = invoke("pull", event_file(tmp_path, fake.url, **fields))
         assert fake.requests == []
-    assert result.exit_code == 2 and result.output.endswith(message)
+    assert result.exit_code == 2 and result.output.endswith(message.replace("{keys}", keys_file_named()))
 
 
 def test_the_commands_say_so_when_the_config_was_not_read_and_still_check_the_variables_name(tmp_path, monkeypatch, token):
@@ -611,7 +621,7 @@ def test_a_token_that_is_not_set_stops_the_run_before_the_platform_is_asked(tmp_
             rctf_run(tmp_path, fake, server)
         assert fake.requests == []
     assert str(refused.value) == (f"the token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put {TOKEN_VAR}=<token> in "
-                                  "your keys file or export it, then start play again")
+                                  f"{keys_file_named()} or export it, then start play again")
 
 
 def test_under_pull_manual_the_run_plays_the_board_http_pull_wrote_and_refuses_one_it_did_not(tmp_path, own_config, token):
@@ -790,3 +800,35 @@ def test_http_check_with_no_challenge_marked_on_demand_asks_nothing_and_passes(t
     assert result.exit_code == 0, result.output
     assert "instance GET /api/v2/integrations/challs/{id}/instance: not asked: no challenge is marked on-demand (list.instance " \
            "matched no value)" in result.stdout.splitlines()
+
+
+@pytest.mark.parametrize("preset", ["rctf", "rctf2", "noctf", "gzctf"])
+def test_an_example_profile_left_unedited_sends_the_token_nowhere(tmp_path, own_config, monkeypatch, preset):
+    """`flightdeck http example > event.toml` and then `http check` (or pull, or play) with
+    event.url still the example's: the player's token went to ctf.example.org, a host that is
+    not the event's. Each command now refuses it by name before any address is looked up."""
+    import socket
+
+    from ctf_flightdeck.preflight import placeholder_url
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("a request left for the example's address")
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_network)
+    text = http_cli.example_profile(False, preset)
+    loaded_once = tmp_path / "once.toml"
+    loaded_once.write_text(text)
+    variable = load_profile(loaded_once)[0].token_env
+    monkeypatch.setenv(variable, "a-synthetic-token-for-the-example")
+    folder = tmp_path / "quals"
+    folder.mkdir()
+    path = folder / "event.toml"
+    path.write_text(text)
+    refusal = placeholder_url("https://ctf.example.org")
+    assert refusal is not None and placeholder_url("https://ctf.realevent.test") is None
+    for command in ("check", "pull"):
+        result = invoke(command, path)
+        assert (result.exit_code, result.output) == (2, f"flightdeck: {refusal}\n"), command
+    with pytest.raises(RunError) as refused:
+        prepare_run(RunOptions(event=path, config=config(tmp_path, "http://127.0.0.1:9/v1")))
+    assert str(refused.value) == refusal

@@ -113,6 +113,7 @@ def pull(
         ProfileError,
         load_profile,
         no_such_plugin,
+        placeholder_url,
         plugin_board_problem,
         plugin_http_warning,
     )
@@ -141,6 +142,8 @@ def pull(
               f"so flightdeck does not run the {plugin.name} plugin for it")
     if profile.url is None:
         _fail("event.url is required for a plugin's platform: the address its adapter talks to")
+    if (unedited := placeholder_url(profile.url)) is not None:
+        _fail(unedited)
     elsewhere = plugin_board_problem(profile)  # the profile's word for where a pull writes: inside its own folder, or none
     if elsewhere is not None:
         _fail(elsewhere)
@@ -172,6 +175,8 @@ def pull_and_report(caller, board: Path, *, name: str, url: str) -> None:
             return written, None, str(exc)
         return written, solved, None
 
+    # A pull may take minutes (a plugin's has 300 s): said first, so a slow one is not a frozen terminal.
+    typer.echo(f"pulling the board through {caller.label}...", err=True)
     try:
         written, solved, why = asyncio.run(run())
     except manifest.PluginError as exc:
@@ -208,7 +213,7 @@ def _token(name: str | None, plugin, config) -> str:
     """The event's token, from the variable event.token_env names (the environment, else the
     keys file). Never shown. A variable that holds another service's key is refused, as a run
     refuses it (preflight): its value would be handed to the plugin."""
-    from .keys import KeysError, environment
+    from .keys import KeysError, environment, keys_file_named
     from .preflight import plugin_token_env
 
     if name is None:
@@ -221,7 +226,7 @@ def _token(name: str | None, plugin, config) -> str:
     except KeysError as exc:
         _fail(str(exc))
     if not value:
-        _fail(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your keys file or "
+        _fail(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in {keys_file_named()} or "
               "export it, then pull again")
     return value
 

@@ -279,7 +279,9 @@ itself: `platform = "http"` and an `[http]` table. No program of yours runs and 
 plugin to trust. rCTF, noCTF and GZCTF ship as presets.
 
 ```sh
-flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset (--preset noctf for noCTF; --routes: every route written out)
+mkdir -p ~/ctf/quals
+flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset (--preset rctf2, noctf or gzctf for the others; --routes: every route written out)
+# edit it: event.url (the site's address), event.name and [rules] from the event's rules
 export RCTF_TOKEN='https://ctf.example.org/login?token=...'   # rCTF: your team's login link, whole (or the token alone)
 flightdeck preflight ~/ctf/quals/event.toml         # every request a run would make, and where your token goes
 flightdeck http check ~/ctf/quals/event.toml        # signs in, lists, reads the solved list (and an instance's status); submits nothing
@@ -334,6 +336,7 @@ has it: the challenge list, then one more request for each new challenge's text 
 submit, and the team's solves.
 
 ```sh
+mkdir -p ~/ctf/ductf
 flightdeck http example --preset noctf > ~/ctf/ductf/event.toml
 export NOCTF_TOKEN='...'   # the session token the site keeps once you sign in
 ```

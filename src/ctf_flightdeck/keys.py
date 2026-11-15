@@ -52,6 +52,18 @@ def keys_path() -> Path:
         raise KeysError(f"cannot find the keys file: ${KEYS_ENV} or the home directory cannot be resolved") from None
 
 
+def keys_file_named() -> str:
+    """"your keys file (PATH)", for a message that tells the player to put a variable there:
+    a player who has never seen the file learns where it is. The home folder is shown as ~."""
+    try:
+        path = keys_path()
+    except KeysError:
+        return "your keys file"
+    with suppress(RuntimeError, ValueError):
+        return f"your keys file (~/{path.relative_to(Path.home())})"
+    return f"your keys file ({path})"
+
+
 def load_keys(path: Path | None = None) -> dict[str, str]:
     """The keys in the file, {} when there is no file. KeysError when it is readable by
     others, too big, or has a line that is not NAME=value."""

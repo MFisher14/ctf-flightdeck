@@ -276,6 +276,21 @@ def test_a_by_hand_event_starts_empty_says_how_to_add_a_challenge_and_launches(t
     assert [call["board"] for call in setup] == [folder]  # an empty board plays: challenges are added in the console
 
 
+def test_the_platform_question_names_the_http_presets_so_by_hand_is_not_the_only_way_off_ctfd(tmp_path, monkeypatch, setup):
+    """"by hand: any other site" left a player on rCTF, noCTF or GZCTF submitting every flag
+    on the site, with no word of the presets that pull and submit there. The menu names the
+    command, and each preset it names is one `flightdeck http example` takes."""
+    from ctf_flightdeck import http_cli
+    from ctf_flightdeck.platform.http import PRESETS
+
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    result = run(input=f"Example CTF\n{tmp_path / 'example'}\ny\n\n2\n\n\nn\nn\n")
+    menu = result.output.split("How does flightdeck get this event's challenges?", 1)[1].split("Choose 1 or 2", 1)[0]
+    assert "`flightdeck http example --preset NAME > event.toml` (rctf, rctf2, noctf or gzctf)" in menu
+    for name in PRESETS:
+        assert name in menu and http_cli.example_profile(False, name).count(f'preset = "{name}"') == 1
+
+
 def test_start_offers_the_solver_pack_and_a_failed_install_does_not_undo_the_event(tmp_path, monkeypatch, setup):
     import typer
 
@@ -305,6 +320,23 @@ def test_a_folder_that_is_already_an_event_is_played_not_asked_about_again(tmp_p
     assert result.exit_code == 0, result.output
     assert "already set up" in result.output and written.read_text() == before
     assert [call["board"] for call in setup] == [tmp_path / "example"]
+
+
+def test_a_folder_already_set_up_whose_token_is_not_set_says_so_before_it_launches(tmp_path, monkeypatch, setup):
+    """Start left out the check's "token is not set" as said already, with where the token
+    goes; for a folder set up before (an http profile from `flightdeck http example`, or a
+    CTFd event whose token was skipped) nothing had said it, and play then refused."""
+    from ctf_flightdeck import http_cli
+
+    monkeypatch.delenv("RCTF_TOKEN", raising=False)
+    folder = tmp_path / "quals"
+    folder.mkdir()
+    (folder / "event.toml").write_text(http_cli.example_profile(False, "rctf"))
+    result = run(str(folder), "--no-launch")
+    assert result.exit_code == 0, result.output
+    assert "note: the token variable RCTF_TOKEN (event.token_env) is not set or is empty" in result.output
+    monkeypatch.setenv("RCTF_TOKEN", "a-synthetic-team-token")
+    assert "RCTF_TOKEN" not in run(str(folder), "--no-launch").output  # set: nothing to say
 
 
 def test_away_from_a_terminal_start_names_every_answer_it_needs(tmp_path, monkeypatch, setup):

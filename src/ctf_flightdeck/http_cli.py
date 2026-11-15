@@ -61,7 +61,12 @@ preset = "rctf"                     # rCTF's routes, which ship with flightdeck;
 preset = "rctf2"                    # rCTF v2's routes, which ship with flightdeck; a key written under [http] wins
 # rCTF v2: put your team's login link in the variable, whole and in quotes (its profile page's "Team Invite":
 # https://.../login?token=...), or the token alone. flightdeck takes the token out of the link and decodes it.
-# A challenge whose instance the site starts is marked on-demand; [instances] plugin = "rctf" starts it (docs/BOARDS.md).
+
+# The challenges with an instance the site starts for your team are marked on the board. To have flightdeck
+# start each one before a lane works it, set live_targets = "allowed" under [rules] and take the # off the
+# two lines below; `flightdeck http check` then asks the status of the first one's instance (it starts nothing).
+# [instances]
+# plugin = "rctf"
 """,
     "noctf": """\
 [http]
@@ -112,7 +117,7 @@ def example_profile(routes: bool = False, preset: str = "rctf") -> str:
 
 @app.command("example")
 def example(
-    preset: Annotated[str, typer.Option("--preset", metavar="NAME", help="The platform: rctf (the default), rctf2, noctf or gzctf.")] = "rctf",
+    preset: Annotated[str, typer.Option("--preset", metavar="NAME", help="The platform: rctf (the default), rctf2 (rCTF v2), noctf or gzctf.")] = "rctf",
     routes: Annotated[bool, typer.Option("--routes", metavar="", help="Write every route of the preset out under [http], to edit for another platform.")] = False,
 ) -> None:
     """Print an event profile for the http platform, to edit: `flightdeck http example > event.toml`."""
@@ -206,9 +211,9 @@ def _ready(event: Path, command: str):
     be an http one whose rules allow the platform's API, and its token variable must be one
     a run would take (preflight) and be set. The token is never shown."""
     from .config import ConfigError, load_config
-    from .keys import KeysError, environment
+    from .keys import KeysError, environment, keys_file_named
     from .platform.http import HttpCaller
-    from .preflight import ProfileError, http_token_env, load_profile
+    from .preflight import ProfileError, http_token_env, load_profile, placeholder_url
 
     try:
         profile, _ = load_profile(event)  # it expands ~ itself, and says so when it cannot
@@ -222,6 +227,8 @@ def _ready(event: Path, command: str):
               "so flightdeck does not ask it")
     if profile.url is None:
         _fail('event.url is required for platform "http": the platform\'s address, which every route of the [http] table is under')
+    if (unedited := placeholder_url(profile.url)) is not None:
+        _fail(unedited)
     name = profile.token_env
     if name is None:
         _fail('event.token_env is required for platform "http": the name of the environment variable that holds your token')
@@ -238,7 +245,7 @@ def _ready(event: Path, command: str):
     except KeysError as exc:
         _fail(str(exc))
     if not value:
-        _fail(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your keys file or "
+        _fail(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in {keys_file_named()} or "
               "export it, then try again")
     if profile.url.lower().startswith("http://") and not _loopback(profile.url):
         typer.echo("flightdeck: warning: event.url is http, not https: your token would cross the network unencrypted", err=True)

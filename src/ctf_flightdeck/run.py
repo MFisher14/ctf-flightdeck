@@ -154,10 +154,10 @@ from .plugins.call import PLUGIN_PULL, CallFailed, Caller, PlatformCaller, plugi
 from .preflight import (
     USES_PLATFORM,
     EventProfile,
-    allowed,
     Policies,
     Policy,
     ProfileError,
+    allowed,
     check,
     deck_submit,
     instances_off,
@@ -165,6 +165,7 @@ from .preflight import (
     load_profile,
     looser,
     no_agents,
+    placeholder_url,
     strictest,
 )
 from .notify import Notifier, NotifyError
@@ -1973,7 +1974,7 @@ def _gm_token(profile: EventProfile, board: Path | None) -> tuple[str, dict]:
     board folder: RunError unless the board was pulled from the profile's Game Master."""
     name, url = profile.token_env, profile.url
     assert name is not None and url is not None and board is not None  # check() refuses a Game Master profile without them
-    from .keys import KeysError, environment
+    from .keys import KeysError, environment, keys_file_named
 
     try:
         value = environment().get(name, "").strip()
@@ -1981,8 +1982,8 @@ def _gm_token(profile: EventProfile, board: Path | None) -> tuple[str, dict]:
         raise RunError(str(exc)) from None
     if not value:
         raise RunError(
-            f"the Game Master token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
-            "keys file or export it, then start play again"
+            f"the Game Master token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in "
+            f"{keys_file_named()} or export it, then start play again"
         )
     try:
         check_gm_site(url, value)
@@ -2021,21 +2022,23 @@ def _adapter(profile: EventProfile, config: Config) -> _Adapter:
     event's token read. RunError when the plugin, the table or the token cannot be used."""
     assert profile.url is not None  # check() refuses the profile without one
     url, event = profile.url, profile.name
+    if (unedited := placeholder_url(url)) is not None:
+        raise RunError(unedited)
     if profile.platform != "http":
         plugin, token = _plugin_token(profile, config)
         held = {profile.token_env: token} if profile.token_env and token else {}
         return _Adapter(plugin.name, lambda: Caller(plugin, url, event, token), plugin_label(plugin.name), PLUGIN_PULL, held)
     table, name = profile.http, profile.token_env
     assert table is not None and name is not None  # check() refuses an http profile without either
-    from .keys import KeysError, environment
+    from .keys import KeysError, environment, keys_file_named
 
     try:
         value = environment().get(name, "").strip()
     except KeysError as exc:
         raise RunError(str(exc)) from None
     if not value:
-        raise RunError(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
-                       "keys file or export it, then start play again")
+        raise RunError(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in "
+                       f"{keys_file_named()} or export it, then start play again")
     try:
         read = http_platform.HttpCaller(table, url, value)
     except ValueError as exc:  # a token no header can carry; the message never shows it
@@ -2060,7 +2063,7 @@ def _plugin_token(profile: EventProfile, config: Config) -> tuple[plugin_manifes
         return plugin, None
     name = profile.token_env
     assert name is not None  # check() refuses the profile without one when the plugin takes a token
-    from .keys import KeysError, environment
+    from .keys import KeysError, environment, keys_file_named
 
     try:
         value = environment().get(name, "").strip()
@@ -2068,8 +2071,8 @@ def _plugin_token(profile: EventProfile, config: Config) -> tuple[plugin_manifes
         raise RunError(str(exc)) from None
     if not value:
         raise RunError(
-            f"the {plugin.name} token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
-            "keys file or export it, then start play again"
+            f"the {plugin.name} token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in "
+            f"{keys_file_named()} or export it, then start play again"
         )
     return plugin, value
 
@@ -2157,7 +2160,9 @@ def _ctfd_token(profile: EventProfile) -> str:
     """The CTFd token, from the variable event.token_env names. Never shown."""
     name = profile.token_env
     assert name is not None  # check() refuses a CTFd profile without one
-    from .keys import KeysError, environment
+    if profile.url is not None and (unedited := placeholder_url(profile.url)) is not None:
+        raise RunError(unedited)
+    from .keys import KeysError, environment, keys_file_named
 
     try:
         value = environment().get(name, "").strip()
@@ -2165,8 +2170,8 @@ def _ctfd_token(profile: EventProfile) -> str:
         raise RunError(str(exc)) from None
     if not value:
         raise RunError(
-            f"the CTFd token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
-            "keys file or export it (CTFd: Settings, Access Tokens), then start play again"
+            f"the CTFd token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in "
+            f"{keys_file_named()} or export it (CTFd: Settings, Access Tokens), then start play again"
         )
     assert profile.url is not None  # check() refuses a CTFd profile without one
     try:

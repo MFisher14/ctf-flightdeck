@@ -314,6 +314,7 @@ address, and each folder's ref; leave it where it is.
 solved list, and says what it found:
 
 ```
+pulling the board through the myctf plugin...
 pulled into quals/board: 14 challenges (web 4, cry 3, misc 7), 2 listed as solved; nothing was submitted
 ```
 

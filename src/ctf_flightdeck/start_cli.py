@@ -34,6 +34,8 @@ PLATFORM_MENU = (
     "               flightdeck pulls the board, adds new challenges as they appear and submits flags.\n"
     "  2  by hand   any other site: you put each challenge in the event's board folder and submit\n"
     "               flags on the site yourself.\n"
+    "     On rCTF, noCTF or GZCTF flightdeck can pull and submit for you instead: press ctrl+c,\n"
+    "     then `flightdeck http example --preset NAME > event.toml` (rctf, rctf2, noctf or gzctf).\n"
     "Choose 1 or 2"
 )
 SUBMIT_MENU = (
@@ -104,7 +106,7 @@ def start(
                 more.append(f"its token goes in {_keys_file()}, under the variable its event file names (token_env)")
             typer.echo(f"note: {', '.join(as_options)} {'was' if len(as_options) == 1 else 'were'} not used: the event is set up already"
                        + "".join(f"; {text}" for text in more))
-        _status(folder, config_path)
+        _status(folder, config_path)  # the token was not said: the check says it when it is missing
         _launch(folder, config, launch, interactive)
 
     try:
@@ -289,7 +291,7 @@ def start(
 
         if vpn_cli.ensure_tool(kept):  # installs wg-quick or openvpn when it is missing, on a yes
             typer.echo(f"vpn: ready; `flightdeck play` offers to connect it, and `flightdeck vpn up {folder}` does it now")
-    _status(folder, config_path, offer_pack=interactive, config=config)
+    _status(folder, config_path, offer_pack=interactive, config=config, token_said=bool(token_note))
     if platform != "ctfd":
         typer.echo("The board starts empty. In the console, type /new to hand over a challenge: its name, then its text, files and\n"
                    "screenshots (drag them in). A lane starts on it at once. From another terminal: flightdeck add --help")
@@ -357,7 +359,7 @@ def _keys_file() -> Path:
         _fail(str(exc))
 
 
-def _status(folder: Path, config_path: Path, *, offer_pack: bool = False, config: Path | None = None) -> None:
+def _status(folder: Path, config_path: Path, *, offer_pack: bool = False, config: Path | None = None, token_said: bool = False) -> None:
     """What stands between this event and playing it: the profile's own check, and the pack."""
     from . import start as events
     from .config import ConfigError, load_config
@@ -375,7 +377,7 @@ def _status(folder: Path, config_path: Path, *, offer_pack: bool = False, config
     except (ProfileError, RunError) as exc:
         _fail(str(exc))
     for problem in problems:
-        if not problem.refuse and "(event.token_env) is not set" in problem.message:
+        if token_said and not problem.refuse and "(event.token_env) is not set" in problem.message:
             continue  # said above, with where the token goes
         typer.echo(f"{'refuse' if problem.refuse else 'note'}: {problem.message}")
     typer.echo(pack_line(loaded))
