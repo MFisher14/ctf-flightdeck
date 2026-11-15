@@ -398,6 +398,7 @@ def test_at_a_terminal_start_sets_up_an_rctf_event_and_keeps_its_login_link_out_
     assert LINK not in result.output and "c3ludGhldGlj" not in (folder / "event.toml").read_text()
     assert "pulled from https://ctf.example.org when you play (rCTF's API, by the http platform)" in result.output
     assert "type /new" not in result.output  # the board is pulled, not filled by hand
+    assert f"check: `flightdeck http check {folder / 'event.toml'}` signs in, lists the challenges" in result.output
 
 
 def test_a_gzctf_events_game_comes_from_its_pages_address_or_is_asked_for(tmp_path, monkeypatch, setup):

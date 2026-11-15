@@ -348,6 +348,9 @@ def start(
     if platform == "manual":
         typer.echo("The board starts empty. In the console, type /new to hand over a challenge: its name, then its text, files and\n"
                    "screenshots (drag them in). A lane starts on it at once. From another terminal: flightdeck add --help")
+    elif platform == "http":  # no platform's table has met the real site yet: one look, which changes nothing there, before a run
+        typer.echo(f"check: `flightdeck http check {written}` signs in, lists the challenges and reads the solved list, and submits "
+                   "nothing: it says what each part of the table matched on the site")
     _launch(folder, config, launch, interactive, ready=chosen is None or token is not None or chosen.source is not None)
 
 
