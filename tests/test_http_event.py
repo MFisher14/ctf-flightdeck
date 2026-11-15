@@ -21,6 +21,7 @@ from ctf_flightdeck import http_cli, plugin_cli, preflight_cli
 from ctf_flightdeck.config import ConfigError, load_config
 from ctf_flightdeck.core.model import ChallengeStatus, LaneState, PendingKind
 from ctf_flightdeck.platform.manual import cannot_check, load_board
+from ctf_flightdeck.platform.http import PRESETS
 from ctf_flightdeck.platform.plugin_run import PluginLink
 from ctf_flightdeck.preflight import HTTP_BOARD, ProfileError, check, describe, load_profile
 from ctf_flightdeck.run import RunError, RunOptions, prepare_run
@@ -111,6 +112,21 @@ def test_a_table_written_out_is_named_as_such_and_a_key_under_a_preset_shows_in_
     path.write_text(written)
     loaded, chosen = load_profile(path)
     assert describe(loaded, chosen, environ={})[0] == "event     Example Quals · http (the routes of its [http] table) at https://ctf.example.org · solo"
+
+
+@pytest.mark.parametrize("routes", [False, True])
+@pytest.mark.parametrize("name", PRESETS)
+def test_every_presets_example_profile_loads_and_passes_preflight(tmp_path, name, routes):
+    result = runner.invoke(http_cli.app, ["example", "--preset", name, *(["--routes"] if routes else [])])
+    assert result.exit_code == 0, result.output
+    assert result.output == http_cli.example_profile(routes, name)
+    path = tmp_path / "event.toml"
+    path.write_text(result.output)
+    loaded, chosen = load_profile(path)
+    assert (loaded.http.preset == name) is not routes
+    variable = loaded.token_env
+    assert variable == ("HTTP_TOKEN" if routes else {"rctf2": "RCTF_TOKEN"}.get(name, f"{name.upper()}_TOKEN"))
+    assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == []
 
 
 NOT_NAMED = ("a variable that is not named for this platform (its name is not HTTP_TOKEN and does not start with HTTP_TOKEN_ or "

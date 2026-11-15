@@ -107,6 +107,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   once and never sent again; start that instance on the site, and flightdeck uses it. Built
   from rCTF v2's API reference; it has not met a real event yet. The older rCTF keeps
   `preset = "rctf"`, and its instancer (klodd) wants a CAPTCHA, so start those by hand.
+  `flightdeck http example --preset rctf2` prints a profile for it, with its token in
+  `RCTF_TOKEN`.
 - Containers on GZCTF. With `preset = "gzctf"` under `[http]` and `plugin = "gzctf"` under
   `[instances]`, flightdeck starts a container challenge's container before a lane works it,
   with your `GZCTF_Token` cookie, extends it near its end and stops it when the challenge is

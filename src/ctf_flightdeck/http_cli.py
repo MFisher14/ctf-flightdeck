@@ -56,6 +56,13 @@ preset = "rctf"                     # rCTF's routes, which ship with flightdeck;
 # rCTF: put your team's login link in the variable, whole and in quotes (its profile page's "Team Invite":
 # https://.../login?token=...), or the token alone. flightdeck takes the token out of the link and decodes it.
 """,
+    "rctf2": """\
+[http]
+preset = "rctf2"                    # rCTF v2's routes, which ship with flightdeck; a key written under [http] wins
+# rCTF v2: put your team's login link in the variable, whole and in quotes (its profile page's "Team Invite":
+# https://.../login?token=...), or the token alone. flightdeck takes the token out of the link and decodes it.
+# A challenge whose instance the site starts is marked on-demand; [instances] plugin = "rctf" starts it (docs/BOARDS.md).
+""",
     "noctf": """\
 [http]
 preset = "noctf"                    # noCTF's routes, which ship with flightdeck; a key written under [http] wins
@@ -75,22 +82,22 @@ ROUTES_HEAD = """\
 # The routes of the platform's API. These are {label}'s, written out: change them to the platform in
 # front of you (its browser's network tab shows its routes). `flightdeck http check` tries them.
 """
-LABELS = {"rctf": "rCTF", "noctf": "noCTF", "gzctf": "GZCTF"}  # each preset's name as the platform writes it
+LABELS = {"rctf": "rCTF", "rctf2": "rCTF v2", "noctf": "noCTF", "gzctf": "GZCTF"}  # each preset's name as the platform writes it
 _TOKEN_LINE = 'token_env = "RCTF_TOKEN"            # the NAME of the variable that holds your token: RCTF_..., HTTP_TOKEN or HTTP_TOKEN_...'
 
 
 def example_profile(routes: bool = False, preset: str = "rctf") -> str:
     """An event profile on the http platform that loads: with `preset`, or (`routes`) with
     that preset's table written out under [http], to edit for another platform."""
-    from .platform.http import PRESETS, preset_text
+    from .platform.http import PRESETS, preset_text, variable_prefix
 
     if preset not in PRESETS:
         raise ValueError(f"no preset of that name (known: {', '.join(PRESETS)})")
     if not routes:
-        variable = f"{preset.upper()}_TOKEN"
-        own = EXAMPLE.replace(_TOKEN_LINE, f'token_env = "{variable}"'.ljust(36) + f"# the NAME of the variable that holds your token: "
-                              f"{preset.upper()}_..., HTTP_TOKEN or HTTP_TOKEN_...")
-        assert preset == "rctf" or own != EXAMPLE
+        prefix = variable_prefix(preset)  # rctf2's is RCTF_: a variable named RCTF2_ would be refused
+        own = EXAMPLE.replace(_TOKEN_LINE, f'token_env = "{prefix}TOKEN"'.ljust(36) + f"# the NAME of the variable that holds your token: "
+                              f"{prefix}..., HTTP_TOKEN or HTTP_TOKEN_...")
+        assert prefix == "RCTF_" or own != EXAMPLE
         return own + PRESET[preset]
     table = re.sub(r"(?m)^\[([a-z.]+)\]$", r"[http.\1]", preset_text(preset))
     table = "\n".join(line for line in table.splitlines() if not line.startswith("#")).strip("\n")
@@ -105,7 +112,7 @@ def example_profile(routes: bool = False, preset: str = "rctf") -> str:
 
 @app.command("example")
 def example(
-    preset: Annotated[str, typer.Option("--preset", metavar="NAME", help="The platform: rctf (the default), noctf or gzctf.")] = "rctf",
+    preset: Annotated[str, typer.Option("--preset", metavar="NAME", help="The platform: rctf (the default), rctf2, noctf or gzctf.")] = "rctf",
     routes: Annotated[bool, typer.Option("--routes", metavar="", help="Write every route of the preset out under [http], to edit for another platform.")] = False,
 ) -> None:
     """Print an event profile for the http platform, to edit: `flightdeck http example > event.toml`."""
