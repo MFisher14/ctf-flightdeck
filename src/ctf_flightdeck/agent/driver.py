@@ -353,9 +353,9 @@ class Takeover:
         toolbox = getattr(run, "toolbox", None)  # a coding-agent lane (agent/external.py) has none, and so no session
         if toolbox is not None:
             self.sessions = tuple(await toolbox.close_sessions("the player took over the lane, which closes every session"))
-        shell = self.shell = run.workspace.interactive_shell()  # first: on the host it repairs .flightdeck
-        root = run.workspace.root
         try:
+            shell = self.shell = run.workspace.interactive_shell()  # first: on the host it repairs .flightdeck
+            root = run.workspace.root
             try:
                 await asyncio.to_thread(write_inside, root, HISTORY, b"")
                 self.history = True
@@ -369,9 +369,13 @@ class Takeover:
 
     def abandon(self) -> None:
         """The shell begin() gave never ran (the console could not hand over the terminal, or
-        its program could not start): its HOME goes, and the lane is told nothing, since
-        nothing was done in its workspace."""
+        its program could not start): its HOME goes. Nothing was done in the lane's workspace,
+        so the lane hears only that its sessions were closed, when begin() closed any."""
         self._remove_home()
+        if self.sessions:
+            self.run.notes.append(f"The player tried to take over your shell, which closed your sessions "
+                                  f"({', '.join(self.sessions)}): start again what you still need.")
+            self.sessions = ()  # said once
 
     def _remove_home(self) -> None:
         if self.shell is not None:  # the workspace's close tries again

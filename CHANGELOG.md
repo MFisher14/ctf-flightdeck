@@ -21,7 +21,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   gone), or a signal ends it, you are back in the console straight away, the lane is handed
   back as it was (a paused lane stays paused), and the status line says why: `the shell did
   not start: docker was not found (is it installed and on your PATH?)`, or `the shell exited at
-  once with status 1`. A shell that never ran is not told to the lane.
+  once with status 1`. A shell that never ran is not told to the lane, except that the
+  take-over closed its sessions, when it had any.
 - `flightdeck mock` no longer rings the terminal's bell unless your config says `bell = true`
   under `[console]`: its lanes are scripted and need no one. A run rings as before, and
   `bell = false` still silences both.
