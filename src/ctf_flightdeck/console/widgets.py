@@ -55,6 +55,15 @@ class BarInput(Input):
         self.quick: Callable[[str], bool] | None = None  # a digit: True if it answered the lane
         self.help: Callable[[], None] | None = None  # `?`: open help for where the player is
 
+    def check_consume_key(self, key: str, character: str | None) -> bool:
+        """The keys the field takes as text, which Textual then leaves out of the screen's bindings
+        while it has the focus (Screen._binding_chain): every printable one. Textual names no
+        character for `slash` (keys.key_to_character), so the `/` is named here: typed in the bar
+        it is text, never the screen's `/` binding."""
+        if character is None and key == "slash":
+            character = "/"
+        return super().check_consume_key(key, character)
+
     async def _on_key(self, event: events.Key) -> None:
         if not self.value and event.character:
             if event.character.isdigit() and self.quick and self.quick(event.character):

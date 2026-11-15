@@ -21,7 +21,7 @@ from ctf_flightdeck.console.focus import FocusScreen
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Challenge, ChallengeStatus, LaneState
-from test_console import assert_warning, bar, color_of, open_focus, press, prompt_text, status_line
+from test_console import assert_warning, bar, color_of, open_focus, press, prompt_text, region_text, status_line
 from test_layout import SIZE, console, drive, menu_text, release, three_lanes
 
 
@@ -113,6 +113,24 @@ def test_keys_typed_straight_after_h_or_r_go_into_the_bar_they_open(key, command
         assert isinstance(app.screen, FleetScreen) and bar(app).field.has_focus
         value = bar(app).field.value
         assert value.startswith(command) and value.endswith("eohr"), value  # h and r in the bar are text
+
+    drive(app, script, SIZE)
+
+
+@pytest.mark.parametrize("layout, label, command", [("deck", "h hint", "/hint L02 "), ("deck", "r redirect", "/redirect L02 "),
+                                                     ("simple", "/ commands", "/")])
+def test_a_click_on_the_key_line_opens_the_bar_while_the_bar_has_the_focus(layout, label, command):
+    """A click is no key the bar could take as text: h, r and / on the key line open the bar
+    on the lane even when the focus is in the bar already (the player tabbed to it)."""
+    deck, app = three_lanes(layout)
+
+    async def script(pilot):
+        bar(app).field.focus()
+        await pilot.pause()
+        assert bar(app).field.has_focus and bar(app).field.value == ""
+        await pilot.click("#keys", offset=(region_text(app, "#keys").index(label), 0))
+        await pilot.pause()
+        assert bar(app).field.value.startswith(command) and bar(app).field.has_focus
 
     drive(app, script, SIZE)
 

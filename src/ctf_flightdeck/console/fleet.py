@@ -659,8 +659,6 @@ class FleetScreen(Screen, inherit_bindings=False):
     # ------------------------------------------------------------------ actions
 
     def action_lane(self, verb: str) -> None:
-        if verb in ("hint", "redirect") and self.query_one("#bar", CommandBar).field.has_focus:
-            raise SkipAction()  # a priority key (see action_command): in the bar, h and r are text
         lane = self.target_lane()
         if lane is None:
             return
@@ -724,9 +722,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         priority one, acted on as the key arrives: keys typed straight after it (a terminal
         hands over keys typed fast all at once) are the command's name and go into the bar,
         never to the fleet's keys (the a of /approve is no approval, the q of /queue no quit).
-        A `/` typed in the bar is text: the key goes on to the field."""
-        if self.query_one("#bar", CommandBar).field.has_focus:
-            raise SkipAction()
+        A `/` typed in the bar is text: the bar's field consumes it, so Textual leaves the
+        binding out while the field has the focus (BarInput.check_consume_key), as it does h
+        and r. A click on the key line is no key: it opens the bar wherever the focus is."""
         self.start_command("/")
 
     def action_attach(self) -> None:
