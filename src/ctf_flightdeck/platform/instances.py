@@ -43,9 +43,20 @@ neither a plugin name nor all four routes is an error. The named shapes (PLUGINS
   endpoints, the end in milliseconds; a start may answer "starting" and the status "running"
   later; a `tcp-ssl` endpoint is a TLS endpoint (tls://). Built from its documentation
   against a fake of it (tests/fake_http.py); not met.
+- `gzctf`: GZCTF's containers (github.com/GZTimeWalker/GZCTF, GameController), for
+  platform = "http" with the gzctf preset. The game's number in the path ({game}, the [http]
+  table's `game`), the challenge's number after it; the start and the renew answer
+  {status, entry, expectStopAt}, the status is the challenge's own detail, whose
+  context holds instanceEntry and closeTime; the ends are milliseconds since 1970. Refusals
+  are {title, status}, asked for in English. A container GZCTF serves through its own
+  WebSocket proxy (its entry is the container's id, not a host and a port) is one at an
+  address flightdeck will not use, said so. Built from its source against a fake of it
+  (tests/fake_gzctf.py); not met.
 
-A shape names the platform it is for (Shape.platform): a CTFd plugin's on CTFd only, rCTF's on
-the http platform only. Routes a profile gives itself are for either.
+A shape names the platform it is for (Shape.platform): a CTFd plugin's on CTFd only, rCTF's and
+GZCTF's on the http platform only. Routes a profile gives itself are for either. A route may
+hold {game}, filled with the http table's game (Wire.game); on a wire with no game such a
+route is refused before anything is sent.
 
 The ctfd_owl, chall_manager and ctfd_whale shapes were built from the plugins' public source
 against fakes of it (tests/fake_instance_plugins.py) and have not met a real site.
@@ -131,15 +142,20 @@ UNITS = {"s": 1.0, "ms": 0.001}  # expires_unit: seconds per unit of a number of
 KINDS = {"tcp": "tcp", "http": "http", "https": "https", "tcp-ssl": "tls"}
 _HOST = re.compile(r"[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?")
 # a refusal that means "the team's slots or budget are used", in the plugins' own words: docker_per_team's cap,
-# ctfd-owl's one container per account and its site-wide count, ctfd-chall-manager's mana
+# ctfd-owl's one container per account and its site-wide count, ctfd-chall-manager's mana, GZCTF's
+# Game_ContainerNumberLimitExceeded ("The number of team containers cannot exceed 3")
 _FULL = re.compile(
-    r"max(imum)?\b.{0,40}\b(container|instance)|limit reached|too many (container|instance)|you have boot\b|used up all your mana",
+    r"max(imum)?\b.{0,40}\b(container|instance)|limit reached|too many (container|instance)|you have boot\b|used up all your mana"
+    r"|number of (team )?containers cannot exceed",
     re.I,
 )
 # a refusal that wants a person: rCTF v2's badCaptcha and badRecaptchaCode, and any other platform's CAPTCHA
 _HUMAN = re.compile(r"captcha|turnstile", re.I)
 _KEY =re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 _PATH = re.compile(r"/[A-Za-z0-9_./{}?=&-]*")
+_PLACEHOLDERS = ("{id}", "{game}")  # what a route's braces may hold
+# GZCTF's entry for a container it serves through its own WebSocket proxy (Container.IsProxy): the container's Guid
+_GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 
 class InstanceError(Exception):
@@ -202,6 +218,8 @@ class Routes:
     body_key: str | None = None  # for the routes whose path has no {id}
     api: bool = False  # the paths are under /api/v1 (True) or the site's root (False)
     empty_body: bool = False  # a start or a renew whose path carries the id still sends {} (rCTF reads a JSON body there)
+    empty: tuple[str, ...] = ()  # actions whose done is a 2xx with no body at all (GZCTF's stop: ASP.NET's Ok())
+    language: str | None = None  # sent as Accept-Language, so the refusals read in words _FULL and _HUMAN know (GZCTF's)
 
 
 @dataclass(frozen=True)
@@ -221,6 +239,10 @@ class Answers:
     running: tuple[str, ...] = ()  # the state's words for "up"; with a state key, any other word is "not running"
     pending: tuple[str, ...] = ()  # the state's words for "on its way up or down": InstancePending
     expires_unit: float = 1.0  # seconds in one unit of a number of the end (UNITS)
+    scopes: tuple[str, ...] = ("data",)  # the answer's objects looked in after the answer itself (GZCTF's detail: context)
+    errors: tuple[str, ...] = ERROR_KEYS  # the keys of a refusal's words (GZCTF's RequestResponse: title)
+    # (pattern, why): an address that matches it whole is one a lane cannot be handed, for that reason
+    unreachable: tuple[re.Pattern[str], str] | None = None
 
 
 @dataclass(frozen=True)
@@ -241,6 +263,7 @@ _OWL = "/plugins/ctfd-owl/container?challenge_id={id}"
 _CHALL_MANAGER = "/plugins/ctfd-chall-manager/instance"
 _WHALE = "/plugins/ctfd-whale/container?challenge_id={id}"
 _RCTF = "/api/v2/integrations/challs/{id}/instance"
+_GZCTF = "/api/game/{game}/container/{id}"
 
 PLUGINS: dict[str, Shape] = {
     # CTFd-Docker-Plugin (github.com/andyjsmith/CTFd-Docker-Plugin) and its forks; seen working at an event in
@@ -285,6 +308,23 @@ PLUGINS: dict[str, Shape] = {
         Answers(address=(), port=(), expires=("timeLeftMilliseconds",), endpoints=("endpoints",), state=("status",),
                 running=("running",), pending=("starting", "stopping"), expires_unit=UNITS["ms"]),
         platform="http",
+    ),
+    # GZCTF (github.com/GZTimeWalker/GZCTF, branch develop: Controllers/GameController.cs, Models/Request/Game/
+    # ContainerInfoModel.cs and ChallengeDetailModel.cs, Models/Data/Container.cs and Instance.cs, ClientApp/src/Api.ts),
+    # read from its source, not met. No route reads a container, so the status is the challenge's detail: context.
+    # instanceEntry is the container's Entry ("ip:port", or its Guid when the site proxies it), context.closeTime its
+    # end; both null with no container, and a challenge the team has no instance of is a 404. The start (a 400 when one
+    # runs) and the extend answer ContainerInfoModel {status, startedAt, expectStopAt, entry}; times are Unix
+    # milliseconds. A start or a stop within 10 s of the last on that challenge is a 429 (IsContainerOperationTooFrequent);
+    # an extend before the site's RenewalWindow (10 minutes by default) is a 400.
+    "gzctf": Shape(
+        Routes(start=("POST", _GZCTF), stop=("DELETE", _GZCTF), renew=("POST", _GZCTF + "/extend"),
+               status=("GET", "/api/game/{game}/challenges/{id}"), empty=("stop",), language="en-US"),
+        Answers(address=("entry", "instanceEntry"), port=(), expires=("expectStopAt", "closeTime"), state=("status",),
+                pending=("Pending",), expires_unit=UNITS["ms"], scopes=("context",), errors=("title",),
+                unreachable=(_GUID, "GZCTF serves this container through its own WebSocket proxy (the site's PlatformProxy "
+                                    "port mapping), which flightdeck cannot hand a lane: open it from the challenge on the site")),
+        gap=10.0, platform="http",
     ),
 }
 # names a profile may still carry, and what to write instead
@@ -344,7 +384,8 @@ def parse_config(table: object) -> InstancesConfig:
     if not isinstance(api, bool):
         raise ValueError("instances.api must be true or false")
     routes = Routes(**{action: given.get(action) or getattr(base, action) for action in ACTIONS}, body_key=body_key, api=api,
-                    empty_body=base.empty_body if base is not None else False)
+                    empty_body=base.empty_body if base is not None else False, empty=base.empty if base is not None else (),
+                    language=base.language if base is not None else None)
     for action in ACTIONS:
         path = getattr(routes, action)[1]
         if body_key is None and "{id}" not in path:
@@ -408,6 +449,12 @@ def _route(action: str, value: object) -> tuple[str, str]:
         raise ValueError(f"instances.{action}: the method must be one of {', '.join(METHODS)}")
     if not _PATH.fullmatch(path) or ".." in path or "//" in path:
         raise ValueError(f"instances.{action}: the path must start with / and name a route of the site (no host, no ..)")
+    bare = path
+    for placeholder in _PLACEHOLDERS:
+        bare = bare.replace(placeholder, "")
+    if "{" in bare or "}" in bare:
+        raise ValueError(f"instances.{action}: a brace in the path must be {{id}} (the challenge's id) or {{game}} (the http "
+                         "table's game)")
     return method, path
 
 
@@ -468,6 +515,7 @@ class Wire(Protocol):
     for again. CTFd's is its _Site; the http platform's is HttpCaller.instance_wire()."""
 
     root: str
+    game: str | None  # the value of {game} in a route: the http table's game; None on CTFd
 
     def headers(self) -> dict[str, str]: ...
 
@@ -545,7 +593,7 @@ class InstanceClient:
         if pending is not None or self._reading(doc) == "pending":
             raise InstancePending(f"the platform took the start for {_show(challenge_id)} and is still starting its instance; "
                                   "flightdeck asks its status again in a while", maybe_done=True)
-        said = _dig(doc, ERROR_KEYS)
+        said = self._dig(doc, ERROR_KEYS)
         words = f" ({self._site.short(str(said))})" if said is not None else ""
         raise InstanceError(
             f"the platform took the start for {_show(challenge_id)}, but neither its answer nor its status names an address{words}; "
@@ -559,7 +607,7 @@ class InstanceClient:
         doc = self._ask("status", challenge_id, refusal_is_none=True)
         reading = self._reading(doc)
         if reading == "pending":
-            word = _dig(doc, self.config.answers.state)
+            word = self._dig(doc, self.config.answers.state)
             raise InstancePending(f"the instance of {_show(challenge_id)} is on its way up or down on the platform "
                                   f"({self._site.short(str(word))}); flightdeck sends nothing for it and asks again in a while")
         if reading is None:
@@ -610,12 +658,22 @@ class InstanceClient:
                 content = b"{}"
         elif self.config.routes.body_key is not None:
             content = json.dumps({self.config.routes.body_key: number}).encode()
+        if "{game}" in path:  # after the id: an id is percent-encoded whole, so no brace of it is left to fill
+            game = getattr(self._site, "game", None)
+            if not game:
+                raise InstanceError(f"{what}: the route has {{game}} in it, and the platform has no game to put there (the [http] "
+                                    "table's game); flightdeck sent nothing")
+            if game in (".", ".."):
+                raise InstanceError(f"{what}: the game would name another route, so flightdeck did not send it")
+            path = path.replace("{game}", quote(str(game), safe=""))
         try:
             headers = self._site.headers()
         except InstanceError as exc:  # the wire's sign-in: nothing of this request was sent
             raise InstanceError(f"{what}: {exc}") from None
         if content is not None:
             headers = {**headers, "Content-Type": "application/json"}
+        if self.config.routes.language is not None:
+            headers = {**headers, "Accept-Language": self.config.routes.language}
         if changes and self.config.gap > 0 and self._changed_at is not None:
             waited = self._monotonic() - self._changed_at
             if waited < self.config.gap:  # the plugin refuses two changes this close together
@@ -643,8 +701,10 @@ class InstanceClient:
         acted = changes and 200 <= status < 300  # an answer that is not the plugin's own (a proxy's page, one cut short): it may have acted
         if not isinstance(body, bytes):
             raise InstanceError(f"{what}: the platform's answer was too long or never ended (HTTP {status})", maybe_done=acted)
+        if acted and action in self.config.routes.empty and not body.strip():
+            return {}  # the plugin's own "done", with nothing to read
         doc = _parse(body)
-        said = _said(doc)
+        said = _said(doc, self.config.answers.errors)
         failed = isinstance(doc, dict) and (doc.get("success") is False or doc.get("error") not in (None, "", False))
         if status == 401:
             told = getattr(self._site, "unauthorized", None)
@@ -675,41 +735,48 @@ class InstanceClient:
             return None
         answers = self.config.answers
         if answers.state:
-            word = _dig(doc, answers.state)
+            word = self._dig(doc, answers.state)
             if isinstance(word, str) and word in answers.pending:
                 return "pending"
             if answers.running:
                 return "up" if word in answers.running else None  # "running" with no address is one at no usable address
-        if _dig(doc, answers.address) is not None or _dig(doc, answers.endpoints) is not None:
+        if self._dig(doc, answers.address) is not None or self._dig(doc, answers.endpoints) is not None:
             return "up"
         return None
 
     def _instance(self, challenge_id: str, doc: dict | None) -> Instance:
         assert doc is not None
         answers = self.config.answers
-        listed = _dig(doc, answers.endpoints)
+        listed = self._dig(doc, answers.endpoints)
         if listed is not None:
             return self._endpoints(challenge_id, doc, listed)
-        raw = _dig(doc, answers.address)
+        raw = self._dig(doc, answers.address)
         if raw is None and answers.running:  # its state says it runs, and it names no address
             raise InstanceError(f"the platform says the instance of {_show(challenge_id)} runs, but names no address for it", up=True)
         if not isinstance(raw, str) or not raw.strip():
             raise InstanceError(f"the platform's answer for {_show(challenge_id)} names no address; is [instances] right for this site's plugin?")
+        if answers.unreachable is not None and answers.unreachable[0].fullmatch(raw.strip()):
+            raise InstanceError(f"the instance of {_show(challenge_id)} runs, at no address flightdeck can use: {answers.unreachable[1]}",
+                                up=True)
         scheme, host, port = _address(raw.strip())
         if host is None and answers.loose:
             scheme, host, port = _within(raw)
         if port is None:
-            given = _number(_dig(doc, answers.port))
+            given = _number(self._dig(doc, answers.port))
             if isinstance(given, int) and not isinstance(given, bool):
                 port = given
-        if scheme is None and answers.web is not None and _dig(doc, (answers.web[0],)) == answers.web[1]:
+        if scheme is None and answers.web is not None and self._dig(doc, (answers.web[0],)) == answers.web[1]:
             scheme = "http"  # the plugin says it is a web server: its address is one whatever the challenge's category
         if host is None or (port is not None and not 1 <= port <= 65535) or (port is None and scheme is None):
             raise InstanceError(f"the platform's answer for {_show(challenge_id)} names no usable address ({self._site.short(raw)})", up=True)
         return Instance(challenge_id, host, port, scheme, self._end(doc), self._site.short(raw))
 
+    def _dig(self, doc: object, keys: tuple[str, ...]) -> object:
+        """The first of `keys` with a value in the answer or in one of its scopes (Answers.scopes)."""
+        return _dig(doc, keys, self.config.answers.scopes)
+
     def _end(self, doc: dict) -> float | None:
-        return _ends(_dig(doc, self.config.answers.expires), self._clock(), self.config.answers.expires_unit)
+        return _ends(self._dig(doc, self.config.answers.expires), self._clock(), self.config.answers.expires_unit)
 
     def _endpoints(self, challenge_id: str, doc: dict, listed: object) -> Instance:
         """An instance from a list of endpoints, each {kind, host, port}: rCTF v2's form. Each
@@ -754,14 +821,15 @@ def _number(value: object) -> object:
     return value
 
 
-def _said(doc: object) -> str | None:
-    """A refusal's words: the answer's own (error, errors, message or msg), and its data's
-    when they say more (rCTF: "Instancer precondition not met." and then why)."""
+def _said(doc: object, keys: tuple[str, ...] = ERROR_KEYS) -> str | None:
+    """A refusal's words: the answer's own (error, errors, message or msg, or the shape's
+    `keys`: GZCTF's title), and its data's when they say more (rCTF: "Instancer
+    precondition not met." and then why)."""
     if not isinstance(doc, dict):
         return None
-    top = _first(doc, ERROR_KEYS)
+    top = _first(doc, keys)
     data = doc.get("data")
-    inner = _first(data, ERROR_KEYS) if isinstance(data, dict) else None
+    inner = _first(data, keys) if isinstance(data, dict) else None
     if top is not None and inner is not None and inner != top:
         return f"{top}: {inner}"
     return top if top is not None else inner
@@ -865,9 +933,10 @@ def _within(text: str) -> tuple[str | None, str | None, int | None]:
     return None, None, None
 
 
-def _dig(doc: object, keys: tuple[str, ...]) -> object:
-    """The first of `keys` with a value in `doc` or in its `data`."""
-    for scope in (doc, doc.get("data") if isinstance(doc, dict) else None):
+def _dig(doc: object, keys: tuple[str, ...], scopes: tuple[str, ...] = ("data",)) -> object:
+    """The first of `keys` with a value in `doc`, or in one of its `scopes` (its `data`, say)."""
+    inner = [doc.get(name) for name in scopes] if isinstance(doc, dict) else []
+    for scope in (doc, *inner):
         if isinstance(scope, dict):
             for key in keys:
                 if scope.get(key) not in (None, ""):
