@@ -3611,6 +3611,7 @@ def test_a_docker_cli_lanes_brief_names_the_debugger_and_decompiler_only_when_it
             await until(lambda: lab.fake.messages(), "the CLI's first message")
             first = lab.fake.messages()[0]
             assert (said in first.splitlines()) is named and ("Your shell has" in first) is named, first
+            assert "session" not in first  # P87: a CLI lane has no session tools, so it is not told of them
         finally:
             await lab.finish()
 

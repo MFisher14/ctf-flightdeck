@@ -23,7 +23,9 @@ nowhere, so there the tool is off and says so.
 session_start, session_send and session_close drive a long-lived process across turns (a
 debugger, an interpreter, a connection to the instance: agent/sessions.py). What a session
 writes is scrubbed and cut like the shell's output, and a workspace with no open_session (a
-test's stand-in) answers that it has no sessions.
+test's stand-in) answers that it has no sessions. `terminal: true` runs one on a pty
+(agent/terminal.py, P87), its escapes taken out before it is stored; a line sent to it is at
+most TERMINAL_LINE bytes, since a terminal would cut a longer one.
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ import httpx
 from ..imageread import MAX_BYTES as IMAGE_BYTES  # the largest image a model API takes: view_image's limit too
 from ..text import untrusted
 from .sessions import DEFAULT_WAIT, IDLE_SECONDS, INPUT_BYTES, MAX_SESSIONS, MAX_WAIT, Read, Session, SessionMistake, Sessions
+from .terminal import TERMINAL_LINE
 from .workspace import OUTPUT_CAP, PRIVATE, SNIFF, RunResult, Workspace, open_inside, write_inside
 
 MIN_CHARS = 200  # the smallest max_chars that still leaves room for a cut marker or a footer
@@ -151,8 +154,13 @@ TOOLS: list[dict] = [
         "session_start",
         "Start a long-lived process in the workspace that you talk to across turns (gdb -q ./x, r2 -q0 ./x, "
         "python3 -u -i, nc to the instance) and read its first output. It has pipes, not a terminal: prompts may not "
-        f"show. At most {MAX_SESSIONS} at once; one unused for {IDLE_SECONDS / 60:g} minutes is closed.",
-        {"command": {"type": "string"}, "wait_seconds": _WAIT},
+        "show. terminal: true gives it a terminal for a program that needs one (no colours, no ctrl+c; a line editor "
+        f"may repeat what you send). At most {MAX_SESSIONS} at once; one unused for {IDLE_SECONDS / 60:g} minutes is closed.",
+        {
+            "command": {"type": "string"},
+            "terminal": {"type": "boolean", "description": "Run it on a terminal (default false)."},
+            "wait_seconds": _WAIT,
+        },
         ["command"],
     ),
     _tool(
@@ -673,17 +681,21 @@ class Toolbox:
         size = len(command.encode("utf-8"))
         if size > COMMAND_BYTES:
             raise _Mistake(f"the command is {size} bytes, over the {COMMAND_BYTES}-byte limit for one command", action)
+        terminal = args.get("terminal", False)
+        if not isinstance(terminal, bool):
+            raise _Mistake("terminal must be true or false", action)
         wait = self._wait(args, action)
         pool = self._session_pool(action)
         try:
-            session = await pool.start(command)
+            session = await pool.start(command, terminal=True) if terminal else await pool.start(command)
         except SessionMistake as exc:
             raise _Mistake(str(exc), action) from None
         except OSError as exc:
             raise _Mistake(f"the session could not be started: {exc.strerror or exc}", action) from None
         session.busy = True
         try:
-            return await self._session_read(pool, session, f"session {session.name} start: {command}", wait, None, turn, index)
+            started = f"session {session.name} start{' (terminal)' if terminal else ''}: {command}"
+            return await self._session_read(pool, session, started, wait, None, turn, index)
         finally:
             session.busy = False
 
@@ -707,6 +719,9 @@ class Toolbox:
         pool = self._session_pool(action)
         try:
             session = pool.get(name)
+            if session.terminal and (long := max(len(line) + 1 for line in data.split(b"\n"))) > TERMINAL_LINE:
+                raise SessionMistake(f"a line of the input is {long - 1} bytes; a terminal takes at most {TERMINAL_LINE - 1} "
+                                     "in one line: write it to a file and send a command that reads it")
             session.busy = True
             try:
                 if data:
