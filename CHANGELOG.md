@@ -18,6 +18,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - `flightdeck plugin pull` and `flightdeck http pull` say `pulling the board through ...` (on
   stderr) before they start, so a plugin that takes its time (a pull may take five minutes)
   no longer looks like a frozen terminal.
+- `flightdeck start`'s question of how the challenges arrive no longer leaves "by hand" as the
+  only answer off CTFd: it says that on rCTF, noCTF or GZCTF `flightdeck http example --preset
+  NAME > event.toml` sets up an event flightdeck pulls and submits for.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes

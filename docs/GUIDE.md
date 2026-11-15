@@ -1081,7 +1081,7 @@ challenge's text and files given to a model (a lane does both, and flightdeck do
 event that forbids either: a rule that allows asking a model about a concept and forbids
 giving it the challenge is a no); the label your team declared to the event for its AI use, if
 the event asks for one (Enter for none); how the challenges arrive (**ctfd**: the site runs CTFd, and flightdeck pulls the board
-and submits flags; **by hand**: any other site); the site's address; what a flag looks like
+and submits flags; **by hand**: any other site, and on rCTF, noCTF or GZCTF the menu points you to `flightdeck http example`, which pulls and submits there too); the site's address; what a flag looks like
 (`PP` for `PP{...}`); whether a flag waits for you or goes at once; and your CTFd access token
 (on the site: Settings, Access Tokens, Generate). The token goes into your keys file under a
 variable of this event's own, never into the event's folder, and is never shown. Then it says

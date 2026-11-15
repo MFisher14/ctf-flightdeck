@@ -34,6 +34,8 @@ PLATFORM_MENU = (
     "               flightdeck pulls the board, adds new challenges as they appear and submits flags.\n"
     "  2  by hand   any other site: you put each challenge in the event's board folder and submit\n"
     "               flags on the site yourself.\n"
+    "     On rCTF, noCTF or GZCTF flightdeck can pull and submit for you instead: press ctrl+c,\n"
+    "     then `flightdeck http example --preset NAME > event.toml` (rctf, rctf2, noctf or gzctf).\n"
     "Choose 1 or 2"
 )
 SUBMIT_MENU = (
