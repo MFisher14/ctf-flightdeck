@@ -4,6 +4,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- A claude lane escalated or stopped in the middle of a turn now counts all the output tokens
+  of that turn's last call, not only what claude's events had shown of it, so a token cap or
+  a token budget no longer counts less than was spent.
 - A lane on a model server whose context is too small for it (Ollama's 4,096-token default)
   no longer refreshes its context on nearly every call, which hid each tool's output from its
   model. When a fresh context alone takes most of what the server keeps, the lane says once

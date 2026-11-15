@@ -2220,13 +2220,16 @@ class _ClaudeRun(_Run):
         # an interrupt that came as the turn ended finds claude waiting and does nothing: then the turn ended by itself
         interrupted = proc.interrupted and subtype == "error_during_execution"
         failed = not interrupted and (event.get("is_error") is True or subtype != "success")
+        # the tokens claude's events missed count on the lane whoever's turn it was (an old model's, one being stopped),
+        # and before the search below, so a stop during it cannot leave them out
+        cut = self.reconcile(proc, event)
         last: tuple[list[str], list[str]] = ([], [])
         if current and not failed and not interrupted:
             last = await self.search(text, own=True)  # its last words, should they hold a flag its text blocks did not
             await self.vet(last[1])  # a flag they claim, looked for in the challenge's own text
             current = self.current(proc)  # stopped or escalated while they were searched
         # from here on nothing waits: the turn is accounted for before anything goes to claude
-        uncounted = self.reconcile(proc, event) if current else (0, 0, 0, 0)
+        uncounted = cut if current else (0, 0, 0, 0)
         total = _dollars(event.get("total_cost_usd"))
         price = self.driver.prices.get(proc.model)
         if total is None:
