@@ -1598,7 +1598,8 @@ its default. API keys and access tokens come from your environment, else from
 there. If you set it after flightdeck had already written files in `~/.config/ctf-flightdeck`,
 nothing is lost: a file found only at the old place is still read from there, and a file at both
 places is read from the new one. Either way every command says which, once, on stderr (doctor
-says it in its `config folder` line), until you move or remove the old file. Each run writes a
+says it in its `config folder` line), until you move or remove the old file. A command you give
+`--config` (or `--path`) reads that file and says nothing of the config folder's. Each run writes a
 folder under
 `~/.local/share/ctf-flightdeck/runs/` (`[run] dir`, or `--run-dir`). flightdeck keeps notes of its
 own in `~/.local/state/ctf-flightdeck/` (or under `$XDG_STATE_HOME`). `l1 import` writes manifests

@@ -1348,7 +1348,8 @@ one. When `$XDG_CONFIG_HOME` moves the folder, each file is looked for at both p
 at `~/.config/ctf-flightdeck` is read (and written) there, and with one at both places the new
 one is read. `confighome.notes` says which, a line per file, and a line for a `themes` folder
 left beside the config that is not read; the CLI's root callback prints them on stderr once per
-command, and doctor shows them as a `config folder` check instead (not essential). They name
+command (none for the config when the command was given `--config` or `--path`: `_ByPanel.resolve_command`
+keeps the command's arguments for it), and doctor shows them as a `config folder` check instead (not essential). They name
 paths only, never what is in a file.
 
 `flightdeck init` (`setup.py`) writes `timeout = 600` and `max_tokens = 8192` for a server on this

@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from ctf_flightdeck import addchallenge, cli, confighome, keys
@@ -149,6 +150,51 @@ def test_a_command_says_once_on_stderr_which_file_it_reads_from_the_old_place(ho
     assert f"config: {old(home) / 'config.toml'}" in result.stdout
     said = [line for line in result.stderr.splitlines() if "config.toml is read from the old place" in line]
     assert len(said) == 1 and said[0].startswith("flightdeck: ")
+
+
+@pytest.mark.parametrize("given", [["config", "--path", "{mine}"], ["config", "--path={mine}"],
+                                   ["pack", "info", "--config", "{mine}"], ["records", "--config={mine}", "latest"]])
+def test_a_command_given_a_config_of_its_own_says_nothing_of_the_old_config(home, xdg, tmp_path, given):
+    """The config the command reads is the one named: the one left at the old place is not
+    read, and no line says it is (nor of a themes folder, which is beside the named config)."""
+    write_config(ANSWERS, old(home) / "config.toml")
+    (old(home) / "themes").mkdir()
+    keys_file(old(home) / "keys.env")  # still read from the old place: --config names no keys file
+    mine = write_config(ANSWERS, tmp_path / "mine.toml")
+    result = CliRunner().invoke(cli.app, [arg.format(mine=mine) for arg in given])
+    if given[0] == "config":
+        assert result.exit_code == 0, result.output
+        assert f"config: {mine}" in result.stdout
+    assert "config.toml" not in result.stderr and "themes" not in result.stderr
+    said = [line for line in result.stderr.splitlines() if "keys.env is read from the old place" in line]
+    assert len(said) == 1
+
+
+def test_without_a_config_option_the_same_commands_say_the_old_config(home, xdg):
+    """The other half of the test above: what silences the line is the option, not the command."""
+    write_config(ANSWERS, old(home) / "config.toml")
+    for given in (["config"], ["pack", "info"], ["records", "latest"], ["config", "--", "--path"]):
+        result = CliRunner().invoke(cli.app, given)
+        assert "config.toml is read from the old place" in result.stderr, given
+
+
+def test_every_option_that_names_a_config_file_is_one_the_root_callback_knows():
+    """cli.CONFIG_OPTIONS is what keeps the line above from being said of a config the command
+    does not read: a new option for a config file under another name would bring it back."""
+    root = typer.main.get_command(cli.app)
+    seen = set()
+
+    def walk(command) -> None:
+        for param in command.params:
+            names_a_file = param.name in ("config", "path") or any("config" in opt for opt in param.opts)
+            if names_a_file and not getattr(param, "is_flag", False):  # eval-local's --from-config is a flag
+                assert set(param.opts) <= set(cli.CONFIG_OPTIONS), (command.name, param.opts)
+                seen.update(param.opts)
+        for sub in getattr(command, "commands", {}).values():
+            walk(sub)
+
+    walk(root)
+    assert seen == set(cli.CONFIG_OPTIONS)
 
 
 def test_doctor_has_the_config_folder_as_a_check_and_not_also_on_stderr(home, xdg, monkeypatch):
