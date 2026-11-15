@@ -40,7 +40,8 @@ a stronger model or hands you its shell.
   machine (Ollama, MLX), a coding-agent CLI (Claude Code, Codex), a folder of solver scripts.
 - **Built for CTFs.** It knows points, solves, categories, 40 challenges released at once,
   teammates, the servers an event runs for a challenge (live instances), flag formats and counted
-  tries. It plays events on CTFd (a common CTF platform) and plain folders of challenges.
+  tries. It plays events on CTFd, rCTF, noCTF and GZCTF (common CTF platforms), on another
+  through a plugin of your own, and on plain folders of challenges.
 - **Plays by the event's rules.** Every stage (pull, solvers, agents, submit, live instances) is
   `auto`, `confirm`, `manual` or `off`, checked before anything runs.
 - **Safe by default.** Each lane runs in its own Docker container with no network, or, when
@@ -95,7 +96,8 @@ found, and `?` for every key, any time.
 From then on `flightdeck` is all you type. Its home screen resumes an event you played before,
 starts a new one (a form: the event's name, its site, your access token for it, its VPN file),
 and has the practice set and the demo. Stuck? `flightdeck doctor` checks your setup and says how
-to fix each problem.
+to fix each problem. The home screen's last choice, "Settings and health", shows the same checks
+beside your settings.
 
 **Other ways to install.** `pipx install ctf-flightdeck` works as well (it needs Python 3.12+),
 and Debian and Ubuntu have a `.deb`:

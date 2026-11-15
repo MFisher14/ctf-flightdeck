@@ -160,8 +160,9 @@ is what a CTF platform gives you; **tokens** alone are what a model counts its w
 a model API charges for. A **setting** is a line of your config.
 
 - **Board**: the event's challenges. To flightdeck it is a folder of challenge folders, each with
-  a `challenge.json` and its handout files ([Boards](BOARDS.md)). With CTFd, flightdeck pulls
-  one into a folder.
+  a `challenge.json` and its handout files ([Boards](BOARDS.md)). From a platform (CTFd, rCTF,
+  noCTF, GZCTF, or one a [plugin](PLUGINS.md) of yours talks to), flightdeck pulls one into a
+  folder.
 - **Wave**: challenges an event releases together, sometimes dozens at once, when it opens or
   while it runs. flightdeck pulls each new wave into the board, starts lanes on as many of its
   challenges as `max_lanes` allows and queues the rest.
@@ -534,7 +535,9 @@ lane starts to need you, the terminal's bell marks the tmux window
 The lane list's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,
 `e` escalate, `t` take over, `a` approve, `d` decline, `x` dismiss, `1`-`9`/`0` quick answers,
 `c` claim (team), `/` commands, `s` sort, `?` help, `q` quit; `A`
-approves every waiting flag; **Space** peeks at the lane and **Enter** opens it full screen. They act in both layouts; the
+approves every waiting flag; `ctrl+o` opens your system's file window to attach files to the
+lane's challenge, on a board you fill yourself ([Events and teams](#events-and-teams)); **Space** peeks at the lane and
+**Enter** opens it full screen. They act in both layouts; the
 simple layout's key line shows only the ones that apply now. The whole design is in the
 [console spec](CONSOLE-SPEC.md).
 
