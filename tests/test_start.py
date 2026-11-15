@@ -431,7 +431,8 @@ def test_away_from_a_terminal_a_json_api_event_takes_its_preset_game_and_token_a
     assert keys.load_keys(tmp_path / "keys.env") == {"NOCTF_TOKEN_EXAMPLE_CTF": "synthetic-session-token"}
     assert "synthetic-session-token" not in result.output and setup == []
     gz = run(str(tmp_path / "gz"), *HTTP, "--platform", "http", "--preset", "GZCTF", "--game", "4")
-    assert gz.exit_code == 0, gz.output and load_profile(tmp_path / "gz" / "event.toml")[0].http.game == "4"
+    assert gz.exit_code == 0, gz.output
+    assert load_profile(tmp_path / "gz" / "event.toml")[0].http.game == "4"
 
 
 @pytest.mark.parametrize(("options", "said"), [
