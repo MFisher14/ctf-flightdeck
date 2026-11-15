@@ -17,6 +17,7 @@ import pytest
 
 from ctf_flightdeck import governor
 from ctf_flightdeck.config import GovernorConfig
+from ctf_flightdeck.console import views
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core.model import Challenge, DeckConfig, EventKind, LaneState
@@ -271,6 +272,29 @@ def test_while_the_gate_names_a_limit_one_lane_starts_and_the_rest_stay_queued_w
     for _ in range(5):  # asked again and again: nothing starts, nothing more is said
         deck.recheck_starts()
     assert driver.started() == ["c0"] and len(gate_warnings(deck)) == 1
+
+
+def test_the_release_line_counts_in_words_and_says_why_the_queued_lanes_wait():
+    """The release line is the last thing the status line says as the board loads, after the
+    gate's warning: it says why the rest wait, or the player sees lanes queued for no reason."""
+    deck, _, _ = gated_deck()
+    (line,) = [e.text for e in events(deck, EventKind.RELEASE)]
+    assert line == f"Release: 4 challenges · 1 lane started · 3 queued: no new lane starts for now ({BUSY})"
+    calm, _, _ = gated_deck(n=1, gate="")
+    (line,) = [e.text for e in events(calm, EventKind.RELEASE)]
+    assert line == "Release: 1 challenge · 1 lane started · 0 queued"
+
+
+def test_the_header_says_lanes_wait_for_the_machine_and_why_until_the_gate_clears():
+    deck, _, answer = gated_deck()
+    facts = views.header_facts(deck)
+    for simple in (False, True):
+        text, _ = views.fit_header(facts, 200, simple=simple)
+        assert f"{views.GATED}: {BUSY}" in text.plain and "all clear" not in text.plain and views.HELD not in text.plain
+    answer[0] = ""
+    deck.recheck_starts()
+    text, _ = views.fit_header(views.header_facts(deck), 200)
+    assert views.GATED not in text.plain
 
 
 def test_the_gate_is_no_hold_and_stops_or_pauses_no_lane():

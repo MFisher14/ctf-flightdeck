@@ -1622,7 +1622,8 @@ lane starts:
 
 The lanes at work carry on: the governor never stops or pauses one, and the queue keeps its
 order. One warning says when starts begin to be held and which limit it is, with the reading,
-and one says when they start again; that happens by itself (the machine is read every 15
+and while challenges wait for it the header says `lanes wait` and why; one warning says when
+they start again; that happens by itself (the machine is read every 15
 seconds), with nothing for you to lift, and autopilot stays engaged. With no lane at work, one
 lane always starts. A limit of 0 is off, and `enabled = false` turns the governor off. A reading
 flightdeck cannot take (it reads macOS and Linux) holds nothing back, and the run says so before

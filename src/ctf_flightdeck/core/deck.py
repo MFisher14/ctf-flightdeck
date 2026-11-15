@@ -515,9 +515,14 @@ class Deck:
         before = len(self.lanes)
         self._fill()
         started = len(self.lanes) - before  # a lane whose start failed is gone again
+        many = len(challenges)
+        line = (f"{label}: {many} challenge{'' if many == 1 else 's'} · {started} lane{'' if started == 1 else 's'} started"
+                f" · {len(self.queue)} queued")
+        if self.queue and self.gated:  # said after the gate's own warning, so the status line still says why they wait
+            line += f": no new lane starts for now ({self.gated})"
         self._emit(
             EventKind.RELEASE,
-            f"{label}: {len(challenges)} challenges · {started} lanes started · {len(self.queue)} queued",
+            line,
             data={
                 "label": label, "challenges": [ch.id for ch in challenges], "started": started, "queued": len(self.queue),
                 "event": self.config.event,  # with the names and points below, a run log names its own board

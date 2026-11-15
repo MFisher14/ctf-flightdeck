@@ -8,6 +8,10 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   turned into keys: a letter that came before the bar had opened went to the list (`/layout`
   arrived as `/ayout`), and there it could act (the `a` of `/approve` approved the selected
   lane's flag, the `q` of `/queue` quit). Every key after the `/` now goes into the bar.
+- While the host governor holds new lanes back (the machine is busy) and challenges wait, the
+  header says `lanes wait` and why, and the line that says the board loaded says it too:
+  before, its warning was overwritten at once and the queued lanes waited with no reason on
+  the screen. That line also counts in words: `1 lane started`, not `1 lanes started`.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
