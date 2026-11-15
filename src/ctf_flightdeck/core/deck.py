@@ -1718,6 +1718,9 @@ class Deck:
         before any queued challenge (_fill)."""
         self._wait_began.pop(lane.id, None)
         self._slot_kept.pop(lane.id, None)
+        if lane.benched and lane.gave_up_later:  # open only for its flags' answers, it takes no turn: it needs no slot
+            lane.state = LaneState.RUNNING
+            return True
         if lane.benched:
             ahead = any(other.state is LaneState.QUEUED for other in self.active_lanes() if other is not lane)
             if ahead or not self._free_slot():

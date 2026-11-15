@@ -602,6 +602,20 @@ def test_a_quick_answer_keeps_the_slot_and_the_next_wait_is_timed_from_its_own_s
     assert lane.benched and driver.started() == ["c0", "c1"]
 
 
+def test_a_lane_that_gave_up_and_gave_its_slot_up_ends_on_the_answer_without_queueing_for_a_slot():
+    deck, driver, clock = make_deck(n=4, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}", gave_up="nothing more to try"))
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.benched and driver.started() == ["c0", "c1"]
+    assert deck.apply(iv.Decline(lane.id)).ok
+    assert lane.finished
+    assert not any("waits for a free slot" in a.text for a in lane.actions)
+    assert [e.data["slot"] for e in events(deck, EventKind.SLOT)] == ["given"]
+    assert driver.started() == ["c0", "c1"]  # its slot is L02's: nothing more started
+
+
 def test_a_paused_lane_with_a_flag_waiting_keeps_its_slot():
     deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60)
     lane = lane_on(deck, "c0")
