@@ -214,8 +214,10 @@ tokens or $2 (`token_cap` and `dollar_cap` under `[lanes]` in your config, with 
 four lanes run at a time by default, and nothing caps a whole run. With
 `init --provider anthropic` every lane starts on Claude Haiku 5.5 ($0.10 / $0.50 per million input
 / output tokens). It moves up to Sonnet or Opus 5.5, at 20 to 40 times that, only when you
-escalate it. A model on your own machine costs nothing (`init` writes no dollar cap for Ollama or
-an MLX server), and `flightdeck mock` spends nothing.
+escalate it. A model on your own machine costs nothing (`init` writes no dollar cap for Ollama, an
+MLX server or a custom server at `127.0.0.1` or `localhost`; the token cap stays), and
+`flightdeck mock` spends nothing. If that custom server is a proxy to a paid API, set
+`dollar_cap` and `[prices]` yourself.
 
 ## The mock
 
