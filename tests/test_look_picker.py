@@ -496,7 +496,10 @@ def test_on_a_terminal_the_mock_saves_the_theme_picked_in_the_config_it_opened_i
 
     try:
         wait_for(lambda: "Welcome to flightdeck" in shown(), "the welcome screen", term)
-        keys(b"\x1b")
+        # q closes it, as esc does. Not esc: a terminal's esc is also the start of a key's
+        # sequence, and a loaded machine that read the `/` typed after it within the escape
+        # delay took the two for one key; `/theme` was never typed
+        keys(b"q")
         keys(*(letter.encode() for letter in "/theme"), b"\r")
         wait_for(lambda: "keep it, and save it in your config" in shown(), "the list of themes, with its save key", term)
         keys(b"\x1b[B", b"s")  # down to `light`, and save

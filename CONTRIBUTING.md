@@ -64,6 +64,13 @@ fails only with `-n` either shares something with another test (give it its own,
 has a wait too short for a busy machine (wait for what must happen, not for a time): both are
 bugs in the test, so fix them rather than run it alone.
 
+In a console test, `await pilot.pause()` waits until the screen has done all it was asked to:
+its messages, a layout or redraw it still owes, an animated scroll (`tests/settling.py`, which
+`tests/conftest.py` puts in place of Textual's own, which judges by how little CPU the process
+uses and so returns early on a busy machine). `pilot.pause(0.5)`, with a delay, only sleeps.
+To see whether a test holds up on a busy machine, run it while every core is busy, for
+instance with two copies of the suite at `-n 12` side by side.
+
 `uv run flightdeck mock` opens the console on scripted data. No test needs a key: the tests use
 local fakes (a fake model server, a fake CTFd, fake agent CLIs). The Docker tests run only when
 Docker answers and `debian:bookworm-slim` is already on your machine
