@@ -513,6 +513,9 @@ class FleetScreen(Screen, inherit_bindings=False):
         lane = deck.lanes.get(self.selected_lane or "")
         if lane is None:
             why.update(Text(" No lanes yet.", theme.MUTED))
+        elif not views.lane_matches(deck, lane, self.filter_text, simple=self.simple):
+            # every key refuses a lane the filter hides (target_lane), so its answers are not offered
+            why.update(Text(f" {lane.id} is hidden by the filter: esc clears it", theme.MUTED))
         elif self.compact:
             why.update(views.compact_why(deck, lane, why.size.width or self.size.width - 2))
         else:

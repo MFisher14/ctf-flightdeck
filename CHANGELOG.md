@@ -19,6 +19,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A take-over's shell opens under a line that says whose shell it is, where, and that `exit`
   (or `ctrl+d`) hands the lane back, instead of at a bare `bash-3.2$` prompt. On macOS it no
   longer opens with bash's note about changing to zsh.
+- While the filter hides the selected lane, the line under the list says so (`L02 is hidden by
+  the filter: esc clears it`) instead of offering that lane's answers, which every key refused.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
