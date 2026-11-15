@@ -440,7 +440,7 @@ def test_in_the_simple_layout_four_things_at_once_are_a_card_of_five_rows(size):
         row = view.query_one("#now").region.y
         budget = theme.alert_colors(AlertKind.BUDGET)[1].lower()
         assert color_of(app, "needs you now", row) == budget and color_of(app, "╭", row) == budget  # the most urgent alert's, as on the full card
-        assert footer_line(app).strip().startswith("1-9 answer  esc lanes")  # the key line says a number answers: the card has no row for it
+        assert footer_line(app).strip().startswith("1 0 answer  esc lanes")  # the key line says which numbers answer (a budget wait: 1 and 0): the card has no row for it
 
     drive(app, script, size)
 
