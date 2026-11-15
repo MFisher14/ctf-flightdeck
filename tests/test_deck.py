@@ -632,6 +632,50 @@ def test_a_paused_lane_with_a_flag_waiting_keeps_its_slot():
     assert lane.benched and driver.started() == ["c0", "c1"]
 
 
+def test_a_taken_over_lane_with_a_live_box_wait_keeps_its_slot_until_handed_back():
+    deck, driver, _ = make_deck(n=5, max_lanes=2, max_waiting=1)
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+    ask_box(deck, first)
+    ask_box(deck, second)
+    assert first.benched and not second.benched  # the cap: second keeps its slot
+    assert deck.apply(iv.TakeOver(second.id)).ok
+    deck.apply(iv.Approve(first.id))
+    assert solve(deck, lane_on(deck, "c2")).ok  # first takes the slot back: the cap has room again
+    assert first.state is LaneState.RUNNING
+    deck.recheck_waits()
+    assert second.state is LaneState.TAKEOVER and not second.benched  # the player's shell counts
+    assert driver.started() == ["c0", "c1", "c2"]
+    assert deck.apply(iv.HandBack(second.id)).ok  # back in its wait: it gives its slot up at once
+    assert second.state is LaneState.WAITING and second.benched
+    assert driver.started() == ["c0", "c1", "c2", "c3"]
+
+
+def test_a_paused_lane_with_a_live_box_wait_keeps_its_slot_until_resumed():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    deck.apply(iv.Pause(lane.id))
+    ask_box(deck, lane)  # its turn ended with the request after the pause
+    deck.recheck_waits()
+    assert lane.state is LaneState.PAUSED and not lane.benched and driver.started() == ["c0"]
+    assert deck.apply(iv.Resume(lane.id)).ok
+    assert lane.state is LaneState.WAITING and lane.benched and driver.started() == ["c0", "c1"]
+
+
+def test_a_flag_wait_paused_and_resumed_before_any_recheck_is_timed_afresh():
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_flag(deck, lane)
+    clock.t += 59
+    deck.apply(iv.Pause(lane.id))
+    clock.t += 10
+    deck.apply(iv.Resume(lane.id))
+    deck.recheck_waits()
+    assert not lane.benched  # 10 s into its new wait, not 69 s into the old one
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.benched and driver.started() == ["c0", "c1"]
+
+
 def test_no_more_than_max_waiting_lanes_go_without_a_slot_and_one_more_keeps_its_own():
     deck, driver, clock = make_deck(n=5, max_lanes=2, max_waiting=1)
     first, second = lane_on(deck, "c0"), lane_on(deck, "c1")

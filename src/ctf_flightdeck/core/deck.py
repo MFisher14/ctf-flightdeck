@@ -979,6 +979,7 @@ class Deck:
         if lane.state is LaneState.PAUSED:
             return Outcome(False, f"{lane.id} is already paused")
         lane.state = LaneState.PAUSED
+        self._wait_began.pop(lane.id, None)  # resumed into its wait, the wait is timed afresh
         self.driver.pause(lane)
         self._note(lane, f"paused by {self._who}", self._by)
         return Outcome(True, f"Paused {lane.id}")
@@ -991,6 +992,8 @@ class Deck:
         elif self._back_to_work(lane):
             self.driver.resume(lane)
         self._note(lane, "resumed by the player", Actor.PLAYER)
+        if lane.state is LaneState.WAITING:  # back in its wait: a live-box one gives its slot up now
+            self._maybe_bench(lane)
         waits = " (it waits for your approval)" if lane.pending else ""
         if lane.state is LaneState.QUEUED:
             waits = f" (it waits for a free slot: {self._busy()})"
@@ -1129,6 +1132,7 @@ class Deck:
     def _take_over(self, lane: Lane) -> Outcome:
         lane.paused_before_takeover = lane.state is LaneState.PAUSED
         lane.state = LaneState.TAKEOVER
+        self._wait_began.pop(lane.id, None)  # handed back into its wait, the wait is timed afresh
         self.driver.pause(lane)
         self._note(lane, "taken over by the player", Actor.PLAYER)
         return Outcome(True, f"You have {lane.id}'s shell")
@@ -1144,6 +1148,8 @@ class Deck:
             self.driver.resume(lane)
         lane.paused_before_takeover = False
         self._note(lane, "handed back by the player" + (f": {note}" if note else ""), Actor.PLAYER)
+        if lane.state is LaneState.WAITING:  # back in its wait: a live-box one gives its slot up now
+            self._maybe_bench(lane)
         then = "; it stays paused" if lane.state is LaneState.PAUSED else ""
         if lane.state is LaneState.QUEUED:
             then = f"; it waits for a free slot ({self._busy()})"
@@ -1653,9 +1659,15 @@ class Deck:
         """The lane waits for the player: it gives its slot up when it may (_bench). A
         live-box request gives it up at once, in any state (P83); a flag or budget answer once
         the lane has waited bench_after seconds (P91), so a quick answer (the player at the
-        keys, autopilot's yes to more budget) keeps the lane's slot and its place."""
+        keys, autopilot's yes to more budget) keeps the lane's slot and its place. A paused or
+        taken-over lane keeps its slot whatever it waits for (the player's shell may run in its
+        workspace); resumed or handed back into its wait, it is asked again, and a flag or
+        budget wait is timed from then."""
         pending = lane.pending
         if pending is None or lane.benched or lane.finished or self.closing:
+            return
+        if lane.state in (LaneState.PAUSED, LaneState.TAKEOVER):
+            self._wait_began.pop(lane.id, None)
             return
         if pending.kind is not PendingKind.LIVE_BOX:
             if lane.state is not LaneState.WAITING:
