@@ -161,6 +161,16 @@ _WAITS_FOR = {  # what a lane that gives its slot up waits for, as its transcrip
     PendingKind.CONFIRM: "your word on the flag you submit by hand",
     PendingKind.BUDGET: "your answer on more budget",
 }
+# A budget question about a model with no price is whether to carry on without the dollar cap
+# (Lane.asks_without_price), and says so in the words the card asks it in (P98).
+_WAITS_FOR_NO_PRICE = "your answer on carrying on with no dollar cap"
+
+
+def _waits_for(lane: Lane, pending: Pending) -> str:
+    """What the lane waits for, in words: its card's question, not only its kind's."""
+    if pending is lane.pending and lane.asks_without_price():
+        return _WAITS_FOR_NO_PRICE
+    return _WAITS_FOR[pending.kind]
 BUDGET_WARN = 0.8  # fraction of a cap that raises the budget alert
 BUDGET_RAISE = 1.5  # approving more budget multiplies the caps by this
 ROTATE_MARGIN = 8.0  # seconds: a rotating flag is not sent this close to its window's end (at most half the window)
@@ -1697,8 +1707,9 @@ class Deck:
             self._bench(lane)
         elif self._slot_kept.get(lane.id) != why:  # said once per wait, and again only for another reason
             self._slot_kept[lane.id] = why
-            self._note(lane, f"keeps its slot while it waits for {_WAITS_FOR[pending.kind]}: {why}")
-            self._emit(EventKind.SLOT, f"{lane.id} keeps its slot while it waits for {_WAITS_FOR[pending.kind]}: {why}",
+            waits_for = _waits_for(lane, pending)
+            self._note(lane, f"keeps its slot while it waits for {waits_for}: {why}")
+            self._emit(EventKind.SLOT, f"{lane.id} keeps its slot while it waits for {waits_for}: {why}",
                        lane.id, lane.challenge_id, data={"slot": "kept", "for": pending.kind.value, "why": why})
 
     def _keeps_slot(self, lane: Lane) -> str:
@@ -1725,7 +1736,7 @@ class Deck:
         stays as it is."""
         pending = lane.pending
         assert pending is not None
-        waits_for = _WAITS_FOR[pending.kind]
+        waits_for = _waits_for(lane, pending)
         lane.benched = True
         before = set(self.lanes)
         self._fill()

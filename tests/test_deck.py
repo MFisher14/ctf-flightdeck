@@ -589,6 +589,43 @@ def test_a_flag_or_budget_wait_gives_its_slot_up_once_it_has_lasted_bench_after(
     assert len(events(deck, EventKind.SLOT)) == 1
 
 
+def test_a_budget_wait_about_no_price_says_what_its_card_asks_when_it_gives_its_slot_up_or_keeps_it():
+    """P98: a budget question on spend with no price asks whether to carry on with no dollar
+    cap, and the transcript and the run log say that, not "more budget"."""
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60, token_cap=10_000, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=100, dollars=None))
+    assert lane.pending.kind is PendingKind.BUDGET and lane.asks_without_price()
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.benched
+    words = "your answer on carrying on with no dollar cap"
+    assert lane.actions[-1].text == f"gave its slot to L02 while it waits for {words}"
+    (given,) = events(deck, EventKind.SLOT)
+    assert given.text == f"L01 waits for {words}: its slot went to L02" and given.data["for"] == "budget"
+
+    kept, _, kclock = make_deck(n=2, max_lanes=1, bench_after=60, max_waiting=0, token_cap=10_000, dollar_cap=2.0)
+    held = lane_on(kept, "c0")
+    kept.report(held.id, TurnReport(tokens=100, dollars=None))
+    kclock.t += 60
+    kept.recheck_waits()
+    assert not held.benched and held.actions[-1].text.startswith(f"keeps its slot while it waits for {words}: ")
+
+
+def test_only_a_budget_question_on_a_dollar_capped_lane_with_unpriced_spend_is_about_no_price():
+    deck, _, _ = make_deck(n=3, max_lanes=3, token_cap=10_000, dollar_cap=2.0)
+    raised, flagged, uncapped = lane_on(deck, "c0"), lane_on(deck, "c1"), lane_on(deck, "c2")
+    deck.report(raised.id, TurnReport(pending=Pending(PendingKind.BUDGET, "more budget")))
+    assert raised.pending.kind is PendingKind.BUDGET and not raised.asks_without_price()  # all its spend had a price
+    deck.report(flagged.id, TurnReport(tokens=100, dollars=None))
+    assert flagged.asks_without_price()
+    deck.apply(iv.Approve(flagged.id))
+    assert flagged.pending is None and not flagged.asks_without_price()  # nothing asked any more
+    uncapped.dollar_cap = None
+    deck.report(uncapped.id, TurnReport(tokens=100, dollars=None, pending=Pending(PendingKind.BUDGET, "more budget")))
+    assert uncapped.no_price() and not uncapped.asks_without_price()  # no dollar cap to go without
+
+
 def test_an_answered_flag_wait_takes_a_slot_again_before_the_queue():
     deck, driver, clock = make_deck(n=4, max_lanes=1, bench_after=60)
     lane = lane_on(deck, "c0")
