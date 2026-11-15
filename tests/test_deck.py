@@ -864,7 +864,7 @@ def test_dropping_the_only_cap_leaves_the_lane_uncapped():
     lane = lane_on(deck, "c0")
     deck.report(lane.id, TurnReport(tokens=100, dollars=None))
     out = deck.apply(iv.Approve(lane.id))
-    assert out.ok and out.message.endswith("no cap")
+    assert out.ok and out.message == "L01 carries on with no cap: its model has no price, so what it spends in dollars is not known"
     assert (lane.token_cap, lane.dollar_cap, lane.budget_used()) == (None, None, None)
 
 
@@ -1044,6 +1044,19 @@ def test_a_cli_turn_with_no_price_ends_the_lanes_known_total_and_asks_once_under
     assert lane.pending is not None and lane.pending.kind is PendingKind.BUDGET  # the cap cannot be enforced
     assert lane.pending.detail == "carry on with no dollar cap (no price for small)"
     assert events(deck, EventKind.SPEND)[-1].data["dollars"] is None
+
+
+def test_approving_more_budget_says_the_new_cap_first_and_what_is_used_after_it():
+    """"L01's cap is now 120 of 400k tokens" read as a cap of 120. The cap comes first, what is
+    used in brackets, and a dollar cap let go for want of a price is said to be gone."""
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0, token_cap=400_000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(turn=False, tokens=120, dollars=None, turn_end=True, why=TURN_END))  # tokens, no price
+    assert lane.pending is not None and lane.pending.kind is PendingKind.BUDGET
+    said = deck.apply(iv.Approve(lane.id)).message
+    assert said == ("L01's cap is now 400k tokens (120 used), and no dollar cap: its model has no price, so what it spends "
+                    "in dollars is not known")
+    assert lane.dollar_cap is None
 
 
 UNREPORTED = "what the CLI never reported for a turn it was stopped in"

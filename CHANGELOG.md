@@ -21,6 +21,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - `flightdeck start`'s question of how the challenges arrive no longer leaves "by hand" as the
   only answer off CTFd: it says that on rCTF, noCTF or GZCTF `flightdeck http example --preset
   NAME > event.toml` sets up an event flightdeck pulls and submits for.
+- Approving more budget says the new cap first and what is used after it: `L01's cap is now
+  15k tokens (11k used)`, where it said `11k of 15k tokens`, which read as a cap of 11k. When
+  the dollar cap goes because the model has no price, it says so.
 - `flightdeck doctor` names a plugin that cannot be read once (`warn plugin myctf: ...`, not
   `plugin myctf: plugin myctf: ...`), and for one whose folder moved or is gone it says to put
   the folder back or change its path in the config, not to fix a `plugin.toml` that is not

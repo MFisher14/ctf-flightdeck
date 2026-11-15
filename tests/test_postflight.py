@@ -891,7 +891,7 @@ def test_a_flags_verdict_does_not_answer_a_budget_alert(tmp_path, budget_approve
     stall = items(sections(report(record), "### ")["T+00:00:00 \u00b7 L01 on X: Budget"])
     stalls = next(line for line in summary(record).splitlines() if line.startswith("Stalls"))
     if budget_approved:
-        assert stall[2] == "Answered: 2m later, you: approve L01 \u2192 L01's cap is now 11k of 15k tokens"
+        assert stall[2] == "Answered: 2m later, you: approve L01 \u2192 L01's cap is now 15k tokens (11k used)"
         assert stalls == "Stalls: 1 alert, 1 answered, 0 then solved within 10 turns"
     else:
         assert stall[2] == "Answered: no answer; the lane was still open when the run ended"
@@ -908,7 +908,7 @@ def test_a_budget_request_queued_behind_a_flag_is_answered_once_it_comes_up(tmp_
     run.at(60)
     run.do(iv.Approve(lane))
     stall = items(sections(report(run.close()), "### ")["T+00:00:00 \u00b7 L01 on X: Budget"])
-    assert stall[2] == "Answered: 1m later, you: approve L01 \u2192 L01's cap is now 1k of 2k tokens"
+    assert stall[2] == "Answered: 1m later, you: approve L01 \u2192 L01's cap is now 2k tokens (1k used)"
 
 
 def test_a_refused_approve_leaves_the_flag_waiting_so_the_next_answers_the_flag(tmp_path):
