@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: twenty-three proposals, P69 to P91 (2026-11-14)
+## Built, not released: twenty-four proposals, P69 to P91 and P93 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P91); the lines for players are under Unreleased in
+[DECISIONS.md](DECISIONS.md) (P69 to P91, and P93); the lines for players are under Unreleased in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -122,6 +122,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   for a flag answer or more budget gives its slot to the queue once it has waited a minute; at
   most `max_waiting` lanes (`[lanes]`, 4) are without a slot at once, and a lane whose sessions
   run on keeps its own.
+- **The welcome screen names one key where there is one way on** (P93). On a loaded board
+  and in the mock, Enter and esc both opened the console under two names; the key line now
+  says `enter  open the console` alone, and esc and q still close it. An empty board keeps
+  both, since there Enter opens `/new`.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
