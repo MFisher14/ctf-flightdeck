@@ -84,13 +84,14 @@ import httpx
 from .. import __version__
 from ..plugins.call import MAX_CHALLENGES, MAX_SHOWN, TOKEN_MARK, VERDICTS, CallFailed, PullReply, Verdict, valid_ref
 from ..text import untrusted
-from .ctfd import CONNECT_TIMEOUT, MAX_FILE_BYTES, MAX_REDIRECTS, _message, _retry_after
+from .ctfd import API, CONNECT_TIMEOUT, MAX_FILE_BYTES, MAX_REDIRECTS, _message, _retry_after
+from .instances import ON_DEMAND, InstanceError, InstancesConfig
 
 NAME = "http"  # event.platform, and the name on the board's record (plugin.json): no plugin can take it (config.RESERVED_PLATFORMS)
 LABEL = "the http adapter"  # how messages name it, where a plugin's say "the NAME plugin"
 PULL_COMMAND = "flightdeck http pull"
-PRESETS = ("rctf", "noctf", "gzctf")  # http_presets/NAME.toml
-PRESET_CHOICE = "preset = " + " or ".join(f'"{name}"' for name in PRESETS)  # for messages: preset = "rctf" or "noctf" or "gzctf"
+PRESETS = ("rctf", "rctf2", "noctf", "gzctf")  # http_presets/NAME.toml
+PRESET_CHOICE = "preset = " + " or ".join(f'"{name}"' for name in PRESETS)  # for messages: preset = "rctf" or "rctf2" or "noctf" or "gzctf"
 GAME_HINTS = {"gzctf": " (GZCTF: the game's number, as its address shows it: https://.../games/3)"}
 PRESET_DIR = "platform/http_presets"
 TOKEN_VARIABLE = "HTTP_TOKEN"  # event.token_env of a profile with no preset: this, or this and _NAME (HttpConfig.names_token)
@@ -98,9 +99,11 @@ TOKEN_VARIABLE = "HTTP_TOKEN"  # event.token_env of a profile with no preset: th
 AUTH_KINDS = ("bearer", "token", "header", "cookie", "exchange")
 SCHEMES = ("Bearer", "Token")
 UNITS = {"s": 1.0, "ms": 0.001}
-FIELDS = ("name", "category", "points", "solves", "description", "max_attempts", "file_urls", "file_names")
+FIELDS = ("name", "category", "points", "solves", "description", "max_attempts", "file_urls", "file_names", "instance")
 """A challenge's fields a list item or a detail answer may give, each by a path. `name` is
-required of the list; the rest are optional, as in a plugin's pull."""
+required of the list; the rest are optional, as in a plugin's pull. `instance` marks the
+challenge as one whose instance the platform starts when asked (challenge.json's "instance":
+"on-demand"): a value there that is not null, false, 0 or "" (rCTF v2's instancerLifetime)."""
 
 MAX_LIST_BYTES = 8_000_000  # the list of challenges (a plugin's pull answer has the same room)
 MAX_ANSWER_BYTES = 1_000_000  # any other answer
@@ -342,8 +345,8 @@ class HttpConfig:
     @property
     def variable_prefix(self) -> str | None:
         """With a preset, what the name of the event's token variable may start with: the
-        preset's name in capitals and a _ (RCTF_)."""
-        return self.preset.upper().replace("-", "_") + "_" if self.preset else None
+        preset's name in capitals and a _ (RCTF_), with no version number: rctf2's is RCTF_ too."""
+        return re.sub(r"[0-9]+$", "", self.preset).upper().replace("-", "_") + "_" if self.preset else None
 
     def names_token(self, name: str) -> bool:
         """Whether `name` is a variable named for an event's token on this platform:
@@ -685,10 +688,11 @@ def _solved(table: Mapping) -> Solved:
 # ---------------------------------------------------------------------- what a run will send
 
 
-def plan(config: HttpConfig) -> list[str]:
+def plan(config: HttpConfig, instances: InstancesConfig | None = None) -> list[str]:
     """What the table makes flightdeck send, a line for each request: the method, the route
     under event.url, and where the token goes. Shown before anything runs (pre-flight), so a
-    table from someone else is read first. Every string here passed parse_config's checks."""
+    table from someone else is read first. Every string here passed parse_config's checks.
+    `instances`: the profile's [instances] table, whose routes are asked the same way."""
     auth = config.auth
     if auth.kind == "exchange":
         carried = f"with the session token (Authorization: {auth.scheme})"
@@ -730,6 +734,12 @@ def plan(config: HttpConfig) -> list[str]:
     else:
         lines.append("submit    no route: flightdeck sends no flag (the submit policy must be manual or off)")
     lines.append(f"solved    {config.solved.request}, {carried}")
+    if instances is not None:  # the [instances] table's routes go the same way, with the same token
+        under = API if instances.routes.api else ""  # InstanceClient asks these paths under /api/v1 when `api` is true
+        for action in ("status", "start", "renew", "stop"):
+            method, path = getattr(instances.routes, action)
+            path = under + path
+            lines.append(f"instance  {action} {method} {path}, {carried}: only for an on-demand challenge of the board")
     return lines
 
 
@@ -886,6 +896,17 @@ class HttpCaller:
             return Verdict("unjudged", self._scrub(f"{said}: {detail}" if detail else said))
         retry_after = self._retry_after(cfg, answer) if word == "rate_limited" else None
         return Verdict(word, self._scrub(detail), self._count(cfg.tries_left_path, answer.doc), retry_after)
+
+    def instance_wire(self) -> InstanceWire:
+        """How the event's [instances] table reaches this platform (platform/instances.py): the
+        same address and the same auth as the three calls, a sign-in's session included."""
+        return InstanceWire(self)
+
+    def session_refused(self) -> None:
+        """The platform answered 401 to the exchanged session: it is forgotten, so the next
+        request signs in again (at most every RELOGIN_SECONDS)."""
+        if self._session is not None and time.monotonic() - self._signed_in >= RELOGIN_SECONDS:
+            self._session = None
 
     async def solved(self) -> set[str]:
         """The refs of the challenges the platform lists as solved for this account."""
@@ -1046,6 +1067,12 @@ class HttpCaller:
                 if not all(isinstance(value, str) for value in found):
                     raise _Skip(f"{label} ({path.text}) matched a value that is not a string")
                 out[name] = found
+            elif name == "instance":  # one value or none; any value but null, false, 0 and "" means it has an instancer
+                found = [value for value in path.find(node) if value not in (None, False, 0, "")]
+                if len(found) > 1:
+                    raise _Skip(f"{label} ({path.text}) matched {len(found)} values, and one is wanted")
+                if found:
+                    out[name] = ON_DEMAND
             elif name in ("name", "category", "description"):
                 value = self._one(label, path, node, (str,), "a string", required=name == "name" and where == "list")
                 if value is not None:
@@ -1209,7 +1236,9 @@ class HttpCaller:
         if auth.kind == "cookie":
             return {"Cookie": f"{auth.cookie}={self.token}"}
         if self._session is None:
-            self._session = await self._sign_in(http)
+            session = await self._sign_in(http)
+            if self._session is None:  # another sign-in (the instancer's thread, another call) may have ended first
+                self._session = session
         return {"Authorization": f"{auth.scheme} {self._session}"}
 
     async def _sign_in(self, http: httpx.AsyncClient) -> str:
@@ -1228,6 +1257,9 @@ class HttpCaller:
                              + (f": {said}" if said else "") + " (is the token the right one for this event?)")
         found = auth.token_path.find(answer.doc)
         session = found[0] if len(found) == 1 else None
+        if session == TOKEN_MARK and self._session is not None:
+            # the answer was cut (_cut) of the session another sign-in got meanwhile: the platform gave that one again
+            return self._session
         if not isinstance(session, str) or not _HEADER_VALUE.fullmatch(session) or len(session) > MAX_SESSION:
             raise CallFailed(f"could not sign in: {answer.endpoint} answered, but auth.token_path ({auth.token_path.text}) "
                              "matched no session token in its answer")
@@ -1247,8 +1279,8 @@ class HttpCaller:
             except ValueError as exc:
                 raise CallFailed(str(exc)) from None
         answer = await self._request(http, route, values, content, auth=True, limit=limit, sends_flag=sends_flag)
-        if answer.status == 401 and self._session is not None and time.monotonic() - self._signed_in >= RELOGIN_SECONDS:
-            self._session = None
+        if answer.status == 401:
+            self.session_refused()
         return answer
 
     async def _request(self, http: httpx.AsyncClient, route: Route, values: Mapping[str, str], content: object, *, auth: bool,
@@ -1411,6 +1443,39 @@ class HttpCaller:
             if len(found) == 1 and isinstance(found[0], (str, int)) and not isinstance(found[0], bool) and str(found[0]).strip():
                 return self._scrub(str(found[0]).strip(), limit=80)
         return "a challenge with no name and no ref"
+
+
+class InstanceWire:
+    """The http platform as platform/instances.InstanceClient reaches it: event.url's address,
+    and the header that carries the token as the [http] table's auth sends it. With auth.kind
+    "exchange" that is the session the sign-in gives, asked for when there is none yet: the
+    same session as the three calls'. Called from a worker thread (a run's instances are asked
+    there), so the sign-in runs on a loop of its own in that thread. Nothing of the token is
+    ever in a message (short())."""
+
+    def __init__(self, caller: HttpCaller) -> None:
+        self._caller = caller
+        self.root = str(caller._base).rstrip("/")
+
+    def __repr__(self) -> str:
+        return f"InstanceWire({self.root!r}, token=set)"
+
+    def headers(self) -> dict[str, str]:
+        try:
+            carried = asyncio.run(self._carried())
+        except CallFailed as exc:
+            raise InstanceError(self._caller._scrub(exc)) from None
+        return {"User-Agent": f"ctf-flightdeck/{__version__}", "Accept": "application/json", **carried}
+
+    async def _carried(self) -> dict[str, str]:
+        async with self._caller._clients() as (http, _):
+            return await self._caller._auth(http)
+
+    def short(self, text: str) -> str:
+        return self._caller._scrub(text)
+
+    def unauthorized(self) -> None:
+        self._caller.session_refused()
 
 
 CHECK_COMMAND = "flightdeck http check"

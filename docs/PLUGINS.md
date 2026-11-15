@@ -17,8 +17,8 @@ A plugin is not a solver pack and not a CTFd plugin:
 - A **pack** ([SOLVERS.md](SOLVERS.md)) is your no-model solvers, which work a challenge. A
   plugin never sees a challenge's files being worked; it only talks to the platform.
 - A **CTFd container plugin** is part of a CTFd site, which starts a challenge's instance
-  ([BOARDS.md](BOARDS.md#instances-on-demand)). flightdeck starts instances only on CTFd, never
-  through a plugin of yours.
+  ([BOARDS.md](BOARDS.md#instances-on-demand)). flightdeck starts instances only on CTFd and on
+  the http platform (rCTF v2), never through a plugin of yours.
 
 ## In short
 
@@ -197,7 +197,7 @@ List every challenge the platform shows you. For each:
 |---|---|---|
 | `ref` | yes | The platform's own id for the challenge, as a string of 1 to 128 printable characters. `submit` is sent it back, and `solved` lists these. |
 | `name` | yes | The challenge's name. |
-| `category`, `points`, `description`, `solves`, `urls`, `max_attempts` | no | As in a board's [`challenge.json`](BOARDS.md#challengejson), and checked by the same rules. Left out, the category is `misc` and the points are 0. |
+| `category`, `points`, `description`, `solves`, `urls`, `max_attempts`, `instance` | no | As in a board's [`challenge.json`](BOARDS.md#challengejson), and checked by the same rules. Left out, the category is `misc` and the points are 0. `"instance": "on-demand"` says the platform starts the challenge's instance when asked; flightdeck starts none on a plugin's platform: start it on the site yourself, and its lane works from the files. |
 | `files` | no | The handout files you downloaded into the folder `files` names, each as a path relative to that folder. |
 
 Download each file into the `files` folder of the request and list where you put it. A file

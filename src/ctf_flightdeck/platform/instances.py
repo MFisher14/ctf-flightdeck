@@ -1,9 +1,11 @@
-"""A challenge's own container on CTFd: started, renewed and stopped through a container plugin.
+"""A challenge's own container: started, renewed and stopped through the platform's instancer.
 
-Some CTFd challenges have no fixed address: the platform starts a container for the team when
+Some challenges have no fixed address: the platform starts a container for the team when
 asked, a few at a time (a small cap per team), and stops it after a while. A board lists no
 `urls` for such a challenge; its challenge.json says `"instance": "on-demand"` instead, and an
-event profile's [instances] table says how to ask (BOARDS.md):
+event profile's [instances] table says how to ask (BOARDS.md). On CTFd that is a container
+plugin; on the http platform (platform/http.py) it is the platform's own instancer, rCTF v2's
+among them:
 
     [instances]
     plugin = "docker_per_team"      # a named plugin shape (PLUGINS), or the four routes below
@@ -18,6 +20,11 @@ event profile's [instances] table says how to ask (BOARDS.md):
     # address_key = "connectionInfo"  # the answer's key that holds the address: one name, or a list tried in order
     # port_key = "port"             # ... the port, when the address has none
     # expires_key = "until"         # ... the seconds left, or the moment it ends (a number or a timestamp)
+    # expires_unit = "ms"           # ... a number of the end counts milliseconds, not seconds
+    # endpoints_key = "endpoints"   # the answer's key that holds a list of {kind, host, port}, one per address
+    # state_key = "status"          # the answer's key that says what the instance is doing
+    # running_states = ["running"]  # ... the words that mean it is up
+    # pending_states = ["starting"] # ... the words that mean it is on its way up or down: wait, send nothing
 
 Plugins differ in their paths and answers, so nothing is assumed: an [instances] table with
 neither a plugin name nor all four routes is an error. The named shapes (PLUGINS):
@@ -31,14 +38,24 @@ neither a plugin name nor all four routes is an error. The named shapes (PLUGINS
   whatever that account runs, a status that refuses for any challenge but the running one,
   and an address in one of five forms (an nc line, a link's HTML, a pwntools snippet, an
   https URL, `[ssl] host port`), two of them TLS endpoints that are no web server (tls://).
+- `rctf`: rCTF v2's own instancer (github.com/otter-sec/rctf, its API reference), for
+  platform = "http". The challenge's string id in the path; the answer a state and a list of
+  endpoints, the end in milliseconds; a start may answer "starting" and the status "running"
+  later; a `tcp-ssl` endpoint is a TLS endpoint (tls://). Built from its documentation
+  against a fake of it (tests/fake_http.py); not met.
 
-The last three were built from the plugins' public source against fakes of it (tests/
-fake_instance_plugins.py) and have not met a real site.
+A shape names the platform it is for (Shape.platform): a CTFd plugin's on CTFd only, rCTF's on
+the http platform only. Routes a profile gives itself are for either.
+
+The ctfd_owl, chall_manager and ctfd_whale shapes were built from the plugins' public source
+against fakes of it (tests/fake_instance_plugins.py) and have not met a real site.
 
 InstanceClient is the wire: start(), status(), renew(), stop() for one challenge, by the
 board's id. What it guarantees:
 
-- Scope. It acts only on a challenge that is on the board (`ids`: board id -> CTFd number).
+- Scope. It acts only on a challenge that is on the board (`ids`: board id -> the platform's
+  own id: CTFd's number, or a string ref such as rCTF's). A string goes into a path
+  percent-encoded whole, so it stays one path segment; "." and ".." are refused.
   Any other id is refused before a request is made, so nothing here can touch another
   team's container, an unreleased challenge, the scoreboard or a hint.
 - A request is sent once, never again: a second "start" could take a second slot. Each
@@ -56,13 +73,22 @@ board's id. What it guarantees:
 - A refused start is an InstanceRefused with the plugin's own words, made safe to show
   (`full` when they say the team's cap or budget is reached), never a container with no
   address.
-- The token goes only to the event's CTFd, in the Authorization header, and is never in a
-  message.
+- The token goes only to the event's address, the way the platform's own adapter sends it:
+  CTFd's token, or on the http platform the [http] table's own auth (the session of an rCTF
+  sign-in, say: HttpCaller.instance_wire()). It is never in a message.
+- A start or a renew the platform guards with a CAPTCHA is refused by name
+  (InstanceRefused.human), never answered: the player starts that instance on the site, and
+  the status finds it there.
 
 The plugin's answer is untrusted: the host must look like a host name or an address, the
 port must be a port, and what is shown of it is one line with control characters made
 visible. An answer that names no address is an error, never an instance. Only a host and a
 port are ever taken out of it, HTML and commands included: nothing in it is run or followed.
+An instance may have several addresses (an `endpoints` list: a web front and a TCP service,
+say), each checked so, at most MAX_ENDPOINTS of them. rCTF's tcp-ssl, a TLS service, is a
+tls:// address, as ctfd-whale's TLS lines are. One of a kind flightdeck cannot hand a lane
+(KINDS) is left out and named; an instance with none left is one at an address flightdeck
+will not use.
 
 It never touches asyncio (a run calls it from a worker thread), never runs anything the
 platform hands back, and spends no points: it calls the plugin's own container routes only.
@@ -77,9 +103,13 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from typing import Protocol
 
 import httpx
 
+from urllib.parse import quote
+
+from ..plugins.call import valid_ref
 from ..text import untrusted
 from .ctfd import API, CONNECT_TIMEOUT, MAX_API_BYTES, _by, _describe, _is_number, _LATE, _parse, _read_sync, _Site
 
@@ -93,6 +123,12 @@ REMAINING_KEYS = ("remaining_time", "remaining", "expires", "timeout")
 ERROR_KEYS = ("error", "errors", "message", "msg")
 STATUS_TRIES = 3  # how often a start whose answer names no address asks the status before it gives up
 STATUS_GAP = 2.0  # seconds between those asks
+MAX_ENDPOINTS = 8  # addresses taken from one answer's endpoints list
+MAX_STATES = 16  # words of running_states or pending_states
+UNITS = {"s": 1.0, "ms": 0.001}  # expires_unit: seconds per unit of a number of the end
+# an endpoint's kind -> the scheme of its `urls` entry (rCTF's tcp-ssl: a TLS endpoint, tls://). A kind not here is
+# left out, by name
+KINDS = {"tcp": "tcp", "http": "http", "https": "https", "tcp-ssl": "tls"}
 _HOST = re.compile(r"[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?")
 # a refusal that means "the team's slots or budget are used", in the plugins' own words: docker_per_team's cap,
 # ctfd-owl's one container per account and its site-wide count, ctfd-chall-manager's mana
@@ -100,7 +136,9 @@ _FULL = re.compile(
     r"max(imum)?\b.{0,40}\b(container|instance)|limit reached|too many (container|instance)|you have boot\b|used up all your mana",
     re.I,
 )
-_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+# a refusal that wants a person: rCTF v2's badCaptcha and badRecaptchaCode, and any other platform's CAPTCHA
+_HUMAN = re.compile(r"captcha|turnstile", re.I)
+_KEY =re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 _PATH = re.compile(r"/[A-Za-z0-9_./{}?=&-]*")
 
 
@@ -124,11 +162,23 @@ class InstanceError(Exception):
 
 
 class InstanceRefused(InstanceError):
-    """The plugin answered and said no. `full`: because the team's cap on containers is reached."""
+    """The plugin answered and said no. `full`: because the team's cap on containers is reached.
+    `human`: because it wants a person to pass a check (a CAPTCHA), which flightdeck never does."""
 
-    def __init__(self, message: str, *, full: bool = False) -> None:
+    def __init__(self, message: str, *, full: bool = False, human: bool = False) -> None:
         super().__init__(message)
         self.full = full
+        self.human = human
+
+
+class InstancePending(InstanceError):
+    """The platform says the challenge's instance is on its way up or down (a state of
+    pending_states, such as rCTF's "starting"): it holds a slot, and has no address yet.
+    Nothing should be sent for it but the status, a little later. `maybe_done` when a start
+    of this client's was taken and the instance has not come up within its looks."""
+
+    def __init__(self, message: str, *, maybe_done: bool = False) -> None:
+        super().__init__(message, maybe_done=maybe_done, up=True)
 
 
 class InstanceBusy(InstanceRefused):
@@ -151,6 +201,7 @@ class Routes:
     status: tuple[str, str]
     body_key: str | None = None  # for the routes whose path has no {id}
     api: bool = False  # the paths are under /api/v1 (True) or the site's root (False)
+    empty_body: bool = False  # a start or a renew whose path carries the id still sends {} (rCTF reads a JSON body there)
 
 
 @dataclass(frozen=True)
@@ -165,6 +216,11 @@ class Answers:
     web: tuple[str, str] | None = None
     # the address is a line a person wrote ("curl http://host:8080", a link): the first URL, nc line or host:port in it
     loose: bool = False
+    endpoints: tuple[str, ...] = ()  # keys of a list of {kind, host, port}: each one of the instance's addresses
+    state: tuple[str, ...] = ()  # keys of a word that says what the instance is doing
+    running: tuple[str, ...] = ()  # the state's words for "up"; with a state key, any other word is "not running"
+    pending: tuple[str, ...] = ()  # the state's words for "on its way up or down": InstancePending
+    expires_unit: float = 1.0  # seconds in one unit of a number of the end (UNITS)
 
 
 @dataclass(frozen=True)
@@ -177,12 +233,14 @@ class Shape:
     gap: float = 0.0  # seconds the plugin wants between two requests that change something; the client waits them
     replaces: bool = False  # a start first removes whatever the account runs: the client asks the status before it sends one
     busy: re.Pattern[str] | None = None  # a refusal in these words: the account's one container is another challenge's
+    platform: str = "ctfd"  # the event.platform it is for
 
 
 _CONTAINERS = "/containers/api"
 _OWL = "/plugins/ctfd-owl/container?challenge_id={id}"
 _CHALL_MANAGER = "/plugins/ctfd-chall-manager/instance"
 _WHALE = "/plugins/ctfd-whale/container?challenge_id={id}"
+_RCTF = "/api/v2/integrations/challs/{id}/instance"
 
 PLUGINS: dict[str, Shape] = {
     # CTFd-Docker-Plugin (github.com/andyjsmith/CTFd-Docker-Plugin) and its forks; seen working at an event in
@@ -218,6 +276,16 @@ PLUGINS: dict[str, Shape] = {
         Answers(address=("user_access",), port=(), expires=("remaining_time",), loose=True),
         single=True, gap=60.0, replaces=True, busy=re.compile(r"\bnot from this challenge\b", re.I),
     ),
+    # rCTF v2's own instancer (github.com/otter-sec/rctf: apps/docs .../api/integrations/instance-*.md and
+    # packages/types goodInstanceStatus), read from its documentation and types, not met. One route, four methods;
+    # data is {status, timeLeftMilliseconds, endpoints: [{kind, host, port, title?, text?}] or null}. A start may
+    # answer "starting", the status "running" later. Errors are {kind, message, data: {error | message}}.
+    "rctf": Shape(
+        Routes(start=("PUT", _RCTF), stop=("DELETE", _RCTF), renew=("PATCH", _RCTF), status=("GET", _RCTF), empty_body=True),
+        Answers(address=(), port=(), expires=("timeLeftMilliseconds",), endpoints=("endpoints",), state=("status",),
+                running=("running",), pending=("starting", "stopping"), expires_unit=UNITS["ms"]),
+        platform="http",
+    ),
 }
 # names a profile may still carry, and what to write instead
 REMOVED = {
@@ -239,10 +307,13 @@ class InstancesConfig:
     gap: float = 0.0  # Shape.gap
     replaces: bool = False  # Shape.replaces
     busy: re.Pattern[str] | None = None  # Shape.busy
+    platform: str | None = None  # Shape.platform: the event.platform the named shape is for; None: routes of the profile's own
 
 
-_ANSWER_KEYS = {"address_key": "address", "port_key": "port", "expires_key": "expires"}
-_KEYS = ("plugin", "types", "max_running", *ACTIONS, "body_key", "api", *_ANSWER_KEYS)
+_ANSWER_KEYS = {"address_key": "address", "port_key": "port", "expires_key": "expires", "endpoints_key": "endpoints",
+                "state_key": "state"}
+_STATE_WORDS = {"running_states": "running", "pending_states": "pending"}
+_KEYS = ("plugin", "types", "max_running", *ACTIONS, "body_key", "api", *_ANSWER_KEYS, *_STATE_WORDS, "expires_unit")
 
 
 def parse_config(table: object) -> InstancesConfig:
@@ -272,7 +343,8 @@ def parse_config(table: object) -> InstancesConfig:
     api = table.get("api", base.api if base is not None else False)
     if not isinstance(api, bool):
         raise ValueError("instances.api must be true or false")
-    routes = Routes(**{action: given.get(action) or getattr(base, action) for action in ACTIONS}, body_key=body_key, api=api)
+    routes = Routes(**{action: given.get(action) or getattr(base, action) for action in ACTIONS}, body_key=body_key, api=api,
+                    empty_body=base.empty_body if base is not None else False)
     for action in ACTIONS:
         path = getattr(routes, action)[1]
         if body_key is None and "{id}" not in path:
@@ -289,12 +361,33 @@ def parse_config(table: object) -> InstancesConfig:
                 else "a start past it is refused")
         raise ValueError(f"instances.max_running must be 1 with plugin {plugin}: it runs one container per account, and {past}")
     answers = shape.answers if shape is not None else Answers()
-    named = {part: _keys(key, table[key]) for key, part in _ANSWER_KEYS.items() if key in table}
+    named: dict[str, object] = {part: _keys(key, table[key]) for key, part in _ANSWER_KEYS.items() if key in table}
     if "address" in named and not named["address"]:
         raise ValueError("instances.address_key must name at least one key: an answer with no address is no instance")
-    return InstancesConfig(routes, tuple(types), most, plugin, replace(answers, **named), single,
-                           shape.gap if shape is not None else 0.0, shape.replaces if shape is not None else False,
-                           shape.busy if shape is not None else None)
+    named.update({part: _words(key, table[key]) for key, part in _STATE_WORDS.items() if key in table})
+    if "expires_unit" in table:
+        unit = table["expires_unit"]
+        if not isinstance(unit, str) or unit not in UNITS:
+            raise ValueError(f"instances.expires_unit must be one of {', '.join(UNITS)}: what a number of the end counts")
+        named["expires_unit"] = UNITS[unit]
+    answers = replace(answers, **named)
+    if (answers.running or answers.pending) and not answers.state:
+        raise ValueError("instances.running_states and pending_states need state_key: the answer's key that holds those words")
+    if set(answers.running) & set(answers.pending):
+        raise ValueError("instances.running_states and pending_states must not share a word")
+    if not answers.address and not answers.endpoints:
+        raise ValueError("instances needs address_key or endpoints_key: an answer with no address is no instance")
+    return InstancesConfig(routes, tuple(types), most, plugin, answers, single, shape.gap if shape is not None else 0.0,
+                           shape.replaces if shape is not None else False, shape.busy if shape is not None else None,
+                           shape.platform if shape is not None else None)
+
+
+def _words(name: str, value: object) -> tuple[str, ...]:
+    """running_states or pending_states: a list of the words the state key may hold."""
+    if not isinstance(value, list) or len(value) > MAX_STATES or len(set(value)) != len(value) or \
+            not all(isinstance(word, str) and word.strip() and len(word) <= 64 for word in value):
+        raise ValueError(f'instances.{name} must be a list of up to {MAX_STATES} distinct words, such as ["running"]')
+    return tuple(value)
 
 
 def _keys(name: str, value: object) -> tuple[str, ...]:
@@ -325,35 +418,78 @@ class Instance:
     challenge: str  # the board's id
     host: str
     port: int | None
-    scheme: str | None = None  # "http" or "https" when the plugin gave a URL, "tls" a TLS endpoint; None: a host and a port
+    scheme: str | None = None  # "http", "https", "tcp" or "tls" (a TLS endpoint) when the plugin said; None: a bare host and port
     expires_at: float | None = None  # time.time() when the platform stops it; None: it did not say, or not so flightdeck can read it
     said: str = field(default="", compare=False)  # the plugin's words, safe to show
+    more: tuple[tuple[str | None, str, int | None], ...] = ()  # (scheme, host, port) of its other addresses, in the plugin's order
+    left_out: tuple[str, ...] = field(default=(), compare=False)  # addresses it named that no lane gets, each safe to show
 
     def url(self, web: bool) -> str:
         """The instance as a board's `urls` entry: the plugin's own scheme when it gave one
         (tls://host:port for a TLS endpoint that is no web server, what `ncat --ssl host port`
         reaches), else http for a web challenge and tcp for any other (what `nc host port`
         reaches)."""
-        scheme = self.scheme or ("http" if web else "tcp")
-        if self.port is None:
-            return f"{scheme}://{self.host}"
-        return f"{scheme}://{self.host}:{self.port}"
+        return _url(self.scheme, self.host, self.port, web)
+
+    def urls(self, web: bool) -> tuple[str, ...]:
+        """Every address of the instance as `urls` entries, the first one first."""
+        return tuple(dict.fromkeys([self.url(web), *(_url(scheme, host, port, web) for scheme, host, port in self.more)]))
+
+    def places(self) -> tuple[tuple[str, int | None], ...]:
+        """(host, port) of every address: what a lane's network is fenced to."""
+        return ((self.host, self.port), *((host, port) for _, host, port in self.more))
+
+
+def _url(scheme: str | None, host: str, port: int | None, web: bool) -> str:
+    scheme = scheme or ("http" if web else "tcp")
+    return f"{scheme}://{host}" if port is None else f"{scheme}://{host}:{port}"
+
+
+class _Ids(dict):
+    """Board id -> the platform's own id for the challenge, each checked as it is put in: a
+    CTFd number (1 or more), or a string ref (plugins.call.valid_ref)."""
+
+    def __setitem__(self, key: object, value: object) -> None:
+        if not isinstance(key, str) or not (_is_number(value) or valid_ref(value)):
+            raise ValueError("ids must map board ids (strings) to the platform's challenge ids: CTFd's whole numbers (1 or more), "
+                             "or refs (strings of 1 to 128 printable characters)")
+        super().__setitem__(key, value)
+
+    def update(self, *args, **kwargs) -> None:  # type: ignore[override]
+        for key, value in dict(*args, **kwargs).items():
+            self[key] = value
+
+
+class Wire(Protocol):
+    """How a request reaches the platform with the player's token: the address every route is
+    under, the headers that carry the token (asked for each request: a session may be signed
+    in for first), and the platform's words made safe to show (no token in them).
+    `unauthorized()` is told of a 401, so a session the platform no longer takes is asked
+    for again. CTFd's is its _Site; the http platform's is HttpCaller.instance_wire()."""
+
+    root: str
+
+    def headers(self) -> dict[str, str]: ...
+
+    def short(self, text: str) -> str: ...
 
 
 class InstanceClient:
-    """Asks one CTFd's container plugin for the board's challenges' instances."""
+    """Asks one platform's instancer for the board's challenges' instances: a CTFd's container
+    plugin (base_url and token: CTFd's own), or the http platform's (`wire`)."""
 
-    def __init__(self, base_url: str, token: str, ids: Mapping[str, int], config: InstancesConfig, *, timeout: float = 20.0,
-                 transport: httpx.BaseTransport | None = None, clock=time.time, sleep: Callable[[float], None] = time.sleep,
-                 monotonic: Callable[[], float] = time.monotonic) -> None:
-        self._site = _Site(base_url, token)
+    def __init__(self, base_url: str | None, token: str | None, ids: Mapping[str, int | str], config: InstancesConfig, *,
+                 wire: Wire | None = None, timeout: float = 20.0, transport: httpx.BaseTransport | None = None, clock=time.time,
+                 sleep: Callable[[float], None] = time.sleep, monotonic: Callable[[], float] = time.monotonic) -> None:
+        if wire is None:
+            if base_url is None or token is None:
+                raise ValueError("an instance client needs the platform's address and token, or a wire that carries them")
+            wire = _Site(base_url, token)
+        self._site = wire
         if not timeout > 0:
             raise ValueError(f"timeout must be a positive number of seconds, got {timeout}")
-        self.ids: dict[str, int] = {}
-        for key, value in ids.items():
-            if not isinstance(key, str) or not _is_number(value):
-                raise ValueError("ids must map board ids (strings) to CTFd challenge ids (whole numbers, 1 or more)")
-            self.ids[key] = value
+        self.ids: _Ids = _Ids()
+        self.ids.update(ids)
         self.config = config
         self.timeout = timeout
         self._clock = clock
@@ -361,7 +497,6 @@ class InstanceClient:
         self._monotonic = monotonic
         self._changed_at: float | None = None  # when the last request that changes something was answered (config.gap)
         self._http = httpx.Client(
-            headers=self._site.headers(),
             timeout=httpx.Timeout(timeout, connect=min(timeout, CONNECT_TIMEOUT)),
             transport=transport,
             follow_redirects=False,
@@ -390,18 +525,26 @@ class InstanceClient:
                 return there
         doc = self._ask("start", challenge_id)
         assert doc is not None
+        pending: InstancePending | None = None
         try:
-            if self._names_address(doc):
+            if self._reading(doc) == "up":
                 return self._instance(challenge_id, doc)
             for asked in range(STATUS_TRIES):
                 if asked:
                     self._sleep(STATUS_GAP)
-                found = self.status(challenge_id)
+                try:
+                    found = self.status(challenge_id)
+                except InstancePending as exc:  # on its way up: looked at again, as an answer with no address is
+                    pending = exc
+                    continue
                 if found is not None:
                     return found
         except InstanceError as exc:
             exc.maybe_done = True  # the start was taken: whatever its answer or the status said, an instance may run
             raise
+        if pending is not None or self._reading(doc) == "pending":
+            raise InstancePending(f"the platform took the start for {_show(challenge_id)} and is still starting its instance; "
+                                  "flightdeck asks its status again in a while", maybe_done=True)
         said = _dig(doc, ERROR_KEYS)
         words = f" ({self._site.short(str(said))})" if said is not None else ""
         raise InstanceError(
@@ -411,9 +554,15 @@ class InstanceClient:
         )
 
     def status(self, challenge_id: str) -> Instance | None:
-        """The challenge's running instance, or None when the plugin names none."""
+        """The challenge's running instance, or None when the plugin names none (or says, by
+        its state, that none runs). InstancePending when it says one is on its way up or down."""
         doc = self._ask("status", challenge_id, refusal_is_none=True)
-        if doc is None or not self._names_address(doc):
+        reading = self._reading(doc)
+        if reading == "pending":
+            word = _dig(doc, self.config.answers.state)
+            raise InstancePending(f"the instance of {_show(challenge_id)} is on its way up or down on the platform "
+                                  f"({self._site.short(str(word))}); flightdeck sends nothing for it and asks again in a while")
+        if reading is None:
             return None
         return self._instance(challenge_id, doc)
 
@@ -421,7 +570,7 @@ class InstanceClient:
         """Ask for more time. The instance as the plugin now describes it, or None when its
         answer names no address (the time was extended; ask status() for the rest)."""
         doc = self._ask("renew", challenge_id)
-        return self._instance(challenge_id, doc) if self._names_address(doc) else None
+        return self._instance(challenge_id, doc) if self._reading(doc) == "up" else None
 
     def stop(self, challenge_id: str) -> None:
         """Stop the challenge's instance and free its slot. On a plugin that keeps one
@@ -451,12 +600,22 @@ class InstanceClient:
         method, path = getattr(self.config.routes, action)
         root = self._site.root + (API if self.config.routes.api else "")
         content = None
-        if "{id}" in path:  # the path carries the number: no body, so a GET goes out as a GET
-            path = path.replace("{id}", str(number))
+        what = f"instance {action} for challenge {_show(number)}"
+        changes = action != "status"
+        if "{id}" in path:  # the path carries the id: no body, so a GET goes out as a GET
+            if number in (".", ".."):  # no encoding keeps it one path segment
+                raise InstanceError(f"{what}: the challenge's id would name another route, so flightdeck did not send it")
+            path = path.replace("{id}", quote(str(number), safe=""))
+            if self.config.routes.empty_body and action in ("start", "renew"):
+                content = b"{}"
         elif self.config.routes.body_key is not None:
             content = json.dumps({self.config.routes.body_key: number}).encode()
-        what = f"instance {action} for challenge {number}"
-        changes = action != "status"
+        try:
+            headers = self._site.headers()
+        except InstanceError as exc:  # the wire's sign-in: nothing of this request was sent
+            raise InstanceError(f"{what}: {exc}") from None
+        if content is not None:
+            headers = {**headers, "Content-Type": "application/json"}
         if changes and self.config.gap > 0 and self._changed_at is not None:
             waited = self._monotonic() - self._changed_at
             if waited < self.config.gap:  # the plugin refuses two changes this close together
@@ -465,7 +624,7 @@ class InstanceClient:
 
         def exchange():
             try:
-                with self._http.stream(method, root + path, content=content) as response:
+                with self._http.stream(method, root + path, content=content, headers=headers) as response:
                     body = _read_sync(response, MAX_API_BYTES, deadline)
                     return (response.status_code, body)
             except httpx.HTTPError as exc:
@@ -485,8 +644,12 @@ class InstanceClient:
         if not isinstance(body, bytes):
             raise InstanceError(f"{what}: the platform's answer was too long or never ended (HTTP {status})", maybe_done=acted)
         doc = _parse(body)
-        said = _dig(doc, ERROR_KEYS) if isinstance(doc, dict) else None
+        said = _said(doc)
         failed = isinstance(doc, dict) and (doc.get("success") is False or doc.get("error") not in (None, "", False))
+        if status == 401:
+            told = getattr(self._site, "unauthorized", None)
+            if told is not None:
+                told()  # a session the platform no longer takes: the next request signs in again
         if status >= 400 or failed:
             if self.config.busy is not None and said is not None and self.config.busy.search(str(said)):
                 # the plugin's words name the other challenge in HTML: flightdeck says it in its own
@@ -494,45 +657,131 @@ class InstanceClient:
                                    f"{self.config.plugin or 'the plugin'} would remove it to start this one")
             if refusal_is_none and status in (400, 404):
                 return None
-            words = self._site.short(str(said)) if said is not None else f"HTTP {status}"
-            raise InstanceRefused(f"the platform refused {what}: {words}", full=bool(said is not None and _FULL.search(str(said))))
+            words = self._site.short(said) if said is not None else f"HTTP {status}"
+            if said is not None and _HUMAN.search(said):
+                raise InstanceRefused(f"the platform refused {what}: {words}. It wants a person to pass a check (a CAPTCHA), which "
+                                      "flightdeck never does: start the instance on the site yourself, and flightdeck finds it there",
+                                      human=True)
+            raise InstanceRefused(f"the platform refused {what}: {words}", full=bool(said is not None and _FULL.search(said)))
         if not isinstance(doc, dict):
             raise InstanceError(f"{what}: the platform's answer is not JSON (HTTP {status}); is [instances] right for this site's plugin?",
                                 maybe_done=acted)
         return doc
 
-    def _names_address(self, doc: dict | None) -> bool:
-        return doc is not None and _dig(doc, self.config.answers.address) is not None
+    def _reading(self, doc: dict | None) -> str | None:
+        """What an answer says of the instance: "up" (it names an address, or its state is a
+        running one), "pending" (its state is one of pending_states), or None (no instance)."""
+        if doc is None:
+            return None
+        answers = self.config.answers
+        if answers.state:
+            word = _dig(doc, answers.state)
+            if isinstance(word, str) and word in answers.pending:
+                return "pending"
+            if answers.running:
+                return "up" if word in answers.running else None  # "running" with no address is one at no usable address
+        if _dig(doc, answers.address) is not None or _dig(doc, answers.endpoints) is not None:
+            return "up"
+        return None
 
     def _instance(self, challenge_id: str, doc: dict | None) -> Instance:
         assert doc is not None
         answers = self.config.answers
+        listed = _dig(doc, answers.endpoints)
+        if listed is not None:
+            return self._endpoints(challenge_id, doc, listed)
         raw = _dig(doc, answers.address)
+        if raw is None and answers.running:  # its state says it runs, and it names no address
+            raise InstanceError(f"the platform says the instance of {_show(challenge_id)} runs, but names no address for it", up=True)
         if not isinstance(raw, str) or not raw.strip():
             raise InstanceError(f"the platform's answer for {_show(challenge_id)} names no address; is [instances] right for this site's plugin?")
         scheme, host, port = _address(raw.strip())
         if host is None and answers.loose:
             scheme, host, port = _within(raw)
         if port is None:
-            given = _dig(doc, answers.port)
-            if isinstance(given, str) and given.isascii() and given.isdigit():
-                given = int(given)
+            given = _number(_dig(doc, answers.port))
             if isinstance(given, int) and not isinstance(given, bool):
                 port = given
         if scheme is None and answers.web is not None and _dig(doc, (answers.web[0],)) == answers.web[1]:
             scheme = "http"  # the plugin says it is a web server: its address is one whatever the challenge's category
         if host is None or (port is not None and not 1 <= port <= 65535) or (port is None and scheme is None):
             raise InstanceError(f"the platform's answer for {_show(challenge_id)} names no usable address ({self._site.short(raw)})", up=True)
-        return Instance(challenge_id, host, port, scheme, _ends(_dig(doc, answers.expires), self._clock()), self._site.short(raw))
+        return Instance(challenge_id, host, port, scheme, self._end(doc), self._site.short(raw))
+
+    def _end(self, doc: dict) -> float | None:
+        return _ends(_dig(doc, self.config.answers.expires), self._clock(), self.config.answers.expires_unit)
+
+    def _endpoints(self, challenge_id: str, doc: dict, listed: object) -> Instance:
+        """An instance from a list of endpoints, each {kind, host, port}: rCTF v2's form. Each
+        host and port is checked as a single address is; a kind flightdeck cannot hand a lane
+        (KINDS) is left out and named. Error, `up`, when none is left."""
+        if not isinstance(listed, list):
+            raise InstanceError(f"the platform's answer for {_show(challenge_id)} has endpoints that are not a list", up=True)
+        usable: list[tuple[str | None, str, int]] = []
+        left_out: list[str] = []
+        for item in listed[:MAX_ENDPOINTS * 4]:
+            if not isinstance(item, dict):
+                left_out.append("an endpoint that is not an object")
+                continue
+            kind, host, port = item.get("kind"), item.get("host"), _number(item.get("port"))
+            where = f"{host}:{port}" if isinstance(host, str) else "an endpoint with no host"
+            if not isinstance(host, str) or not _HOST.fullmatch(host) or isinstance(port, bool) or not isinstance(port, int) \
+                    or not 1 <= port <= 65535:
+                left_out.append(self._site.short(f"{where}, which is not a host and a port"))
+                continue
+            if kind is not None and not isinstance(kind, str):  # a list or an object is no kind, and no key of KINDS
+                left_out.append(self._site.short(f"{where} (a kind that is not a word)"))
+                continue
+            if kind is not None and kind not in KINDS:
+                left_out.append(self._site.short(f"{where} ({kind}: a kind flightdeck cannot hand a lane yet)"))
+                continue
+            entry = (KINDS[kind] if kind is not None else None, host.lower(), port)
+            if entry not in usable and len(usable) < MAX_ENDPOINTS:
+                usable.append(entry)
+        if not usable:
+            why = "; ".join(left_out) if left_out else "the list is empty"
+            raise InstanceError(f"the platform's answer for {_show(challenge_id)} names no address flightdeck can use ({why})", up=True)
+        (scheme, host, port), more = usable[0], tuple(usable[1:])
+        said = self._site.short(", ".join(f"{h}:{p}" for _, h, p in usable))
+        return Instance(challenge_id, host, port, scheme, self._end(doc), said, more, tuple(left_out))
 
 
-def _ends(left: object, now: float) -> float | None:
-    """When an instance ends, from what the plugin says of it: seconds left (a small number),
-    the moment itself (a large one, or an ISO 8601 / RFC 3339 timestamp; one with no zone is
-    read as UTC). None when it says nothing flightdeck can read."""
+def _number(value: object) -> object:
+    """A port the platform wrote as digits, as a number; anything else as it came. Five
+    digits at most: a longer string is no port, and int() refuses one past 4300 digits."""
+    if isinstance(value, str) and value.isascii() and value.isdigit() and len(value) <= 5:
+        return int(value)
+    return value
+
+
+def _said(doc: object) -> str | None:
+    """A refusal's words: the answer's own (error, errors, message or msg), and its data's
+    when they say more (rCTF: "Instancer precondition not met." and then why)."""
+    if not isinstance(doc, dict):
+        return None
+    top = _first(doc, ERROR_KEYS)
+    data = doc.get("data")
+    inner = _first(data, ERROR_KEYS) if isinstance(data, dict) else None
+    if top is not None and inner is not None and inner != top:
+        return f"{top}: {inner}"
+    return top if top is not None else inner
+
+
+def _first(scope: dict, keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        if scope.get(key) not in (None, ""):
+            return str(scope[key])
+    return None
+
+
+def _ends(left: object, now: float, unit: float = 1.0) -> float | None:
+    """When an instance ends, from what the plugin says of it: time left (a small number, of
+    `unit` seconds each), the moment itself (a large one, in the same units, or an ISO 8601 /
+    RFC 3339 timestamp; one with no zone is read as UTC). None when it says nothing
+    flightdeck can read."""
     if isinstance(left, str):
         text = left.strip()
-        if re.fullmatch(r"\d{1,12}(\.\d{1,9})?", text):
+        if re.fullmatch(r"\d{1,15}(\.\d{1,9})?", text):
             left = float(text)
         else:
             try:  # at most six digits of a second's fraction, which is all datetime keeps
@@ -544,7 +793,8 @@ def _ends(left: object, now: float) -> float | None:
             return moment.timestamp()
     if isinstance(left, bool) or not isinstance(left, (int, float)) or not math.isfinite(left) or left <= 0:
         return None
-    return now + float(left) if left < 10**9 else float(left)
+    seconds = float(left) * unit
+    return now + seconds if seconds < 10**9 else seconds
 
 
 def _address(text: str) -> tuple[str | None, str | None, int | None]:

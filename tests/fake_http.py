@@ -26,6 +26,20 @@ carrying the verdict whatever the HTTP status.
 - GET /api/v1/users/me: 200 goodUserData; data.solves lists {id, ...}, and data.teamToken is
   the team's own token, as rCTF returns it there.
 
+With `v2` it is rCTF v2 (github.com/otter-sec/rctf), as its API reference and response types
+have it (read on 2026-11-14; not run):
+
+- GET /api/v2/challs: the v1 list, and per challenge instancerLifetime (milliseconds, or null
+  with no instancer), instancerExtendable, instancerStoppable, instancerActions;
+- GET, PUT, PATCH, DELETE /api/v2/integrations/challs/ID/instance (status, start, extend,
+  stop): 200 goodInstanceStatus with data {status, timeLeftMilliseconds, endpoints}; status
+  one of stopped, starting, running, stopping, errored; endpoints null unless running, each
+  {kind, host, port, title, text} with kind tcp, tcp-ssl, http or https. A challenge with no
+  instancer is 404 badEndpoint. A start of a running one, and an extend of a stopped one,
+  are 400 badInstancerState with data.error. With `captcha`, a start and an extend with no
+  captchaCode are 403 badCaptcha. A task's `instancer` sets its endpoints and lifetime, and
+  how many looks at its status answer "starting" after a start (`slow`).
+
 FakeNoCTF answers in the shape of noCTF's player API, as its public source has it
 (github.com/noctf-project/noctf); its own docstring lists the routes.
 """
@@ -38,7 +52,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from fake_ctfd import STOP_WAIT, TLS, Reply, Request, _Server
 from serving import Serving
@@ -100,6 +114,18 @@ class RTask:
     flag: str = "t{right}"
     solved: bool = False
     solves: int = 0
+    instancer: Instancer | None = None  # rCTF v2: the challenge has an instance the platform starts for the team
+
+
+@dataclass
+class Instancer:
+    """An invented challenge's instancer on the fake rCTF v2. `endpoints`: (kind, host, port)."""
+
+    endpoints: list[tuple[str, str, int]] = field(default_factory=lambda: [("tcp", "pwn-1.chal.example.test", 31337)])
+    lifetime: int = 600_000  # milliseconds an instance lives
+    slow: int = 0  # looks at the status that answer "starting" after a start
+    status: str = "stopped"
+    left: int = 0  # looks still "starting"
 
 
 def sample() -> list[RTask]:
@@ -130,11 +156,14 @@ class FakeRCTF(FakeSite):
     """The fake rCTF. Tests script replies ahead of its own for one kind of request
     (script("challs", ...); the kinds are "login", "challs", "file", "submit" and "me")."""
 
-    def __init__(self, tasks: list[RTask] | tuple[RTask, ...] = (), *, team_token: str = TEAM_TOKEN, auth_token: str = AUTH_TOKEN) -> None:
+    def __init__(self, tasks: list[RTask] | tuple[RTask, ...] = (), *, team_token: str = TEAM_TOKEN, auth_token: str = AUTH_TOKEN,
+                 v2: bool = False, captcha: bool = False) -> None:
         super().__init__(self._route)
         self.tasks: dict[str, RTask] = {task.id: task for task in tasks}
         self.team_token = team_token
         self.auth_token = auth_token
+        self.v2 = v2
+        self.captcha = captcha
         self.started = True
         self.ended = False
         self.limited = 0  # this many submits are answered badRateLimit first
@@ -170,6 +199,8 @@ class FakeRCTF(FakeSite):
             queued = self._scripted.get(kind)
             if queued:
                 return queued.popleft()
+        if kind in ("challs2", "instance") and not self.v2:  # the older rCTF has no /api/v2
+            kind = ""
         if kind == "login":
             token = request.json.get("teamToken") if isinstance(request.json, dict) else None
             if token != self.team_token:
@@ -191,6 +222,10 @@ class FakeRCTF(FakeSite):
             if not self.started:
                 return answer(401, "badNotStarted", "The event has not started yet.")
             return answer(200, "goodChallenges", "The challenges.", [self._listed(task) for task in self.tasks.values()])
+        if kind == "challs2":
+            return answer(200, "goodChallengesV2", "The challenges.", [self._listed_v2(task) for task in self.tasks.values()])
+        if kind == "instance":
+            return self._instance(request)
         if kind == "me":
             solves = [{"id": t.id, "name": t.name, "category": t.category, "points": t.points, "solves": t.solves, "createdAt": 0}
                       for t in self.tasks.values() if t.solved]
@@ -203,6 +238,42 @@ class FakeRCTF(FakeSite):
                  for name, content in task.files.items()]
         return {"id": task.id, "name": task.name, "description": task.description, "category": task.category, "author": "nobody",
                 "files": files, "points": task.points, "solves": task.solves, "sortWeight": 0}
+
+    def _listed_v2(self, task: RTask) -> dict:
+        return {**self._listed(task), "tags": None,
+                "instancerLifetime": task.instancer.lifetime if task.instancer is not None else None,
+                "instancerExtendable": task.instancer is not None, "instancerStoppable": task.instancer is not None,
+                "instancerActions": [], "hasFlag": True}
+
+    def _instance(self, request: Request) -> Reply:
+        task = self.tasks.get(unquote(request.route.split("/")[5]))
+        if task is None or task.instancer is None:
+            return answer(404, "badEndpoint", "The request endpoint could not be found.")
+        box, method = task.instancer, request.method
+        if method in ("PUT", "PATCH"):
+            body = request.json
+            if not isinstance(body, dict):
+                return answer(400, "badJson", "The request body is not valid JSON.")
+            if self.captcha and not body.get("captchaCode"):
+                return answer(403, "badCaptcha", "The captcha verification failed.")
+        if method == "PUT":
+            if box.status in ("running", "starting"):
+                return answer(400, "badInstancerState", "Instancer precondition not met.", {"error": "Instance already running."})
+            box.status, box.left = ("starting", box.slow) if box.slow else ("running", 0)
+        elif method == "PATCH":
+            if box.status != "running":
+                return answer(400, "badInstancerState", "Instancer precondition not met.", {"error": "Instance is not running."})
+        elif method == "DELETE":
+            box.status = "stopped"
+        elif box.status == "starting":  # GET: a look at a starting instance
+            box.left -= 1
+            if box.left < 0:
+                box.status = "running"
+        running = box.status == "running"
+        endpoints = [{"kind": kind, "host": host, "port": port, "title": kind, "text": f"nc {host} {port}"}
+                     for kind, host, port in box.endpoints] if running else None
+        return answer(200, "goodInstanceStatus", "The instance status was retrieved.",
+                      {"status": box.status, "timeLeftMilliseconds": box.lifetime if running else None, "endpoints": endpoints})
 
     def _submit(self, request: Request) -> Reply:
         task = self.tasks.get(request.route.split("/")[4])
@@ -237,6 +308,10 @@ def kind_of(request: Request) -> str:
     if (method, route) == ("GET", "/uploads"):
         return "file"
     parts = route.split("/")
+    if (method, route) == ("GET", "/api/v2/challs"):
+        return "challs2"
+    if len(parts) == 7 and parts[:5] == ["", "api", "v2", "integrations", "challs"] and parts[6] == "instance":
+        return "instance"
     if method == "POST" and len(parts) == 6 and parts[:4] == ["", "api", "v1", "challs"] and parts[5] == "submit":
         return "submit"
     return ""

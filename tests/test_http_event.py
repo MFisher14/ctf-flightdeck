@@ -83,6 +83,18 @@ def test_an_http_profile_needs_no_leave_from_the_players_config_and_its_plan_is_
         "http      solved    GET /api/v1/users/me, with the session token (Authorization: Bearer)",
     ]
     assert f"pull      auto     {HTTP_BOARD['auto']}" in lines
+    boxed, chosen = load_profile(event_file(tmp_path, http='preset = "rctf2"', extra='\n[instances]\nplugin = "rctf"\n'))
+    route = "/api/v2/integrations/challs/{id}/instance, with the session token (Authorization: Bearer): only for an on-demand challenge"
+    assert [line for line in describe(boxed, chosen, environ={}) if line.startswith("http      instance")] == [
+        f"http      instance  {action} {method} {route} of the board"
+        for action, method in (("status", "GET"), ("start", "PUT"), ("renew", "PATCH"), ("stop", "DELETE"))]
+    own = '\n[instances]\napi = true\nstart = ["POST", "/x/start"]\nstop = ["POST", "/x/stop"]\nrenew = ["POST", "/x/renew"]\n' \
+          'status = ["GET", "/x?c={id}"]\nbody_key = "c"\n'
+    routed, chosen = load_profile(event_file(tmp_path, extra=own))
+    shown = [line for line in describe(routed, chosen, environ={}) if line.startswith("http      instance")]
+    assert [line.split(",")[0] for line in shown] == [  # the paths InstanceClient asks under /api/v1, as it asks them
+        "http      instance  status GET /api/v1/x?c={id}", "http      instance  start POST /api/v1/x/start",
+        "http      instance  renew POST /api/v1/x/renew", "http      instance  stop POST /api/v1/x/stop"]
     manual, chosen = load_profile(event_file(tmp_path, pull="manual"))
     assert f"pull      manual   {HTTP_BOARD['manual']} (the rules allow auto)" in describe(manual, chosen, environ={})
     assert "it plays the board `flightdeck http pull` wrote" in HTTP_BOARD["manual"]
@@ -186,7 +198,7 @@ def test_what_an_http_profile_must_have_and_what_is_only_a_warning(tmp_path):
     with pytest.raises(ProfileError) as missing:
         load_profile(event_file(tmp_path, http=None))
     assert str(missing.value) == (f'{tmp_path / "event.toml"}: the [http] table is missing: platform = "http" asks the platform by the '
-                                  'routes it writes (preset = "rctf" or "noctf" or "gzctf", or the platform\'s own: `flightdeck http example` prints one to edit)')
+                                  'routes it writes (preset = "rctf" or "rctf2" or "noctf" or "gzctf", or the platform\'s own: `flightdeck http example` prints one to edit)')
     with pytest.raises(ProfileError) as bad:
         load_profile(event_file(tmp_path, http='preset = "rctf"\n[http.list]\nrequest = ["GET", "https://evil.example.test/x"]'))
     assert str(bad.value).startswith(f'{tmp_path / "event.toml"}: http.list.request: the path must start with / and name a route under event.url')
@@ -502,6 +514,45 @@ def test_a_flag_rctf_rate_limits_is_sent_again_after_the_wait_its_429_names(tmp_
         play(run, body)
         assert fake.submits() == [("warm-7f3a", "t{warm}")] * 3 and waits == [5.0, 5.0]  # timeLeft in milliseconds, and a second
     assert http_warnings(run) == []
+
+
+def test_a_run_on_rctf_v2_starts_a_challenges_instance_with_the_sign_ins_session_and_stops_it_on_the_solve(tmp_path, token):
+    """The rctf2 preset marks the challenge with an instancer on-demand; [instances] plugin =
+    "rctf" starts it before its lane works it, by its string id and with the same session as
+    the pull's, hands the lane its address, and stops it once it is solved."""
+    from fake_http import Instancer
+
+    tasks = [RTask("box-7f3a", "Boxed", category="pwn", flag="t{boxed}", instancer=Instancer(slow=1)),
+             RTask("plain-19c2", "Plain", flag="t{plain}")]
+    model = Model({"Boxed": [submit("t{boxed}")], "Plain": [submit("t{plain}")]})
+    with FakeRCTF(tasks, v2=True) as fake, FakeModelServer(responder=model) as server:
+        event = event_file(tmp_path, fake.url, http='preset = "rctf2"', board=str(tmp_path / "board"), pull="auto", submit="auto",
+                           extra='\n[instances]\nplugin = "rctf"\n')
+        run = prepare_run(RunOptions(event=event, config=config(tmp_path, server.base_url, max_lanes=2)))
+        run.instances.every = 0.05
+        assert json.loads((tmp_path / "board" / "boxed" / "challenge.json").read_text())["instance"] == "on-demand"
+        assert any(note.startswith("instances: flightdeck starts a challenge's instance on the platform before a lane works it (1 on")
+                   for note in run.notes())
+
+        async def body(run):
+            await wait_for(lambda: run.deck.challenges["boxed"].status is ChallengeStatus.SOLVED, "the boxed challenge solved")
+            # the run's own word that it is stopped (the stop's answer read), not only the fake's: the run ends after this
+            await wait_for(lambda: fake.tasks["box-7f3a"].instancer.status == "stopped" and "boxed" not in run.instances.running,
+                           "its instance stopped after the solve")
+
+        play(run, body)
+        asked = [(r.method, r.path) for r in fake.of("instance")]
+        assert {path for _, path in asked} == {"/api/v2/integrations/challs/box-7f3a/instance"}  # only the on-demand one, by its own id
+        assert [m for m, _ in asked if m != "GET"] == ["PUT", "DELETE"]  # one start, one stop
+        # the first pull's caller signed in once; the run's own signs in once, and its instancer and its flags share that session
+        assert fake.kinds().count("login") == 2 and fake.kinds().index("instance") > fake.kinds().index("login", 1)
+        assert {r.headers["authorization"] for r in fake.of("instance") + fake.of("submit")} == {f"Bearer {AUTH_TOKEN}"}
+    briefs = {r["json"]["messages"][1]["content"].split("Challenge: ", 1)[1].split(" (", 1)[0]: r["json"]["messages"][1]["content"]
+              for r in server.chats()}
+    assert "\nLive instance: tcp://pwn-1.chal.example.test:31337" in briefs["Boxed"]
+    assert "\nLive instance: none\n" in briefs["Plain"]
+    everything = run.log.path.read_text() + "\n".join(run.notes())
+    assert TEAM_TOKEN not in everything and AUTH_TOKEN not in everything
 
 
 def test_a_kind_the_table_has_no_rule_for_gives_the_flag_back_to_the_player_and_is_never_wrong(tmp_path, token):

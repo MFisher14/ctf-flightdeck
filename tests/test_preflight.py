@@ -777,7 +777,7 @@ def test_an_instances_table_on_a_plugins_platform_is_said_to_do_nothing_without_
     event = {"name": '"Quals"', "platform": '"harbourctf"', "url": '"https://ctf.example.org"', "token_env": '"HARBOUR_TOKEN"'}
     loaded, chosen = load_profile(write(tmp_path, toml(event, RULES_OPEN, extra=INSTANCES)))
     assert loaded.plugin and loaded.instances is not None
-    why = "the event is on a plugin's platform, and flightdeck starts instances only on CTFd"
+    why = "the event is on a plugin's platform, and flightdeck starts instances only on CTFd and the http platform"
     assert instances_off(loaded, chosen) == why
     problems = check(loaded, chosen, max_lanes=4, environ={})
     assert [p.message for p in problems if not p.refuse and "[instances]" in p.message] == [
@@ -787,7 +787,24 @@ def test_an_instances_table_on_a_plugins_platform_is_said_to_do_nothing_without_
     assert "harbourctf" not in "\n".join([p.message for p in problems] + describe(loaded, chosen, environ={}))
     # a platform flightdeck has built in is its own word, and is still named
     by_hand, policies = load_profile(write(tmp_path, toml({"name": '"Practice"', "platform": '"manual"'}, RULES_OPEN, extra=INSTANCES)))
-    assert instances_off(by_hand, policies) == 'the platform is "manual", and only CTFd has a container plugin flightdeck knows'
+    assert instances_off(by_hand, policies) == 'the platform is "manual", and flightdeck starts instances only on CTFd and the http platform'
+
+
+def test_an_instancer_of_another_platform_is_said_to_do_nothing_and_rctfs_runs_on_the_http_platform(tmp_path):
+    """A named shape is for one platform: a CTFd plugin's routes are not rCTF's, nor the other way."""
+    ctfd = {"name": '"Quals"', "platform": '"ctfd"', "url": '"https://ctf.example.org"', "token_env": '"CTFD_TOKEN"'}
+    loaded, chosen = load_profile(write(tmp_path, toml(ctfd, RULES_OPEN, extra='\n[instances]\nplugin = "rctf"\n')))
+    assert instances_off(loaded, chosen) == 'instances.plugin rctf is for platform "http", and this event\'s is "ctfd"'
+    http = {"name": '"Quals"', "platform": '"http"', "url": '"https://ctf.example.org"', "token_env": '"RCTF_TOKEN"'}
+    owl, chosen = load_profile(write(tmp_path, toml(http, RULES_OPEN, extra='\n[http]\npreset = "rctf2"\n\n[instances]\nplugin = "ctfd_owl"\n')))
+    assert instances_off(owl, chosen) == ('instances.plugin ctfd_owl is for platform "ctfd", and this event\'s is "http" '
+                                          '(rCTF v2\'s instancer: plugin = "rctf")')
+    rctf, chosen = load_profile(write(tmp_path, toml(http, RULES_OPEN, extra='\n[http]\npreset = "rctf2"\n\n[instances]\nplugin = "rctf"\n')))
+    assert instances_off(rctf, chosen) == ""
+    own = '\n[http]\npreset = "rctf2"\n\n[instances]\n' + "".join(
+        f'{action} = ["GET", "/x/{{id}}"]\n' for action in ("start", "stop", "renew", "status"))
+    mine, chosen = load_profile(write(tmp_path, toml(http, RULES_OPEN, extra=own)))
+    assert mine.instances.platform is None and instances_off(mine, chosen) == ""  # routes of the profile's own: either platform
 
 
 def test_a_board_under_a_home_that_does_not_exist_is_an_error(tmp_path):

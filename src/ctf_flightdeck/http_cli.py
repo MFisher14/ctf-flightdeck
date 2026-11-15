@@ -1,6 +1,6 @@
 """`flightdeck http`: an event on a platform with a JSON API, played from a table of routes.
 
-    flightdeck http example [--preset NAME] [--routes]  # print an event profile to edit: a preset (rctf, noctf, gzctf), or its routes written out
+    flightdeck http example [--preset NAME] [--routes]  # print an event profile to edit: a preset (rctf, rctf2, noctf, gzctf), or its routes written out
     flightdeck http check EVENT.toml           # sign in, list, read the solved list; show what each path matched; submit nothing
     flightdeck http pull EVENT.toml [FOLDER]   # pull the event's board and read the solved list; submit nothing
 

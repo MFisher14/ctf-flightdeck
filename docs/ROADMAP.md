@@ -65,6 +65,14 @@ Proposals built and waiting for a release, in the order of their numbers in
   challenge's container reads as the cap; each of the router's five address forms is read,
   and a TLS endpoint reaches a lane as `tls://host:port` ([BOARDS.md](BOARDS.md#which-plugin)).
   Tested against a fake of the plugin's source only.
+- **Instances beyond CTFd, rCTF v2's first** (P81). `[instances] plugin = "rctf"` with
+  `preset = "rctf2"`: the instancer is asked by the challenge's string id with the `[http]`
+  table's own sign-in; an instance may have several addresses, and one still starting is
+  waited for; a start behind a CAPTCHA is left to the player
+  ([BOARDS.md](BOARDS.md#instances-on-demand)). Built from rCTF v2's API reference and tested
+  against a fake of it only. A `tcp-ssl` address reaches a lane as `tls://host:port`, the form
+  P80 made for ctfd-whale. Not built: GZCTF's instances, and klodd's (it wants a CAPTCHA for
+  every start).
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

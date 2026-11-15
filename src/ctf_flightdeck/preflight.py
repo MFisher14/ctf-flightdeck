@@ -47,7 +47,7 @@ whatever the pull policy), so only its submit policy uses the platform: auto or 
 answers to the Game Master and read its solved list.
 
 An "http" profile carries an [http] table (platform/http.py): the routes of the platform's
-API, or a preset that ships with flightdeck (rctf, noctf). The table is data, not code, so the
+API, or a preset that ships with flightdeck (rctf, rctf2, noctf, gzctf). The table is data, not code, so the
 profile may carry it, a teammate's too: every route is a path under event.url, the token goes
 nowhere else, and describe() prints each request and where the token goes before anything
 runs. The token variable must be named for the platform (HTTP_TOKEN, HTTP_TOKEN_..., or the
@@ -117,6 +117,7 @@ STRICTNESS = (Policy.AUTO, Policy.CONFIRM, Policy.MANUAL, Policy.OFF)
 
 STAGES = ("pull", "l1", "agents", "submit", "instance")
 PLATFORMS = ("ctfd", "manual", "gamemaster", "http")
+INSTANCE_PLATFORMS = ("ctfd", "http")  # where flightdeck starts a challenge's instance ([instances])
 LIVE_TARGETS = ("allowed", "confirm", "off")
 RUNTIMES = ("docker", "host")
 MAX_PROFILE_BYTES = 1_000_000  # an event profile bigger than this is refused
@@ -971,7 +972,7 @@ def describe(
         lines.append(f"token     ${profile.token_env} ({state}), given only to the {plugin} plugin, for {_shown_url(profile)}")
     if profile.platform == "http" and profile.http is not None:
         # every request the table can make, and where the token goes: read before anything runs, as `plugin add` shows a plugin
-        lines += [f"http      {line}" for line in http_platform.plan(profile.http)]
+        lines += [f"http      {line}" for line in http_platform.plan(profile.http, profile.instances)]
     if profile.board is not None:
         lines.append(f"board     {_show(profile.board)}")
     if profile.start is not None or profile.end is not None:
@@ -1022,15 +1023,20 @@ def label_line(label: str) -> str:
 
 def instances_off(profile: EventProfile, policies: Policies) -> str:
     """Why flightdeck starts no instance on the platform under this profile and these policies,
-    or "" when it does: it needs the [instances] table, CTFd, the rules' leave to use the
-    platform's API, and an instance policy of auto (starting one is reaching it). A plugin's
-    platform is not named: event.platform is the profile's word, and nothing shows it."""
+    or "" when it does: it needs the [instances] table, CTFd or the http platform (and a named
+    plugin of that platform's), the rules' leave to use the platform's API, and an instance
+    policy of auto (starting one is reaching it). A plugin's platform is not named:
+    event.platform is the profile's word, and nothing shows it."""
     if profile.instances is None:
         return "the profile has no [instances] table"
     if profile.plugin:
-        return "the event is on a plugin's platform, and flightdeck starts instances only on CTFd"
-    if profile.platform != "ctfd":
-        return f'the platform is "{profile.platform}", and only CTFd has a container plugin flightdeck knows'
+        return "the event is on a plugin's platform, and flightdeck starts instances only on CTFd and the http platform"
+    if profile.platform not in INSTANCE_PLATFORMS:
+        return f'the platform is "{profile.platform}", and flightdeck starts instances only on CTFd and the http platform'
+    shape = profile.instances.platform
+    if shape is not None and shape != profile.platform:
+        return (f'instances.plugin {profile.instances.plugin} is for platform "{shape}", and this event\'s is '
+                f'"{profile.platform}"' + (' (rCTF v2\'s instancer: plugin = "rctf")' if profile.platform == "http" else ""))
     if not profile.platform_automation:
         return "the rules do not allow flightdeck to use the platform's API (rules.platform_automation is false)"
     if policies.instance is not Policy.AUTO:
@@ -1076,8 +1082,8 @@ live_targets = "confirm"            # "allowed", "confirm" or "off": may lanes t
 # submit = "confirm"                # submit flags to the platform
 # instance = "confirm"              # let lanes reach challenge instances
 
-# Optional, CTFd only: challenges whose instance the platform starts when asked (a container
-# per team, a few at a time). With this table and the instance policy "auto", flightdeck starts
+# Optional, on CTFd (or on rCTF v2, platform "http", with plugin = "rctf"): challenges whose
+# instance the platform starts when asked (a container per team, a few at a time). With this table and the instance policy "auto", flightdeck starts
 # one before a lane works its challenge, keeps at most max_running going, and stops it when the
 # challenge is solved or nobody works it. See BOARDS.md for a plugin that is not listed.
 # [instances]

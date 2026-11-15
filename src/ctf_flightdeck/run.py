@@ -716,7 +716,11 @@ class Run:
         if new:
             if self.plug is not None:  # their refs: the pull that wrote the folders wrote them into the board's plugin.json
                 self.plug.reload()
+                if self.instances is not None:  # the http platform's instancer: asked by the same refs
+                    self.instances.client.ids.update(self.plug.refs)
             self._add(new)
+            if self.instances is not None:  # an on-demand one waits for its instance, as at the start
+                self.instances.hold([b.challenge for b in new])
             self.deck.release([b.challenge for b in new], self.entries(new, skip=self._held()), "Added")
         return [b.challenge.id for b in new]
 
@@ -1314,7 +1318,7 @@ def prepare_run(options: RunOptions) -> Run:
             start=profile.start if profile is not None else None, end=profile.end if profile is not None else None,
             second_after=config.autopilot.second_after, third_after=config.autopilot.third_after,
         )
-    instances = _instances(profile, plan.policies, board, link, token, deck, urls, driver, plan.notes)
+    instances = _instances(profile, plan.policies, board, link, token, deck, urls, driver, plan.notes, plug)
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         shared=shared,
@@ -1336,14 +1340,22 @@ def prepare_run(options: RunOptions) -> Run:
 
 
 def _instances(profile: EventProfile | None, policies: Policies, board: Board, link: CTFdLink | None, token: str | None,
-               deck: Deck, urls: dict[str, tuple[str, ...]], driver: object, notes: list[str]) -> InstanceRunner | None:
+               deck: Deck, urls: dict[str, tuple[str, ...]], driver: object, notes: list[str],
+               plug: PluginLink | None = None) -> InstanceRunner | None:
     """The run's instance scheduler, when the event's [instances] table and its policies let
     flightdeck start instances on the platform; else None, with a note saying why when the
-    board has challenges that need one. Marks the board's on-demand challenges either way."""
+    board has challenges that need one. Marks the board's on-demand challenges either way.
+    On CTFd the instancer is asked with CTFd's token and numbers (`link`); on the http platform
+    with the [http] table's own auth and the board's refs (`plug`, whose caller is the table's)."""
     challenges = [b.challenge for b in board.challenges]
     marked = on_demand(challenges, profile.instances.types if profile is not None and profile.instances is not None else ())
     why = instances_off(profile, policies) if profile is not None else "there is no event profile"
-    if why or link is None or token is None:
+    wire = None
+    if not why and profile is not None and profile.platform == http_platform.NAME:
+        caller = plug.caller if plug is not None else None
+        if isinstance(caller, http_platform.HttpCaller):
+            wire = caller.instance_wire()
+    if why or ((link is None or token is None) and wire is None):
         if marked:
             notes.append(
                 f"instances: {len(marked)} challenge{'s' if len(marked) != 1 else ''} on this board need an instance the platform "
@@ -1352,7 +1364,12 @@ def _instances(profile: EventProfile | None, policies: Policies, board: Board, l
             )
         return None
     assert profile is not None and profile.instances is not None and profile.url is not None
-    client = InstanceClient(profile.url, token, link.ids, profile.instances)
+    if wire is not None:
+        assert plug is not None
+        client = InstanceClient(None, None, plug.refs, profile.instances, wire=wire)
+    else:
+        assert link is not None and token is not None
+        client = InstanceClient(profile.url, token, link.ids, profile.instances)
     notes.append(
         f"instances: flightdeck starts a challenge's instance on the platform before a lane works it"
         f" ({len(marked)} on the board now), keeps at most {profile.instances.max_running} running, and stops one when its "

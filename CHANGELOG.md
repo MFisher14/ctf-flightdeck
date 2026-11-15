@@ -92,6 +92,24 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   TLS endpoint reaches the lane as `tls://host:port`, with a brief that says to speak TLS to
   it. Built from the plugin's public source and tested against a fake of it only
   ([BOARDS.md](docs/BOARDS.md#which-plugin)).
+- Instances on rCTF v2. With `preset = "rctf2"` under `[http]` and `plugin = "rctf"` under
+  `[instances]`, flightdeck starts a challenge's instance on rCTF v2 before a lane works it,
+  as it does on CTFd: it signs in with your team token as the pull does, renews the instance
+  while it is worked and stops it when the challenge is solved. A challenge with an instance
+  is marked on the board when it is pulled. An instance that is still starting is asked about
+  every 10 seconds and gets no second start. A start the site guards with a CAPTCHA is said
+  once and never sent again; start that instance on the site, and flightdeck uses it. Built
+  from rCTF v2's API reference; it has not met a real event yet. The older rCTF keeps
+  `preset = "rctf"`, and its instancer (klodd) wants a CAPTCHA, so start those by hand.
+- An instance with several addresses (a web front and a TCP service, say) gives its lanes all
+  of them. rCTF's `tcp-ssl` address, a TLS service, reaches the lane as `tls://host:port`, as
+  ctfd-whale's do. One flightdeck cannot hand a lane yet is named in the line that says the
+  instance started.
+- For an instancer flightdeck has no name for, `[instances]` reads more answers:
+  `endpoints_key` (a list of addresses), `state_key` with `running_states` and
+  `pending_states`, and `expires_unit = "ms"`. On the http platform the `[http]` list may mark
+  a challenge with an instance by an `instance` path, and a plugin's pull may say
+  `"instance": "on-demand"`.
 
 ## 0.5.0 (2026-11-14)
 

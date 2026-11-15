@@ -80,7 +80,7 @@ def test_a_plugin_with_one_container_per_account_keeps_one_running():
 
 @pytest.mark.parametrize(("table", "message"), [
     ({}, "needs plugin .* or all four routes; missing: start, stop, renew, status"),
-    ({"plugin": "whale"}, "is not a plugin flightdeck knows \\(known: docker_per_team, ctfd_owl, chall_manager, ctfd_whale\\)"),
+    ({"plugin": "whale"}, "is not a plugin flightdeck knows \\(known: docker_per_team, ctfd_owl, chall_manager, ctfd_whale, rctf\\)"),
     ({"plugin": ["ctfd_owl"]}, "is not a plugin flightdeck knows .*; give the four routes instead"),
     ({"plugin": "ctfd_docker"}, "instances.plugin ctfd_docker is no longer a plugin flightdeck knows: its routes were a guess .* "
                                 "CTFd-Docker-Plugin and its forks are docker_per_team; for any other plugin give the four routes"),
@@ -165,6 +165,7 @@ def test_a_challenge_with_no_container_is_refused_and_not_called_full():
     (Reply(200, {"hostname": "bad host name", "port": 1}), "names no usable address"),
     (Reply(200, {"hostname": "h.example.test", "port": 70000}), "names no usable address"),
     (Reply(200, {"hostname": "h.example.test"}), "names no usable address"),
+    (Reply(200, {"hostname": "h.example.test", "port": "1" * 5000}), "names no usable address"),  # past int()'s digit limit
     (Reply(200, "<html>log in</html>"), "is not JSON"),
     (Reply(500, {"message": "boom"}), "the platform refused instance start for challenge 1: boom"),
     (Reply(200, {"success": False, "error": "disabled"}), "refused instance start for challenge 1: disabled"),

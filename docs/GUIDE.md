@@ -234,8 +234,8 @@ solvers run in containers too. `flightdeck image build` builds the image once, a
 `flightdeck image dockerfile` prints what it builds ([what a lane's shell
 has](#what-a-lanes-shell-has) lists it). A lane of flightdeck's own loop gets no
 network unless its challenge has a live instance it may reach: a web origin, or a TCP service like
-`nc host port` (`tcp://host:port` in the challenge's `urls`), or a TLS endpoint a CTFd instance
-plugin started for it (`tls://host:port`). Under an event whose instance policy
+`nc host port` (`tcp://host:port` in the challenge's `urls`), or a TLS endpoint an instance
+plugin started for it (`tls://host:port`: ctfd-whale's, or rCTF's `tcp-ssl`). Under an event whose instance policy
 is `confirm`, the lane asks you first.
 
 The network it then gets reaches **that instance and nothing else**: each host and port its
@@ -1275,6 +1275,12 @@ flightdeck http example --preset gzctf > ~/ctf/quals/event.toml   # or with the 
 flightdeck http check ~/ctf/quals/event.toml       # tries it: signs in, lists, reads the solved list; submits nothing
 flightdeck play --event ~/ctf/quals/event.toml
 ```
+
+On rCTF v2, `preset = "rctf2"` also marks the challenges that have an instance the site starts
+for your team, and an `[instances]` table with `plugin = "rctf"` lets flightdeck start each one
+before a lane works it, as on CTFd ([Instances on demand](BOARDS.md#instances-on-demand)). If
+the site asks for a CAPTCHA to start one, flightdeck says so and leaves it to you: start it on
+the site, and the lane gets its address once it is up.
 
 Or through a **plugin**: a small adapter of your own, which flightdeck runs to pull the
 board, submit the flags you approve and read the solved list:

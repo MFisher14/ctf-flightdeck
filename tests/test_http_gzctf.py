@@ -323,7 +323,7 @@ def test_the_gzctf_example_profile_loads_and_passes_the_check(tmp_path, routes):
 
 def test_an_example_of_a_preset_flightdeck_does_not_have_is_refused():
     result = runner.invoke(http_cli.app, ["example", "--preset", "ctfx"])
-    assert result.exit_code == 2 and "no preset of that name (known: rctf, noctf, gzctf)" in result.output
+    assert result.exit_code == 2 and "no preset of that name (known: rctf, rctf2, noctf, gzctf)" in result.output
 
 
 @pytest.mark.parametrize("name, fine", [("GZCTF_TOKEN", True), ("GZCTF_TOKEN_FINALS", True), ("HTTP_TOKEN", True), ("RCTF_TOKEN", False),
