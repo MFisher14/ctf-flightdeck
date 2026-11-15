@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: eighteen proposals, P69 to P86 (2026-11-14)
+## Built, not released: nineteen proposals, P69 to P86 and P91 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P86); the lines for players are under Unreleased in
+[DECISIONS.md](DECISIONS.md) (P69 to P86, and P91); the lines for players are under Unreleased in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -95,6 +95,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   (which ended a claude waiting for a message), counts the output tokens its events miss, and
   charges a call an interrupt cut short. Still open: claude's tool calls, a whole `practice
   --agent claude` run, and all of codex.
+- **The other waits for the player give their slot up too** (P91, after P83). A lane waiting
+  for a flag answer or more budget gives its slot to the queue once it has waited a minute; at
+  most `max_waiting` lanes (`[lanes]`, 4) are without a slot at once, and a lane whose sessions
+  run on keeps its own.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
