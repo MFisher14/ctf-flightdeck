@@ -1036,7 +1036,7 @@ def instances_off(profile: EventProfile, policies: Policies) -> str:
     shape = profile.instances.platform
     if shape is not None and shape != profile.platform:
         return (f'instances.plugin {profile.instances.plugin} is for platform "{shape}", and this event\'s is '
-                f'"{profile.platform}"' + (' (rCTF v2\'s instancer: plugin = "rctf")' if profile.platform == "http" else ""))
+                f'"{profile.platform}"' + (' (rCTF v2\'s instancer: plugin = "rctf"; GZCTF\'s: plugin = "gzctf")' if profile.platform == "http" else ""))
     if not profile.platform_automation:
         return "the rules do not allow flightdeck to use the platform's API (rules.platform_automation is false)"
     if policies.instance is not Policy.AUTO:

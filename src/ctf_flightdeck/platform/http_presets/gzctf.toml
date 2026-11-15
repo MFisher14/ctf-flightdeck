@@ -27,12 +27,17 @@ points = "$.score"
 solves = "$.solved"
 
 # The text, the attachment and the counted tries are only in each challenge's own answer.
-# limit is 0 when the tries are not counted, as max_attempts is.
+# limit is 0 when the tries are not counted, as max_attempts is. A challenge whose type is a
+# container one is marked on-demand on the board: the site starts its container for the team
+# when asked, and with [instances] plugin = "gzctf" in the profile flightdeck asks
+# (docs/BOARDS.md, Instances on demand).
 [detail]
 request = ["GET", "/api/game/{game}/challenges/{ref}"]
 description = "$.content"
 file_urls = "$.context.url"
 max_attempts = "$.limit"
+instance = "$.type"
+instance_values = ["StaticContainer", "DynamicContainer"]
 
 # GZCTF judges a flag after it takes it: the submit answers with the submission's number, and
 # its status says FlagSubmitted until the flag is judged. A flag sent again for a challenge the

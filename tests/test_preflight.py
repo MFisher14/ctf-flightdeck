@@ -798,7 +798,7 @@ def test_an_instancer_of_another_platform_is_said_to_do_nothing_and_rctfs_runs_o
     http = {"name": '"Quals"', "platform": '"http"', "url": '"https://ctf.example.org"', "token_env": '"RCTF_TOKEN"'}
     owl, chosen = load_profile(write(tmp_path, toml(http, RULES_OPEN, extra='\n[http]\npreset = "rctf2"\n\n[instances]\nplugin = "ctfd_owl"\n')))
     assert instances_off(owl, chosen) == ('instances.plugin ctfd_owl is for platform "ctfd", and this event\'s is "http" '
-                                          '(rCTF v2\'s instancer: plugin = "rctf")')
+                                          '(rCTF v2\'s instancer: plugin = "rctf"; GZCTF\'s: plugin = "gzctf")')
     rctf, chosen = load_profile(write(tmp_path, toml(http, RULES_OPEN, extra='\n[http]\npreset = "rctf2"\n\n[instances]\nplugin = "rctf"\n')))
     assert instances_off(rctf, chosen) == ""
     own = '\n[http]\npreset = "rctf2"\n\n[instances]\n' + "".join(

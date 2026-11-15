@@ -25,12 +25,28 @@ develop): ASP.NET's camelCase JSON, enums as their names, an error as RequestRes
   already solved is Accepted, as GZCTF judges it);
 - GET /api/config: ClientConfig, {title, slogan, apiPublicKey, ...}; apiPublicKey is null
   unless `encrypted`.
+
+Containers (GameController's CreateContainer, ExtendContainerLifetime and DeleteContainer), for
+a task whose `container` is a container type:
+
+- POST /api/game/GAME/container/ID: ContainerInfoModel {status, startedAt, expectStopAt,
+  entry}, times as Unix milliseconds; 400 when one runs ("The container of this challenge
+  already exists"), at the team's cap ("The number of team containers cannot exceed N"), or
+  for a challenge of no container type; entry is "host:port", or the container's Guid when
+  `proxy` (the site's PlatformProxy port mapping); `pending_starts` starts answer Pending;
+- POST /api/game/GAME/container/ID/extend: ContainerInfoModel, the end `extension` later;
+  400 with none ("... hasn't been created") or before the last `window` seconds ("Container's
+  lifetime cannot be extended yet");
+- DELETE /api/game/GAME/container/ID: 200 with no body at all, as ASP.NET's Ok(); 400 with none;
+- the detail's context.instanceEntry and closeTime are the container's entry and end, null
+  with none; its type is the task's container type, else StaticAttachment.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -59,6 +75,8 @@ class GTask:
     solved: bool = False
     solves: int = 0
     limit: int = 0
+    container: str | None = None  # "StaticContainer" or "DynamicContainer": the site starts one for the team when asked
+    entry: str = ""  # the container's address as GZCTF's Entry gives it ("host:port"); "" for an invented one
 
 
 def sample() -> list[GTask]:
@@ -93,6 +111,13 @@ class FakeGZCTF(FakeSite):
         self.limited = 0  # this many submits are answered 429 first
         self.pending = 1  # looks at a submission answered FlagSubmitted before its verdict
         self.submissions: dict[int, tuple[int, str, int]] = {}  # number -> (challenge, flag, looks so far)
+        self.containers: dict[int, dict] = {}  # challenge -> its ContainerInfoModel
+        self.container_limit = 3  # the game's ContainerCountLimit
+        self.proxy = False  # the site serves containers through its own WebSocket proxy: the entry is a Guid
+        self.pending_starts = 0  # this many starts answer status Pending (the detail names the entry all the same)
+        self.lifetime = 7200.0  # seconds a container lives (DefaultLifetime: 120 minutes)
+        self.extension = 7200.0  # seconds an extend adds (ExtensionDuration)
+        self.window = 600.0  # an extend is taken only this many seconds before the end (RenewalWindow: 10 minutes)
         self._scripted: dict[str, deque[Reply]] = {}
 
     def script(self, kind: str, *replies: Reply) -> None:
@@ -136,6 +161,8 @@ class FakeGZCTF(FakeSite):
             return problem(404, "Challenge not found")
         if kind == "challenge":
             return body(self._detail(task))
+        if kind.startswith("container-"):
+            return self._container(task, kind)
         if kind == "submit":
             return self._submit(task, request)
         return self._status(task, int(parts[7]))
@@ -155,9 +182,40 @@ class FakeGZCTF(FakeSite):
         for name, content in task.files.items():
             url = content if isinstance(content, str) else asset_url(content, name)
         attempts = sum(1 for challenge, _, _ in self.submissions.values() if challenge == task.id)
+        running = self.containers.get(task.id)
         return {"id": task.id, "title": task.title, "content": task.content, "category": task.category, "hints": [], "score": task.score,
-                "type": "StaticAttachment", "context": {"closeTime": None, "instanceEntry": None, "url": url, "fileSize": None},
+                "type": task.container or "StaticAttachment",
+                "context": {"closeTime": running["expectStopAt"] if running else None,
+                            "instanceEntry": running["entry"] if running else None, "url": url, "fileSize": None},
                 "limit": task.limit, "attempts": attempts, "deadline": None}
+
+    def _container(self, task: GTask, kind: str) -> Reply:
+        if task.container is None:
+            return problem(400, "This challenge cannot create a container")
+        running = self.containers.get(task.id)
+        now = time.time() * 1000
+        if kind == "container-start":
+            if running is not None:
+                return problem(400, "The container of this challenge already exists")
+            if len(self.containers) >= self.container_limit:
+                return problem(400, f"The number of team containers cannot exceed {self.container_limit}")
+            entry = GUID if self.proxy else (task.entry or f"10.13.{task.id}.7:3{task.id:04d}")
+            status = "Running"
+            if self.pending_starts > 0:
+                self.pending_starts -= 1
+                status = "Pending"
+            self.containers[task.id] = {"status": status, "startedAt": int(now), "expectStopAt": int(now + self.lifetime * 1000),
+                                        "entry": entry}
+            return body(self.containers[task.id])
+        if running is None:
+            return problem(400, "The container of this challenge hasn't been created")
+        if kind == "container-extend":
+            if running["expectStopAt"] - now > self.window * 1000:
+                return problem(400, "Container's lifetime cannot be extended yet")
+            running["expectStopAt"] = int(running["expectStopAt"] + self.extension * 1000)
+            return body(running)
+        del self.containers[task.id]
+        return Reply(200, b"")
 
     def _submit(self, task: GTask, request: Request) -> Reply:
         flag = request.json.get("flag") if isinstance(request.json, dict) else None
@@ -189,6 +247,9 @@ class FakeGZCTF(FakeSite):
         return body("WrongAnswer")
 
 
+GUID = "0f8fad5b-d9cb-469f-a165-70867728950e"  # an invented container id, as a proxied entry shows it
+
+
 def asset_url(content: bytes, name: str) -> str:
     """Where GZCTF keeps a file it holds: /assets/<sha256 of the file>/<its name>."""
     return f"/assets/{hashlib.sha256(content).hexdigest()}/{name}"
@@ -203,7 +264,8 @@ def _cookie(request: Request) -> str | None:
 
 
 def kind_of(request: Request) -> str:
-    """What a request to the fake asks for: "details", "challenge", "asset", "submit", "status", "config"; "" else."""
+    """What a request to the fake asks for: "details", "challenge", "asset", "submit", "status", "config",
+    "container-start", "container-extend", "container-stop"; "" else."""
     method, parts = request.method, request.route.split("/")
     if (method, request.route) == ("GET", "/api/config"):
         return "config"
@@ -213,6 +275,12 @@ def kind_of(request: Request) -> str:
         return ""
     if (method, len(parts), parts[4]) == ("GET", 5, "details"):
         return "details"
+    if len(parts) >= 6 and parts[4] == "container" and parts[5].isdigit():
+        if len(parts) == 6:
+            return {"POST": "container-start", "DELETE": "container-stop"}.get(method, "")
+        if (method, len(parts), parts[6]) == ("POST", 7, "extend"):
+            return "container-extend"
+        return ""
     if len(parts) >= 6 and parts[4] == "challenges" and parts[5].isdigit():
         if len(parts) == 6:
             return {"GET": "challenge", "POST": "submit"}.get(method, "")

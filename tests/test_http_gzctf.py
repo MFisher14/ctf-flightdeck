@@ -74,7 +74,8 @@ def test_the_gzctf_preset_is_the_table_its_file_writes():
         "name": "$.title", "category": "$.category", "points": "$.score", "solves": "$.solved"}
     assert str(preset.detail.request) == "GET /api/game/{game}/challenges/{ref}"
     assert {name: path.text for name, path in preset.detail.fields.items()} == {
-        "description": "$.content", "file_urls": "$.context.url", "max_attempts": "$.limit"}
+        "description": "$.content", "file_urls": "$.context.url", "max_attempts": "$.limit", "instance": "$.type"}
+    assert preset.detail.instance_values == ("StaticContainer", "DynamicContainer")
     assert str(preset.submit.request) == "POST /api/game/{game}/challenges/{ref}" and preset.submit.body == {"flag": "{flag}"}
     assert preset.submit.verdicts == {"Accepted": "correct", "WrongAnswer": "incorrect"} and preset.submit.status == {429: "rate_limited"}
     poll = preset.submit.poll
