@@ -500,8 +500,8 @@ def test_a_ctfd_event_still_at_the_examples_address_sends_the_token_nowhere(tmp_
     with pytest.raises(RunError) as refused:
         prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url="https://ctf.example.org"),
                                config=config(tmp_path)))
-    refusal = placeholder_url("https://ctf.example.org")
-    assert refusal is not None and str(refused.value) == refusal and TOKEN not in str(refused.value)
+    refusal = placeholder_url("https://ctf.example.org")  # preflight's check refuses it, as preflight and start say it
+    assert refusal is not None and str(refused.value).endswith(f"\nrefuse: {refusal}") and TOKEN not in str(refused.value)
     assert not (tmp_path / "board").exists() and not (tmp_path / "runs").exists()
 
 

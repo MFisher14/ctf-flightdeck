@@ -20,7 +20,7 @@ from ctf_flightdeck import http_cli
 from ctf_flightdeck.core.model import ChallengeStatus, LaneState, PendingKind
 from ctf_flightdeck.platform.http import PRESETS, HttpCaller, parse_config, plan, preset_text
 from ctf_flightdeck.plugins.call import Verdict
-from ctf_flightdeck.preflight import check, describe, load_profile
+from ctf_flightdeck.preflight import check, describe, load_profile, placeholder_url
 from ctf_flightdeck.run import RunOptions, prepare_run
 
 from fake_ctfd import Reply
@@ -195,7 +195,7 @@ def test_the_noctf_example_profile_loads_and_passes_the_check(tmp_path, routes):
     loaded, chosen = load_profile(path)
     variable = "HTTP_TOKEN" if routes else TOKEN_VAR
     assert loaded.token_env == variable and (loaded.http.preset == "noctf") is not routes
-    assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == []
+    assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == [placeholder_url(loaded.url)]  # the address left as the example's: the one refusal (placeholder_url)
     assert {**loaded.http.__dict__, "preset": None} == {**parse_config(NOCTF).__dict__, "preset": None}  # the routes written out are the preset's
     assert ("noctf-session-token" in result.output) is not routes and ("These are noCTF's, written out" in result.output) is routes
 

@@ -21,7 +21,7 @@ from ctf_flightdeck.core.model import ChallengeStatus, PendingKind
 from ctf_flightdeck.run import RunOptions, prepare_run
 from ctf_flightdeck.platform.http import HttpCaller, parse_config, plan, preset_text
 from ctf_flightdeck.plugins.call import CallFailed
-from ctf_flightdeck.preflight import check, http_token_env, load_profile
+from ctf_flightdeck.preflight import check, http_token_env, load_profile, placeholder_url
 
 from fake_ctfd import HANG_UP, Reply
 from fake_gzctf import COOKIE, GAME, PUBLIC_KEY, FakeGZCTF, GTask, body, problem, sample
@@ -340,7 +340,7 @@ def test_the_gzctf_example_profile_loads_and_passes_the_check(tmp_path, routes):
     loaded, chosen = load_profile(path)
     variable = "HTTP_TOKEN" if routes else "GZCTF_TOKEN"
     assert loaded.token_env == variable and loaded.http.game == "1" and (loaded.http.preset == "gzctf") is not routes
-    assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == []
+    assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == [placeholder_url(loaded.url)]  # the address left as the example's: the one refusal (placeholder_url)
     preset = parse_config({"preset": "gzctf", "game": "1"})
     assert {**loaded.http.__dict__, "preset": None} == {**preset.__dict__, "preset": None}  # the routes written out are the preset's
 

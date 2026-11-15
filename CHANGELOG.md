@@ -72,7 +72,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   NAME > event.toml` sets up an event flightdeck pulls and submits for.
 - An example profile left unedited no longer sends your token to its placeholder address:
   `http check`, `http pull`, `plugin pull` and `play --event` refuse an `event.url` that is
-  still `ctf.example.org` and say to put the event's own address there. The http and
+  still `ctf.example.org` and say to put the event's own address there, and so do
+  `flightdeck preflight` and `flightdeck start`, which once called such a profile ready. The http and
   plugin examples in BOARDS.md and the guide now say to make the folder and edit the profile
   first.
 - `flightdeck doctor` names a plugin that cannot be read once (`warn plugin myctf: ...`, not

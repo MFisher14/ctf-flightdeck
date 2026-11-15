@@ -391,6 +391,8 @@ def check(
         _check_http(profile, requested, env, model_config, refuse, warn)
     else:  # a plugin's platform is never played as a folder board
         _check_plugin(profile, requested, env, model_config, refuse, warn)
+    if profile.platform != "manual" and profile.url is not None and (unedited := placeholder_url(profile.url)) is not None:
+        refuse.append(unedited)  # as play, pull and http check say it: start says so before play is offered
     if profile.http is not None and profile.platform != "http":
         warn.append('the [http] table does nothing in this run: it is read only for platform = "http"')
     if profile.instances is not None:

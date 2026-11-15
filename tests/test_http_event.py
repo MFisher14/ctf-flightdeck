@@ -24,7 +24,7 @@ from ctf_flightdeck.keys import keys_file_named
 from ctf_flightdeck.platform.manual import cannot_check, load_board
 from ctf_flightdeck.platform.http import PRESETS
 from ctf_flightdeck.platform.plugin_run import PluginLink
-from ctf_flightdeck.preflight import HTTP_BOARD, ProfileError, check, describe, load_profile
+from ctf_flightdeck.preflight import HTTP_BOARD, ProfileError, check, describe, load_profile, placeholder_url
 from ctf_flightdeck.run import RunError, RunOptions, prepare_run
 
 from fake_ctfd import Reply
@@ -117,7 +117,7 @@ def test_a_table_written_out_is_named_as_such_and_a_key_under_a_preset_shows_in_
 
 @pytest.mark.parametrize("routes", [False, True])
 @pytest.mark.parametrize("name", PRESETS)
-def test_every_presets_example_profile_loads_and_passes_preflight(tmp_path, name, routes):
+def test_every_presets_example_profile_loads_and_passes_preflight_once_its_url_is_the_events(tmp_path, name, routes):
     result = runner.invoke(http_cli.app, ["example", "--preset", name, *(["--routes"] if routes else [])])
     assert result.exit_code == 0, result.output
     assert result.output == http_cli.example_profile(routes, name)
@@ -127,7 +127,11 @@ def test_every_presets_example_profile_loads_and_passes_preflight(tmp_path, name
     assert (loaded.http.preset == name) is not routes
     variable = loaded.token_env
     assert variable == ("HTTP_TOKEN" if routes else {"rctf2": "RCTF_TOKEN"}.get(name, f"{name.upper()}_TOKEN"))
+    assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == [placeholder_url(loaded.url)]
+    path.write_text(result.output.replace("https://ctf.example.org", "https://ctf.example.net"))
+    loaded, chosen = load_profile(path)
     assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == []
+
 
 
 NOT_NAMED = ("a variable that is not named for this platform (its name is not HTTP_TOKEN and does not start with HTTP_TOKEN_ or "
@@ -318,7 +322,7 @@ def test_the_example_profile_loads_and_passes_the_check(tmp_path, routes):
     variable = "HTTP_TOKEN" if routes else "RCTF_TOKEN"
     assert loaded.token_env == variable and (loaded.http.preset == "rctf") is not routes
     problems = check(loaded, chosen, max_lanes=4, environ={variable: "set"})
-    assert [p.message for p in problems if p.refuse] == []
+    assert [p.message for p in problems if p.refuse] == [placeholder_url(loaded.url)]  # the address left as the example's: the one refusal (placeholder_url)
     other = tmp_path / "other"
     other.mkdir()
     preset, _ = load_profile(event_file(other))
@@ -831,4 +835,6 @@ def test_an_example_profile_left_unedited_sends_the_token_nowhere(tmp_path, own_
         assert (result.exit_code, result.output) == (2, f"flightdeck: {refusal}\n"), command
     with pytest.raises(RunError) as refused:
         prepare_run(RunOptions(event=path, config=config(tmp_path, "http://127.0.0.1:9/v1")))
-    assert str(refused.value) == refusal
+    assert str(refused.value).endswith(f"\nrefuse: {refusal}")  # preflight's check, as preflight and start say it
+    checked = runner.invoke(preflight_cli.app, [str(path), "--config", str(config(tmp_path, "http://127.0.0.1:9/v1")), "--docker"])
+    assert checked.exit_code != 0 and f"refuse: {refusal}" in checked.output, checked.output
