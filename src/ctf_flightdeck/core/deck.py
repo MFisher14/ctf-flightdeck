@@ -1166,7 +1166,7 @@ class Deck:
                 self._raise_caps(lane)
                 self._clear(lane, AlertKind.BUDGET)
                 self._note(lane, f"approved more budget: {self._cap_text(lane)}", Actor.PLAYER)
-                return Outcome(True, f"{lane.id}'s cap is now {self._cap_text(lane)}")
+                return Outcome(True, f"{lane.id}'s cap is now {self._caps_used(lane)}")
             return Outcome(False, f"{lane.id} is not waiting for an approval")
         self._note(lane, f"approved: {pending.detail}" + (" (by autopilot)" if self._by is Actor.AUTOPILOT else ""), self._by)
         ch = self.challenges[lane.challenge_id]
@@ -1191,7 +1191,8 @@ class Deck:
                 return Outcome(True, f"{pending.flag} is correct: {ch.name} solved by {lane.id}")
             return Outcome(True, f"{pending.flag} was rejected; {lane.id} carries on")
         if pending.kind is PendingKind.BUDGET:
-            if lane.no_price() and lane.dollar_cap:
+            unpriced = bool(lane.no_price() and lane.dollar_cap)
+            if unpriced:
                 lane.dollar_cap = None  # no price: the player chose to go on without a dollar cap
             used = lane.budget_used()
             if used is not None and used >= 1.0:
@@ -1199,7 +1200,11 @@ class Deck:
             self._clear(lane, AlertKind.BUDGET)
             self._resolve(lane)
             self.driver.approved(lane, pending)
-            return Outcome(True, f"{lane.id}'s cap is now {self._cap_text(lane)}")
+            if unpriced:
+                if not lane.token_cap:
+                    return Outcome(True, f"{lane.id} carries on with no cap")
+                return Outcome(True, f"{lane.id} carries on with no dollar cap; its token cap is {self._caps_used(lane)}")
+            return Outcome(True, f"{lane.id}'s cap is now {self._caps_used(lane)}")
         self._resolve(lane)
         self.driver.approved(lane, pending)
         return Outcome(True, f"{lane.id} may use the live box")
@@ -2492,6 +2497,17 @@ class Deck:
             spent = fmt.dollars(lane.dollars) if lane.dollars is not None else f"{fmt.dollars(lane.known_dollars)}+"  # what is known
             parts.append(f"${spent} of ${fmt.dollars(lane.dollar_cap)}")
         return ", ".join(parts) or "no cap"
+
+    def _caps_used(self, lane: Lane) -> str:
+        """The caps, each with what is used of it: `15k tokens (11k used)`. Said when a cap
+        was just raised or dropped, where `11k of 15k` read as a cap of 11k."""
+        parts = []
+        if lane.token_cap:
+            parts.append(f"{fmt.tokens(lane.token_cap)} tokens ({fmt.tokens(lane.tokens)} used)")
+        if lane.dollar_cap:
+            spent = fmt.dollars(lane.dollars) if lane.dollars is not None else f"{fmt.dollars(lane.known_dollars)}+"
+            parts.append(f"${fmt.dollars(lane.dollar_cap)} (${spent} used)")
+        return ", ".join(parts) or "none"
 
     def _stronger(self, lane: Lane) -> tuple[str | None, str]:
         ladder = self.config.models
