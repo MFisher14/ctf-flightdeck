@@ -4,6 +4,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- On a machine without Docker the setup form now says so and offers host, instead of showing
+  "Looking for Docker…" for good with no runtime chosen, so that `ctrl+s` would not save.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes

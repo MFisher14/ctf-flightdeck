@@ -522,6 +522,38 @@ def test_the_setup_form_says_what_is_missing_and_ends_with_the_config_and_the_ke
     assert not fresh.exists() and not (tmp_path / "fresh" / "keys.env").exists()  # the form itself writes nothing
 
 
+def test_on_a_terminal_the_setup_form_says_at_once_that_there_is_no_docker_and_offers_host(tmp_path):
+    """The real command on a pty, on a machine with no docker on PATH: `docker not found` comes
+    back before the form has finished mounting, and the form still shows it. It once kept
+    "Looking for Docker…" and "not decided yet" for good, and ctrl+s refused to save."""
+    import os
+    import re
+    import time
+
+    from test_play_signals import Terminal, env_for, wait_for
+
+    env = env_for(tmp_path, PATH=str(tmp_path / "no-docker-here"), XDG_CONFIG_HOME=str(tmp_path / "xdg"),
+                  FLIGHTDECK_CONFIG=str(tmp_path / "fresh" / "config.toml"))
+    term = Terminal([], env, tmp_path)
+
+    def shown() -> str:
+        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", term.text())
+
+    try:
+        wait_for(lambda: "Get started" in shown(), "the home screen", term)
+        os.write(term.master, b"\r")
+        wait_for(lambda: "Set flightdeck up" in shown(), "the setup form", term)
+        wait_for(lambda: "Docker cannot run lanes here (docker not found on PATH), so host is offered" in shown(),
+                 "what the form found of Docker", term, timeout=10.0)
+        time.sleep(0.2)
+        os.write(term.master, b"\x1b")  # back to the home screen, and q leaves
+        time.sleep(0.5)
+        os.write(term.master, b"q")
+        assert term.proc.wait(timeout=30) == 0, term.text()[-2000:]
+    finally:
+        term.close()
+
+
 def test_the_setup_form_offers_docker_where_docker_runs_and_host_where_it_does_not_and_the_players_choice_stands(fresh, tmp_path, monkeypatch):
     from ctf_flightdeck import setup
     from ctf_flightdeck.console import home as homes
