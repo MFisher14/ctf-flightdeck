@@ -467,6 +467,34 @@ def test_a_line_too_long_for_a_terminal_is_refused_not_cut(tmp_path, handout):
     assert wrong.error and wrong.content == "error: terminal must be true or false"
 
 
+def test_a_terminal_session_hands_the_program_its_bytes_as_sent(tmp_path, handout):
+    """The pty's line discipline would erase on DEL, kill on ctrl+u and ctrl+w, quote on ctrl+v,
+    stop on ctrl+s, signal on ctrl+c and ctrl+z and turn a carriage return into a newline: a
+    payload would reach the program changed. The relay turns that off; ctrl+d, which still ends
+    the input, is refused rather than taken."""
+    read_line = "python3 -c 'import sys; print(repr(sys.stdin.buffer.readline()))'"
+    payload = "AB\x7fC\x15DE\x17F\rG\x16H\x08I\x13J\x11K\x03L\x1aM\x19N\x12O\x0fP\x14Q\x00R"
+
+    async def go():
+        box = await host_box(tmp_path, handout)
+        await call(box, "session_start", {"command": read_line, "terminal": True, "wait_seconds": 0})
+        read = await call(box, "session_send", {"session": "s1", "input": payload, "until": "\n", "wait_seconds": 10})
+        await call(box, "session_start", {"command": "cat", "terminal": True, "wait_seconds": 0})
+        await call(box, "session_start", {"command": "cat", "wait_seconds": 0})
+        refused = await call(box, "session_send", {"session": "s2", "input": "a\x04b"})
+        piped = await call(box, "session_send", {"session": "s3", "input": "a\x04b", "until": "b"})
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return read, refused, piped
+
+    read, refused, piped = asyncio.run(go())
+    assert read.content.split("\n", 1)[1] == repr((payload + "\n").encode()) + "\n"
+    assert refused.error and refused.content == (
+        "error: the input holds ctrl+d (\\x04), which a terminal takes as the end of the input, not as a byte: "
+        "write it to a file and send a command that reads it, or use a session without a terminal")
+    assert not piped.error  # pipes take it as a byte
+
+
 # ---------------------------------------------------------------- in a container
 
 

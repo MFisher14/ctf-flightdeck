@@ -329,7 +329,9 @@ step in the lane: `session s1 start: gdb -q ./chall`, `session s1 < break main`.
 pipes, not a terminal, so a program that prints a prompt only at a terminal prints none; a lane
 that needs one asks for a terminal (`session s1 start (terminal): python3`), and what the
 program writes still reaches the lane and your console as plain text, with no colours or other
-escapes. A program on such a terminal cannot be stopped with ctrl+c: the lane closes it. A lane
+escapes. A program on such a terminal cannot be stopped with ctrl+c: the lane closes it. What the lane
+sends it arrives as sent, ctrl+c and other control bytes included, except ctrl+d, which a
+terminal takes as the end of the input, so a send that holds it is refused. A lane
 has at most three open at once; one it has not used for ten minutes is closed; and every session
 is closed when the lane ends and when you take it over, so nothing it started runs on beside your
 shell (the lane hears which were closed when you hand back). What a session writes is handled

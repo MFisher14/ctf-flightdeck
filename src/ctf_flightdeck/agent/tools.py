@@ -25,7 +25,8 @@ debugger, an interpreter, a connection to the instance: agent/sessions.py). What
 writes is scrubbed and cut like the shell's output, and a workspace with no open_session (a
 test's stand-in) answers that it has no sessions. `terminal: true` runs one on a pty
 (agent/terminal.py, P87), its escapes taken out before it is stored; a line sent to it is at
-most TERMINAL_LINE bytes, since a terminal would cut a longer one.
+most TERMINAL_LINE bytes, since a terminal would cut a longer one, and holds no ctrl+d, which
+the terminal takes as the end of the input.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ import httpx
 from ..imageread import MAX_BYTES as IMAGE_BYTES  # the largest image a model API takes: view_image's limit too
 from ..text import untrusted
 from .sessions import DEFAULT_WAIT, IDLE_SECONDS, INPUT_BYTES, MAX_SESSIONS, MAX_WAIT, Read, Session, SessionMistake, Sessions
-from .terminal import TERMINAL_LINE
+from .terminal import END_OF_FILE, TERMINAL_LINE
 from .workspace import OUTPUT_CAP, PRIVATE, SNIFF, RunResult, Workspace, open_inside, write_inside
 
 MIN_CHARS = 200  # the smallest max_chars that still leaves room for a cut marker or a footer
@@ -154,7 +155,8 @@ TOOLS: list[dict] = [
         "session_start",
         "Start a long-lived process in the workspace that you talk to across turns (gdb -q ./x, r2 -q0 ./x, "
         "python3 -u -i, nc to the instance) and read its first output. It has pipes, not a terminal: prompts may not "
-        "show. terminal: true gives it a terminal for a program that needs one (no colours, no ctrl+c; a line editor "
+        "show. terminal: true gives it a terminal for a program that needs one (no colours; bytes go as sent, ctrl+c "
+        "is a byte, not a signal; ctrl+d is refused; one line at a time, a line ends at \\n; a line editor "
         f"may repeat what you send). At most {MAX_SESSIONS} at once; one unused for {IDLE_SECONDS / 60:g} minutes is closed.",
         {
             "command": {"type": "string"},
@@ -719,6 +721,9 @@ class Toolbox:
         pool = self._session_pool(action)
         try:
             session = pool.get(name)
+            if session.terminal and END_OF_FILE in data:
+                raise SessionMistake("the input holds ctrl+d (\\x04), which a terminal takes as the end of the input, not as a "
+                                     "byte: write it to a file and send a command that reads it, or use a session without a terminal")
             if session.terminal and (long := max(len(line) + 1 for line in data.split(b"\n"))) > TERMINAL_LINE:
                 raise SessionMistake(f"a line of the input is {long - 1} bytes; a terminal takes at most {TERMINAL_LINE - 1} "
                                      "in one line: write it to a file and send a command that reads it")

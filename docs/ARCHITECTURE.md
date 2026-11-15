@@ -544,6 +544,13 @@ and bells; it keeps its state between chunks, so a sequence split across reads s
 and an escape that never ends gives its bytes back, less the ESC, after 4 KiB. A pty takes a line
 at a time up to `MAX_CANON` (1024 bytes on macOS), so a send to a terminal session refuses a line
 over `TERMINAL_LINE` (1000 bytes, its newline included) rather than let the terminal cut it.
+The pty's line discipline edits nothing that is sent: the relay turns off its input processing
+(ICRNL, INLCR, IGNCR, IXON, IXOFF, ISTRIP, ISIG, IEXTEN, and the erase, kill and extra
+end-of-line characters), so DEL, ctrl+u, ctrl+w, ctrl+v, ctrl+s, ctrl+c and a carriage return
+reach the program as the bytes they are. What is left is canonical mode: a line at a time, a line
+ending only at a newline, and ctrl+d (`END_OF_FILE`) taken as the end of the input, which is how
+the end of the relay's own input reaches the program; a send to a terminal session that holds
+ctrl+d is refused and says to write it to a file or use a session without a terminal.
 
 Limits: at most three sessions open in a lane (`MAX_SESSIONS`); one nobody sends to or reads for
 ten minutes is closed (`IDLE_SECONDS`), and naming it later says why; at most 1 MiB of output

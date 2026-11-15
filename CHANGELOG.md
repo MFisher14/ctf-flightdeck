@@ -120,7 +120,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   saved ([the guide](docs/GUIDE.md#what-a-lanes-shell-has)).
 - A lane can start a session on a terminal, for a program that shows its prompt or menu only at
   one (`session s1 start (terminal): python3`). What it writes comes back as plain text: colours
-  and other terminal escapes are taken out before the lane or the console sees them. The
+  and other terminal escapes are taken out before the lane or the console sees them. What the
+  lane sends it reaches the program as sent: the terminal edits nothing, and a send that holds
+  ctrl+d, which a terminal takes as the end of the input, is refused. The
   lane's brief now tells it of sessions in one line; a coding-agent lane, which has none, is
   not told.
 - A lane that asks for the live instance (instance `confirm`) gives its slot to the next queued

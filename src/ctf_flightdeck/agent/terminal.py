@@ -9,7 +9,7 @@ side as its standard input, output and error, and copies between its own pipes a
 Everything around it stays as it is for any session (agent/sessions.py): the same pipes to
 flightdeck, the same caps, the same kill.
 
-Three choices keep that so:
+Four choices shape it:
 
 - **No controlling terminal.** The command does not start a session of its own (no setsid),
   so it stays in the relay's process group, which on the host is the group flightdeck kills
@@ -27,6 +27,16 @@ Three choices keep that so:
   across two reads is still taken out whole; an escape that never ends gives its bytes back
   (without the ESC) after ESCAPE_LIMIT, so it cannot hide what follows it.
 
+- **Bytes as sent.** The pty's line discipline would edit what is sent before the program
+  reads it: ctrl+? and ctrl+h erase, ctrl+u and ctrl+w kill, ctrl+v quotes, ctrl+s stops the
+  stream, ctrl+c and ctrl+z become signals, and a carriage return becomes a newline. A
+  payload sent this way would reach the program changed, with no word of it, so the relay
+  turns all of that off (ICRNL, INLCR, IGNCR, IXON, IXOFF, ISTRIP, ISIG, IEXTEN, and the
+  erase, kill and extra end-of-line characters disabled). What is left is canonical mode:
+  input goes to the program a line at a time, a line ends only at a newline, and ctrl+d
+  (END_OF_FILE) still ends the input, which is how the end of the relay's own input reaches
+  the program. So a send to a terminal session refuses ctrl+d rather than let it be taken.
+
 A terminal takes a line at a time and a pty's line has a limit (MAX_CANON: 1024 bytes on
 macOS, 4096 on Linux), so a send to a terminal session refuses a line over TERMINAL_LINE
 bytes rather than letting the terminal cut it.
@@ -38,6 +48,7 @@ TERM = "dumb"
 ROWS, COLUMNS = 500, 200  # the pty's size: tall, so a pager that reads it rarely stops
 TERMINAL_LINE = 1000  # bytes in one line sent to a terminal session, its newline included
 ESCAPE_LIMIT = 4096  # bytes an unfinished escape may take before they are given back
+END_OF_FILE = b"\x04"  # ctrl+d, the one byte the terminal still takes for itself (VEOF)
 
 # The relay: argv[1:] is the program and its arguments. It exits with the program's status
 # (128 + the signal when a signal ended it) once the pty's other side is closed by everything
@@ -47,7 +58,11 @@ RELAY = r"""
 import errno, fcntl, os, select, struct, sys, termios
 master, slave = os.openpty()
 mode = termios.tcgetattr(slave)
-mode[3] &= ~(termios.ECHO | termios.ECHONL)
+mode[0] &= ~(termios.ICRNL | termios.INLCR | termios.IGNCR | termios.IXON | termios.IXOFF | termios.ISTRIP)
+mode[3] &= ~(termios.ECHO | termios.ECHONL | termios.ISIG | termios.IEXTEN)
+off = os.fpathconf(slave, "PC_VDISABLE").to_bytes(1, "big")
+for key in (termios.VERASE, termios.VKILL, termios.VEOL, termios.VEOL2):
+    mode[6][key] = off
 termios.tcsetattr(slave, termios.TCSANOW, mode)
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", %(rows)d, %(columns)d, 0, 0))
 pid = os.fork()
