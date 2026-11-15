@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: twenty-one proposals, P69 to P89 (2026-11-14)
+## Built, not released: twenty-two proposals, P69 to P90 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P89); the lines for players are under Unreleased in
+[DECISIONS.md](DECISIONS.md) (P69 to P90); the lines for players are under Unreleased in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -113,6 +113,11 @@ Proposals built and waiting for a release, in the order of their numbers in
   challenge (never a start) and prints what the site said; rCTF v2's `errored` is its own
   state (`failed_states`, `InstanceFailed`): no start is sent while the site says it, and the
   status is asked again later. Not confirmed: what rCTF does with a start of an errored one.
+- **`/settings` in a run is Settings and health** (P90). The home screen's screen opens over
+  the console, with the run's own settings on top (`c` opens `/config`'s dialog) and a line
+  that counts the lanes that need you. Its checks run in the child at a lower priority, and
+  what they found is kept for the run until `r`. `/config` is unchanged; `/settings` is no
+  longer its alias.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

@@ -148,7 +148,7 @@ def test_an_answer_that_is_not_the_checks_is_an_error_never_an_empty_list(out):
 
 def test_a_child_that_fails_says_so_with_its_last_line(monkeypatch):
     monkeypatch.setattr(health, "child_command",
-                        lambda c, l: [sys.executable, "-c", "import sys; sys.stderr.write('first\\nboom here\\n'); sys.exit(3)"])
+                        lambda c, l, config="", agent="": [sys.executable, "-c", "import sys; sys.stderr.write('first\\nboom here\\n'); sys.exit(3)"])
     with pytest.raises(health.HealthError, match=r"status 3 \(boom here\)"):
         asyncio.run(health.run_checks(80, 24))
 

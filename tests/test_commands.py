@@ -196,21 +196,36 @@ def state() -> State:
 
 
 def test_the_aliases_are_the_ones_decided_and_approve_has_none():
-    assert {alias: command.name for alias, command in BY_ALIAS.items()} == {"q": "quit", "exit": "quit", "settings": "config", "lanes": "back"}
+    assert {alias: command.name for alias, command in BY_ALIAS.items()} == {"q": "quit", "exit": "quit", "lanes": "back"}
     assert BY_NAME["approve"].aliases == ()  # the one command that spends a try is typed whole
     with pytest.raises(CommandError, match="Unknown command /a: type / to see the list"):
         parse("/a")
 
 
-@pytest.mark.parametrize(("typed", "name"), [("/q", "quit"), ("/exit", "quit"), ("/EXIT", "quit"), ("/settings", "config"), ("/lanes", "back")])
+@pytest.mark.parametrize(("typed", "name"), [("/q", "quit"), ("/exit", "quit"), ("/EXIT", "quit"), ("/lanes", "back")])
 def test_an_alias_typed_whole_is_its_command(typed, name):
     parsed = parse(typed)
     assert (parsed.command.name, parsed.lane, parsed.arg) == (name, None, "")
     assert parsed.command is BY_NAME[name] is find(typed[1:])
 
 
+def test_settings_is_a_command_of_its_own_since_p90_and_config_keeps_its_arguments():
+    parsed = parse("/settings")
+    assert (parsed.command.name, parsed.lane, parsed.arg) == ("settings", None, "") and not needs_lane(parsed)
+    assert BY_NAME["settings"].aliases == () and BY_NAME["config"].aliases == ()
+    assert parse("/config lanes 8").arg == "lanes 8"
+    # what /settings took as /config's alias is refused with where it went, never run as something else
+    for typed, said in (("/settings lanes 8", "/config lanes 8"), ("/SETTINGS Submit auto", "/config Submit auto"),
+                        ("/settings file", "/config file")):
+        with pytest.raises(CommandError, match=rf"^/settings takes no argument: {said} changes this run's$"):
+            parse(typed)
+    with pytest.raises(CommandError, match=r"^/settings takes no argument$"):
+        parse("/settings nord")
+    names = [c.name for c in COMMANDS]
+    assert names.index("settings") + 1 == names.index("config")  # beside the run's other settings
+
+
 def test_an_alias_takes_what_its_command_takes_and_is_refused_as_its_command_is():
-    assert parse("/settings lanes 8").arg == "lanes 8" and parse("/settings lanes 8").command.name == "config"
     with pytest.raises(CommandError, match=r"^/quit takes no argument$"):
         parse("/q now")
     with pytest.raises(CommandError, match=r"^/back takes no argument$"):
@@ -236,13 +251,13 @@ def test_the_menu_finds_a_command_from_the_second_word_of_its_name():
 
 
 def test_the_menu_finds_a_command_from_an_alias_and_shows_the_aliases_beside_the_name():
-    assert texts("/set") == ["/config "] and texts("/ex") == ["/quit "] and texts("/lan") == ["/back "]
+    assert texts("/set") == ["/settings "] and texts("/ex") == ["/quit "] and texts("/lan") == ["/back "]
     assert texts("/la") == ["/layout ", "/back "]  # a name before an alias
     assert texts("/q") == ["/quit ", "/queue "]  # /q is /quit, whole: it leads the name that only starts with q
     assert texts("/lanes") == ["/back "] and texts("/EXIT") == ["/quit "]
     shown = {c.text.strip(): c.also for c in complete("/")}
-    assert shown["/quit"] == "/q, /exit" and shown["/config"] == "/settings" and shown["/back"] == "/lanes"
-    assert [name for name, aliases in shown.items() if aliases] == ["/config", "/back", "/quit"]  # no other command has one
+    assert shown["/quit"] == "/q, /exit" and shown["/config"] == "" and shown["/back"] == "/lanes"
+    assert [name for name, aliases in shown.items() if aliases] == ["/back", "/quit"]  # no other command has one
     assert texts("/", lane=False)[:4] == ["/new ", "/help ", "/config ", "/queue "]  # nothing typed: the order as it was
 
 

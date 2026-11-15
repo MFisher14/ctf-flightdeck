@@ -158,6 +158,15 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   says it failed, sends no start for it while the site says so, and asks again later: stop it
   or start it again on the site, and the run goes on.
 
+- `/settings` in a run now opens Settings and health, the same screen as on the home screen:
+  this run's settings on top (lanes at once, what happens to a flag, the layout and the theme;
+  `c` opens `/config` to change them), a line that counts the lanes that need you, your setup
+  and `flightdeck doctor`'s checks (in a run with `--agent claude` or `codex`, the checks of
+  `flightdeck doctor --agent`: that CLI and its login, and the API key a warning). The checks run beside the console at a lower priority, and
+  opening the screen again shows what they found until `r` checks again. `/config` works as
+  before; `/settings` is no longer another name for it, and `/settings lanes 8` says to type
+  `/config lanes 8`.
+
 ## 0.5.0 (2026-11-14)
 
 A calm console: the simple layout, a lane view of one row per step, a peek at the selected lane,

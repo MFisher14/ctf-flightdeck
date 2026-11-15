@@ -321,7 +321,7 @@ def test_the_mock_and_a_run_take_the_title_and_the_bell_from_the_config(tmp_path
 
     # what Run.app reads of a run: its console is made by the code a real run's is
     of_a_run = SimpleNamespace(config=load_config(config), deck=FakeWorld(scenarios.get("sstv")).deck, dir=tmp_path, by_hand=False,
-                               release=None, shutdown=None)
+                               release=None, shutdown=None, options=SimpleNamespace(agent=None))
     beacon = Run.app(of_a_run)._beacon
     assert (beacon.title, beacon.bell) == (title_on, run_bell)
 

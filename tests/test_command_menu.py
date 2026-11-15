@@ -42,12 +42,12 @@ def test_the_menu_shows_a_commands_aliases_beside_its_name_and_help_lists_them()
         assert rows(app) == ["/quit (/q, /exit) quit flightdeck (asks first while lanes are open)", "/queue <challenge> queue a parked or new challenge"]
         assert bar(app).menu.highlighted == 0
         await press(pilot, "backspace", *"set")
-        assert listed(app) == ["/config "] and rows(app)[0].startswith("/config [lanes N|unlimited | submit auto|confirm | file] (/settings) this run's")
+        assert listed(app) == ["/settings "] and rows(app)[0].startswith("/settings your setup and its health")
         await press(pilot, "escape", "escape", "question_mark")
         said = prompt_text(app)
         assert "quit flightdeck (asks first while lanes are open) (also /q, /exit)" in said
-        assert "auto approve (submit auto) (also /settings)" in said and "back to the fleet (also /lanes)" in said
-        assert said.count("(also /") == 3  # the three commands that have one
+        assert "back to the fleet (also /lanes)" in said and "/settings" in said
+        assert said.count("(also /") == 2  # the two commands that have one
 
     drive(app, script, (160, 200))
 
@@ -61,9 +61,6 @@ def test_an_alias_typed_whole_runs_its_command():
     deck, app = three_lanes("simple", on_exit=on_exit)  # a run's console: quitting asks first while lanes are open
 
     async def script(pilot):
-        await press(pilot, "slash", *"settings", "enter")
-        assert type(app.screen).__name__ == "ConfigPrompt"
-        await press(pilot, "escape")
         await press(pilot, "slash", "q", "enter")  # /q is a command, whole: enter runs it, though /queue is listed too
         assert type(app.screen).__name__ == "QuitPrompt" and stopped == []  # it asks, as /quit does
         await press(pilot, "escape")

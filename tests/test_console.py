@@ -115,7 +115,7 @@ def test_the_mock_and_a_run_leave_the_mouse_when_the_config_says_so(tmp_path, mo
 
     # what Run.app reads of a run: its console is made by the code a real run's is
     of_a_run = SimpleNamespace(config=load_config(config), deck=FakeWorld(scenarios.get("sstv")).deck, dir=tmp_path, by_hand=False,
-                               release=None, shutdown=None)
+                               release=None, shutdown=None, options=SimpleNamespace(agent=None))
     assert Run.app(of_a_run).mouse is mouse
 
 

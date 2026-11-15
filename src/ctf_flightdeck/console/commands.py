@@ -104,8 +104,9 @@ COMMANDS = (
             words=_copies),
     Command("open", "<lane>", "open a lane in the focus view", words=lambda state: state.lanes),
     Command("note", "<text>", "a note for every lane: running ones read it on their next turn, later ones at their start", lane=False),
-    Command("config", "[lanes N|unlimited | submit auto|confirm | file]", "this run's settings: lanes at once, auto approve (submit auto)", lane=False,
-            aliases=("settings",)),
+    Command("settings", "", "your setup and its health: the config, the key, the models, and doctor's checks; "
+                           "c there changes this run's", lane=False),
+    Command("config", "[lanes N|unlimited | submit auto|confirm | file]", "this run's settings: lanes at once, auto approve (submit auto)", lane=False),
     Command("theme", "[name]", "the console's colours; alone: try the themes you have, and save one", lane=False,
             words=lambda state: state.themes),
     Command("layout", "[simple|deck]", "simple: the lanes and what needs you; deck: the board and every column; alone: try both, and save one",
@@ -269,6 +270,8 @@ def parse(text: str) -> Parsed:
         # a stray word must not fall back to the selected lane: /approve 2 is not L02
         where = f"; name a lane like /{command.name} L02" if command.lane else ""
         where += " (or /approve all)" if command.name == "approve" else ""
+        if command.name == "settings":  # it was /config's alias until P90: say where the run's settings went
+            where = f": /config {arg} changes this run's" if arg.split()[0].lower() in ("lanes", "submit", "file") else ""
         raise CommandError(f"/{command.name} takes no argument{where}")
     if arg and command.name == "open":
         raise CommandError("/open takes a lane, like /open L02")
