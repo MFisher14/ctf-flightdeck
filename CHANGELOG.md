@@ -4,6 +4,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- The config folder follows `$XDG_CONFIG_HOME`: with it set to an absolute path, `flightdeck
+  init` writes the config there, and the config, the keys file and your themes are read from
+  `$XDG_CONFIG_HOME/ctf-flightdeck`. A file you already have in `~/.config/ctf-flightdeck` is
+  still read when the new folder has none, and each command says so once on stderr (`flightdeck
+  doctor` in a `config folder` line), so nothing is ignored in silence.
 - A lane's session no longer answers one call late. Output a program wrote before a send (a
   debugger still loading, say) comes with the send's read but no longer ends it, so the read
   waits for the reply, and `until` is looked for only in what came after the send. A secret of
