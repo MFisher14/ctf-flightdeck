@@ -753,7 +753,7 @@ class Toolbox:
             return ToolResult(status, self._line(action), status)
         text = self._session_text(session.carry, left)
         head = f"{status}; what it wrote since the last read:"
-        body = self._fit(text, left, self.max_chars - len(head) - 1, turn, index)
+        body = self._fit(text, session.carry + left, self.max_chars - len(head) - 1, turn, index)
         return ToolResult(f"{head}\n{body}", self._line(action), _brief(text, status, tail=False), excerpt=_excerpt(text, status))
 
     async def close_sessions(self, why: str) -> list[str]:
@@ -791,14 +791,16 @@ class Toolbox:
         else:
             pool.touch(session)
         status = f"session {session.name}: {_session_status(read, until)}"
-        text = self._session_text(read.carried, read.output)  # before anything cuts it
+        # before anything cuts it; a file of the whole output starts with the carried part too, so a
+        # secret cut between two reads is whole in it and is scrubbed when the file is read
+        text = self._session_text(read.carried, read.output)
         head = status
         if read.dropped:
             head += f"\n[{read.dropped} earlier bytes dropped: a session keeps at most {session.cap} bytes unread]"
         if read.held:
             head += (f"\n[{read.held} more bytes held for the next read: they could start a secret of the run's; "
                      "read again (session_send with no input) and they come with what follows, or alone]")
-        body = self._fit(text, read.output, self.max_chars - len(head) - 1, turn, index) if text else "(no output)"
+        body = self._fit(text, read.carried + read.output, self.max_chars - len(head) - 1, turn, index) if text else "(no output)"
         failed = read.why == "ended" and read.exit_code != 0
         return ToolResult(
             content=f"{head}\n{body}",

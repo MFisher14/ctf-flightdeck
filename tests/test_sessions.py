@@ -400,6 +400,28 @@ def test_a_secret_whose_start_a_matched_until_showed_is_still_scrubbed_in_the_ne
     assert rest.content.endswith("\n[API_KEY]\n")
 
 
+def test_the_file_of_a_cut_read_holds_a_secret_cut_between_two_reads_whole(tmp_path, handout):
+    """A read too long to show is saved to a file; the file starts with what the last read carried,
+    so a secret whose start that read showed is whole in it, and reading the file scrubs it."""
+    async def go():
+        box = await host_box(tmp_path, handout, scrub=Secrets({"API_KEY": KEY}), max_chars=300)
+        await call(box, "session_start", {"command": f"printf 'key: {KEY[:10]}'; sleep 1; printf '{KEY[10:]}'; "
+                                                     "printf 'x%.0s' $(seq 1 600); printf '\\n'; sleep 30",
+                                          "wait_seconds": 0})
+        await call(box, "session_send", {"session": "s1", "until": "sk-", "wait_seconds": 5})
+        rest = await call(box, "session_send", {"session": "s1", "wait_seconds": 5}, turn=2)
+        saved = (box.workspace.root / ".flightdeck" / "out" / "turn2-0.txt").read_bytes()
+        again = await call(box, "read_file", {"path": ".flightdeck/out/turn2-0.txt"}, turn=3)
+        await box.close_sessions("test over")
+        await box.workspace.close()
+        return rest, saved, again
+
+    rest, saved, again = asyncio.run(go())
+    assert "characters cut" in rest.content
+    assert KEY.encode() in saved  # whole, so the scrubber can find it
+    assert KEY[10:] not in again.content and "[API_KEY]" in again.content
+
+
 def test_a_secret_whose_start_was_released_after_a_pause_is_still_scrubbed_after(tmp_path, handout):
     async def go():
         box = await host_box(tmp_path, handout, scrub=Secrets({"API_KEY": KEY}))
