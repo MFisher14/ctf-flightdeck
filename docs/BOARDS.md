@@ -282,7 +282,7 @@ plugin to trust. rCTF, noCTF and GZCTF ship as presets.
 flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset (--preset noctf for noCTF; --routes: every route written out)
 export RCTF_TOKEN='https://ctf.example.org/login?token=...'   # rCTF: your team's login link, whole (or the token alone)
 flightdeck preflight ~/ctf/quals/event.toml         # every request a run would make, and where your token goes
-flightdeck http check ~/ctf/quals/event.toml        # signs in, lists, reads the solved list; submits nothing
+flightdeck http check ~/ctf/quals/event.toml        # signs in, lists, reads the solved list (and an instance's status); submits nothing
 flightdeck play --event ~/ctf/quals/event.toml
 ```
 
@@ -322,7 +322,9 @@ run `http check` first. flightdeck counts no tries there: rCTF has none.
 lists the challenges from `/api/v2/challs`, which also says which challenges have an instance
 the site starts for your team, and marks each of those on-demand on the board. With
 `plugin = "rctf"` under `[instances]`, flightdeck then starts those instances itself
-([Instances on demand](#instances-on-demand)). The token variable is named as for `rctf`
+([Instances on demand](#instances-on-demand)), and `http check` asks the status of the first
+one's instance, which shows the table reaches the instancer before a run starts anything. The
+token variable is named as for `rctf`
 (`RCTF_TOKEN`). An event on the older rCTF has no `/api/v2`: keep `preset = "rctf"` there. Its
 instances usually come from a separate site (klodd) whose start wants a CAPTCHA every time,
 so start them on that site yourself.
@@ -470,8 +472,14 @@ refs = "$.data.solves[*].id"
 
 `flightdeck http check EVENT.toml` is how a table gets written: it makes the sign-in, the list
 and the solved-list requests, and for the first challenges (`--show N`) prints each path and
-what it matched. It submits nothing and downloads nothing. It exits with status 1 when a path
-a pull needs matched nothing or the wrong kind of value, and 2 when a request failed.
+what it matched. It submits nothing and downloads nothing. With an `[instances]` table it also
+asks the instancer's status for the first challenge the table marks on-demand, the way a run
+asks it, and prints what the site said: where the instance runs, that none runs, that it is on
+its way up, or that it failed. Only a `GET` is sent: a status route of another method is named
+and not asked, and nothing is ever started, renewed or stopped. It exits with status 1 when a
+path a pull needs matched nothing or the wrong kind of value, or when the status gave nothing a
+run could use (a refusal, an answer it cannot read, a CTFd plugin's shape on this platform, a
+table that marks no challenge on-demand at all); and 2 when a request failed.
 
 ### What a table can and cannot make flightdeck do
 
@@ -712,6 +720,11 @@ max_running = 3                 # the most kept running at once: the site's cap 
 - **An instance on its way up.** Some sites answer a start with "starting" and give the
   address only later. flightdeck then asks the status every 10 seconds and sends no other
   start; the lanes wait, and the instance is the one flightdeck started when it comes up.
+- **An instance that failed.** A site may say the instance could not run (rCTF's "errored").
+  flightdeck says so once, in its own words, and sends no start for it while the site says
+  so; the lanes wait, and the status is asked again after a wait that doubles up to five
+  minutes. Stop it or start it again on the site; once the site no longer says it failed,
+  flightdeck goes on as usual.
 - **A start that wants a person.** A site that guards its start button with a CAPTCHA refuses
   flightdeck's start, and flightdeck never tries to pass it: it says so once and sends no start
   for that challenge again. Start the instance on the site yourself; flightdeck asks the status
@@ -808,7 +821,7 @@ one, and tell us what happened in an issue.
   (the status, the start, the extension and the stop), with the challenge's own id in the path.
   The answer says the instance's state and lists its addresses, each a kind (`tcp`, `http`,
   `https` or `tcp-ssl`, a TLS endpoint given to the lane as `tls://host:port`), a host and a
-  port; the end is in milliseconds. A deployment may guard the start and the extension with a
+  port; the end is in milliseconds. Its "errored" state is an instance that failed (above). A deployment may guard the start and the extension with a
   CAPTCHA: then start the instance on the site (above), and renew it there too.
 - `plugin = "ctfd_docker"`, a guess of 0.4.0 that matched no plugin, is refused: write
   `docker_per_team` for CTFd-Docker-Plugin.
@@ -832,6 +845,7 @@ api = true                      # the paths are under /api/v1 (false: under the 
 # state_key = "status"          # the answer's key that says what the instance is doing
 # running_states = ["running"]  # ... its words for "up" (any other word: no instance)
 # pending_states = ["starting"] # ... its words for "on its way up or down": wait, and send nothing
+# failed_states = ["errored"]   # ... its words for "the site could not run it": say so, and send no start
 types = ["container"]
 ```
 
@@ -843,8 +857,9 @@ types = ["container"]
   `host`, a `port` and optionally a `kind` (`tcp`, `http`, `https`; any other kind is left out
   and named). At most 8 are taken.
 - **States.** With `state_key`, an answer whose word is one of `pending_states` is an instance
-  on its way (asked again in 10 seconds); with `running_states` given, only those words mean an
-  instance is up.
+  on its way (asked again in 10 seconds), and one of `failed_states` an instance that failed
+  (no start is sent while the site says so); with `running_states` given, only those words mean
+  an instance is up. The three lists share no word.
 - **The answer's keys.** Each is one key name or a list tried in order, looked for in the
   answer and then in its `data`. Left out, flightdeck tries `hostname`, `host`, `ip`,
   `connect`, `url`, `address` for the address, `port` for the port, and `remaining_time`,

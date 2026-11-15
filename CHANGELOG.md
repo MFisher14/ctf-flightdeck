@@ -133,6 +133,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   a turn that fails for want of a login says `api_error`, not `success`. The guide says what was
   checked, and that a lane needs `CLAUDE_CODE_OAUTH_TOKEN` for a subscription: it does not see
   the login `claude` uses on your machine.
+- `flightdeck http check` also asks the instancer's status when the profile has an
+  `[instances]` table: once, for the first challenge marked on-demand, with a `GET` only, and
+  it prints where the instance runs, that none runs, or what the site said. It never starts,
+  renews or stops one, and it exits with status 1 when the answer is nothing a run could use.
+- An rCTF v2 instance the site says "errored" is no longer taken for no instance. flightdeck
+  says it failed, sends no start for it while the site says so, and asks again later: stop it
+  or start it again on the site, and the run goes on.
 
 ## 0.5.0 (2026-11-14)
 
