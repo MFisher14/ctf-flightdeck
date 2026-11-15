@@ -54,6 +54,7 @@ from .widgets import History
 
 STATUS_EVENTS = (EventKind.RELEASE, EventKind.TEAMMATE, EventKind.SUBMIT, EventKind.WARNING)
 STATUS_SECONDS = 12.0
+ANSWERS = (iv.Approve, iv.Decline, iv.Kill)  # answers that can end a lane: the lane list moves on from it (P96)
 # A terminal that has no bracketed paste sends a dropped file as its path, typed: every character
 # at once. Keys that start like a path and come closer together than nobody types are held until
 # they stop coming (take_keys), and are a drop only when all of them together are paths that exist.
@@ -992,10 +993,18 @@ class FlightdeckApp(App[None]):
         known = set(self.deck.lanes)
         outcome = self.deck.apply(intervention)
         self.say(outcome.message, "information" if outcome.ok else "warning")
+        if outcome.ok and isinstance(intervention, ANSWERS):
+            self._answered_in_list(intervention.lane)
         self.refresh_view()
         if outcome.ok and isinstance(intervention, iv.Kill) and intervention.requeue:
             self.follow(self.deck.lanes[intervention.lane].challenge_id, intervention.lane, known)
         return outcome
+
+    def _answered_in_list(self, lane_id: str) -> None:
+        """An answer the player gave a lane while no lane's view is open (the lane list, or
+        a prompt over it): the list moves its selection on when the lane folds (P96)."""
+        if self.focus_screen is None:
+            self._fleet.answered(lane_id)
 
     def suggested(self, lane: Lane, key: str) -> str:
         """The text an alert suggests for `key` (to prefill a field), as the console shows
@@ -1098,6 +1107,7 @@ class FlightdeckApp(App[None]):
                 why = None if outcome.ok else outcome.message
             if why is None:
                 approved.append(lane_id)
+                self._answered_in_list(lane_id)
             else:
                 left.append((lane_id, why, why))
         count = len(approved)

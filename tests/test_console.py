@@ -1002,8 +1002,8 @@ def test_lane_keys_warn_when_the_filter_hides_the_selected_lane():
         selected = deck.lanes[app.fleet.selected_lane]
         assert selected.challenge_id != "bent-coin"
         await press(pilot, "tab")
-        await send(pilot, app, "/filter bent")
-        assert lane_rows(app) == [deck.lanes_on("bent-coin")[0].id]
+        await send(pilot, app, "/filter zzz")  # no lane row left: a lane row would take the selection (P96)
+        assert row_keys(app) == []
         assert app.fleet.selected_lane == selected.id
         before = snapshot(app)
         await press(pilot, "p")
