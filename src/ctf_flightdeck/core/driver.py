@@ -12,6 +12,11 @@ Contract for drivers:
 - Every method returns at once; slow work belongs in the driver's own tasks.
 - Call deck methods only on the thread that created the deck (the console's event
   loop). From a worker thread, hop back first (Textual: app.call_from_thread).
+- Optional: `running(lane) -> str` says what of a lane still runs while it waits for the
+  player ("" for nothing), such as a session's process. The deck asks it before the lane
+  gives its slot up (P91) and keeps the slot while the answer is not "". A driver without
+  it runs nothing of a lane that is not RUNNING: the mock's scripted lanes, and the
+  coding-agent lanes, whose CLI and everything it started are stopped (SIGSTOP).
 """
 
 from __future__ import annotations

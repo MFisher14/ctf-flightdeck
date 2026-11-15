@@ -90,8 +90,10 @@ The console never talks to lanes directly. It reads a `Deck` and sends it interv
 Where: `core/deck.py`.
 
 Board, queue and lanes. Enforces `max_lanes` (paused and taken-over lanes keep their slot; a lane
-waiting for a live-box answer gives its slot up and takes one again, ahead of the queue, once
-answered: P83), the flag
+waiting for the player gives its slot up and takes one again, ahead of the queue, once answered:
+at once for a live-box answer, P83, and after `bench_after` seconds for a flag or budget answer,
+P91, with at most `max_waiting` lanes without a slot and a lane whose sessions run on keeping
+its own; the run calls `Deck.recheck_waits` every five seconds), the flag
 format and submit policy, a per-lane queue of approvals, 80%/100% caps, team-mode rules. Applies
 interventions and logs every change as an `Event` with a structured payload (the M1 JSONL log is the
 event stream). Must be called from one thread.

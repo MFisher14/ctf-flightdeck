@@ -132,6 +132,9 @@ from .eventlog import EventLog, new_run_dir
 from .instancerun import InstanceRunner, on_demand
 from .platform.instances import InstanceClient
 from .governor import TICK_SECONDS as GOVERNOR_SECONDS
+
+WAITS_SECONDS = 5.0  # Run._waits: how often the deck is asked to give up the slots of lanes that have waited long enough
+BENCH_AFTER = DeckConfig.bench_after  # the deck's own default: 60 s
 from .governor import Governor, Reading
 from .leftovers import RECORD, ProcessRecord, labels, sweep
 from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, HumanCheck, Pull, Solves, Verdict, check_site, load_ids, pull
@@ -210,6 +213,8 @@ class RunOptions:
     solves_seconds: float = SOLVES_SECONDS
     team_seconds: float = POLL_SECONDS  # how often the team folder is read
     governor_seconds: float = GOVERNOR_SECONDS  # how often the host governor reads this machine again
+    waits_seconds: float = WAITS_SECONDS  # how often the deck looks for lanes that have waited long enough to give their slot up
+    bench_after: float = BENCH_AFTER  # seconds a lane waits for a flag or budget answer before it gives its slot up (P91)
     host_reading: Callable[[Path], Reading] | None = None  # how the governor reads the machine; None: governor.probe
     confirm: Callable[[str], bool] | None = None  # asks the player yes or no (the pull policy "confirm"); None: nobody to ask
     agent: str | None = None  # "claude" | "codex": lanes are that coding-agent CLI instead of flightdeck's own loop
@@ -387,6 +392,7 @@ class Run:
             self._tasks.append(asyncio.create_task(self.instances.work(), name="flightdeck instances"))
         if self.governor is not None:  # its first reading was taken before the deck had a lane to start
             self._tasks.append(asyncio.create_task(self._govern(), name="flightdeck host governor"))
+        self._tasks.append(asyncio.create_task(self._waits(), name="flightdeck waits"))
         self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
         if self.watches_folder:  # a folder board takes challenges added during the run
             for b in self.board.challenges:
@@ -605,6 +611,14 @@ class Run:
                 governor.use(reading)
                 failing = False
             self.deck.recheck_starts()
+
+    async def _waits(self) -> None:
+        """Every waits_seconds, have the deck give up the slots of the lanes that have waited
+        for the player long enough (Deck.recheck_waits, P91): the deck has no clock of its own
+        to wake it."""
+        while True:
+            await asyncio.sleep(self.options.waits_seconds)
+            self.deck.recheck_waits()
 
     async def _waves(self) -> None:
         """Pull the board again every wave_seconds and release what is new. A failure is a
@@ -1125,6 +1139,8 @@ def prepare_run(options: RunOptions) -> Run:
         submit_limited=config.lanes.submit_limited,
         wrong_stop=config.lanes.wrong_stop,
         variant_tries=config.lanes.variant_tries,
+        max_waiting=config.lanes.max_waiting,
+        bench_after=options.bench_after,
         models=ladder,
         lanes_ceiling=profile.max_lanes if profile is not None else None,
         # in the console the player may go as far as the event's rules do, whatever this run started with
@@ -1543,10 +1559,13 @@ def anthropic_price_notes(config: Config, cap: float | None) -> list[str]:
 
 def _check_options(options: RunOptions) -> None:
     """Options a caller set in code that the run cannot use."""
-    for name in ("wave_seconds", "solves_seconds", "team_seconds", "governor_seconds"):
+    for name in ("wave_seconds", "solves_seconds", "team_seconds", "governor_seconds", "waits_seconds"):
         value = getattr(options, name)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value > 0):
             raise RunError(f"{name} must be a positive number of seconds, not {value!r}")
+    value = options.bench_after
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value >= 0):
+        raise RunError(f"bench_after must be a number of seconds, 0 or more, not {value!r}")
     if options.instance not in INSTANCE_POLICIES:
         raise RunError(f"instance must be auto, confirm or off, not {options.instance!r}")
     if options.submit not in (None, "confirm", "auto"):

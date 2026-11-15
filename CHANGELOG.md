@@ -4,6 +4,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- A lane waiting for your answer to a flag or to more budget now gives its slot to the next
+  queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
+  once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
+  (`[lanes]`, 4 by default) are without a slot at once, each keeping its workspace; one more
+  keeps its slot, and so does a lane with a session open, and its transcript says why.
+  `max_waiting = 0` keeps every slot, the live-box wait's too.
 - A take-over whose shell cannot open no longer leaves the console frozen. When `docker` (or
   `bash`) is not there to run, the shell ends at once with an error (the lane's container is
   gone), or a signal ends it, you are back in the console straight away, the lane is handed

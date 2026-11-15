@@ -245,7 +245,12 @@ network unless its challenge has a live instance it may reach: a web origin, or 
 plugin started for it (`tls://host:port`: ctfd-whale's, or rCTF's `tcp-ssl`). Under an event
 whose instance policy is `confirm`, the lane asks you first. While it waits for your answer it
 gives its slot to the next queued challenge; once you answer, it takes the next free slot
-before anything queued, and its state reads `queued` until it has one.
+before anything queued, and its state reads `queued` until it has one. A lane waiting for your
+answer to a flag or to more budget does the same once it has waited a minute, so the queue does
+not stand still while you are away, and a quick answer keeps the lane where it is. Each lane
+without a slot keeps its workspace (its container), so `max_waiting` under `[lanes]` (4 by
+default) says how many may be without one at once; one more keeps its slot, and so does a lane
+with a session still open, since its program runs on. `max_waiting = 0` keeps every slot.
 
 The network it then gets reaches **that instance and nothing else**: each host and port its
 challenge's `urls` name, and for a coding-agent lane (`--agent`) its CLI's API too
@@ -950,7 +955,7 @@ until jq -e '.closed' status.json > /dev/null; do sleep 5; done   # wait for the
 | `event` | The event's name. |
 | `runtime_seconds` | Seconds since the run started. |
 | `closed` | `true` in the last write, once the run has shut down. |
-| `lanes` | Each lane, by number: `id`, `challenge` (`id`, `name`), `state` (`run`, `wait`, `queued` (answered after it gave its slot up for a live-box answer: it waits for a free one), `paused`, `takeover`, `solved`, `killed`, `stopped`, `gave up`), `model`, `turns`, `tokens`, `dollars` (what is known), `unpriced` (some of its spend had no price), `needs_you`, `pending` (null, or the approval it waits for: `kind`, `detail`, `flag`), `waiting` (further approvals behind that one), `alerts` (each `kind` and `reason`), `result` (one line, once it ended). |
+| `lanes` | Each lane, by number: `id`, `challenge` (`id`, `name`), `state` (`run`, `wait`, `queued` (answered after it gave its slot up while it waited for you: it waits for a free one), `paused`, `takeover`, `solved`, `killed`, `stopped`, `gave up`), `model`, `turns`, `tokens`, `dollars` (what is known), `unpriced` (some of its spend had no price), `needs_you`, `pending` (null, or the approval it waits for: `kind`, `detail`, `flag`), `waiting` (further approvals behind that one), `alerts` (each `kind` and `reason`), `result` (one line, once it ended). |
 | `needs_you` | The lanes that need you, most urgent first, in the console's attention order: `lane`, `challenge` (its name), `pending` (the approval's kind, or null), `alerts` (the kinds that want an answer). |
 | `queue` | `length`, `held`, and `held_reason` (null unless held). |
 | `totals` | `tokens`, `dollars` and `unpriced` over all lanes: the console's header. |

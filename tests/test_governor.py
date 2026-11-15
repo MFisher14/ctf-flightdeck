@@ -19,7 +19,7 @@ from ctf_flightdeck import governor
 from ctf_flightdeck.config import GovernorConfig
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.deck import Deck, QueueEntry
-from ctf_flightdeck.core.model import Challenge, DeckConfig, EventKind
+from ctf_flightdeck.core.model import Challenge, DeckConfig, EventKind, LaneState
 from ctf_flightdeck.governor import Decision, Governor, Reading, decide, probe, summary
 from ctf_flightdeck.hardware import GIB, MIB, Fact, ProbeError
 from ctf_flightdeck.run import RunError, RunOptions, prepare_run
@@ -490,3 +490,43 @@ def test_a_first_reading_that_fails_outright_stops_the_run_before_it_starts_and_
             prepare_run(RunOptions(board=folder, config=cfg, host_reading=raising(OSError("it broke"))))
         with pytest.raises(RunError, match="governor_seconds must be a positive number of seconds, not 0"):
             prepare_run(RunOptions(board=folder, config=cfg, governor_seconds=0))
+
+
+# ---------------------------------------------------------------------- a run gives a long wait's slot up (P91)
+
+
+def test_a_run_gives_the_slot_of_a_lane_whose_flag_waits_to_the_queue_and_uses_the_configs_max_waiting(tmp_path):
+    # one lane at once: the first proposes a wrong flag and waits for the player (submit confirm)
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{not_it}"}) for _ in range(4)])
+
+    async def main():
+        with server:
+            cfg = config(tmp_path, server.base_url, "[governor]\nenabled = false\n")
+            run = prepare_run(RunOptions(board=board(tmp_path), config=cfg, max_lanes=1, waits_seconds=0.02, bench_after=0.1))
+            deck = run.deck
+            assert (deck.config.max_waiting, deck.config.bench_after) == (4, 0.1)
+            run.release()
+            try:
+                (first,) = deck.lanes.values()
+                await wait_for(lambda: first.pending is not None, "the first lane's flag")
+                await wait_for(lambda: len(deck.lanes) == 2, "the queued challenge to start in the slot it gave up")
+                assert first.benched and first.state is LaneState.WAITING and deck.queue == []
+            finally:
+                await run.shutdown()
+            run.close()
+            logged = [json.loads(line) for line in run.log.path.read_text().splitlines()]
+            given = [line["data"] for line in logged if line["kind"] == "slot"]
+            assert given[0] == {"slot": "given", "for": "submit", "started": ["L02"]}
+
+    asyncio.run(main())
+
+
+@pytest.mark.parametrize(("name", "value", "said"), [
+    ("waits_seconds", 0, "waits_seconds must be a positive number of seconds, not 0"),
+    ("bench_after", -1, "bench_after must be a number of seconds, 0 or more, not -1"),
+])
+def test_a_run_refuses_a_bad_wait_option(tmp_path, name, value, said):
+    with FakeModelServer([]) as server:
+        cfg = config(tmp_path, server.base_url)
+        with pytest.raises(RunError, match=said):
+            prepare_run(RunOptions(board=board(tmp_path), config=cfg, **{name: value}))

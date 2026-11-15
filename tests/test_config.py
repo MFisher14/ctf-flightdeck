@@ -269,6 +269,11 @@ def test_counted_tries_wait_for_the_player_unless_the_config_opts_in(tmp_path):
     for bad in ("-1", "1.5", '"3"', "true"):
         assert "lanes.wrong_stop must be a whole number, 0 or more" in error(write(tmp_path, LADDER + f"[lanes]\nwrong_stop = {bad}\n"))
     assert load_config(write(tmp_path, LADDER + '[lanes]\nsubmit_limited = "auto"\n')).lanes.submit_limited == "auto"
+    assert load_config(write(tmp_path, LADDER)).lanes.max_waiting == 4  # lanes waiting for the player without a slot (P91)
+    assert load_config(write(tmp_path, LADDER + "[lanes]\nmax_waiting = 0\n")).lanes.max_waiting == 0
+    for bad in ("-1", "1.5", '"3"', "true"):
+        assert "lanes.max_waiting must be a whole number, 0 or more (0: lanes keep their slots while they wait)" in error(
+            write(tmp_path, LADDER + f"[lanes]\nmax_waiting = {bad}\n"))
     assert load_config(write(tmp_path, LADDER)).lanes.variant_tries == 0  # flag variants are off unless asked for
     assert load_config(write(tmp_path, LADDER + "[lanes]\nvariant_tries = 12\n")).lanes.variant_tries == 12
     for bad in ("-1", "13", "1.5", '"3"', "true"):

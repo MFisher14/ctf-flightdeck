@@ -65,7 +65,7 @@ class Lab:
                  prices: dict[str, Price] | None = None, handouts: dict[str, Path] | None = None,
                  max_retries: int = 0, backoff: float = 0.0, l1=None, urls=None, instance: str = "auto",
                  submit: str = "confirm", compact_at: int | None = 50_000, flag_format: str = FLAG,
-                 submitter=None, secrets: dict[str, str] | None = None) -> None:
+                 submitter=None, secrets: dict[str, str] | None = None, **deck) -> None:
         self.tmp = tmp_path
         self.server = server
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -82,7 +82,7 @@ class Lab:
             compact_at=compact_at,
             secrets=secrets,
         )
-        config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=max_lanes, submit=submit)
+        config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=max_lanes, submit=submit, **deck)
         self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"), submitter=submitter)
 
     def release(self, *ids: str) -> None:
@@ -2773,6 +2773,35 @@ def test_a_flag_that_is_a_value_the_run_holds_is_raised_as_the_lane_gave_it(tmp_
             await until(lambda: lane.pending is not None, "the candidate flag")
             assert lane.pending.flag == secret  # never [HELD]: that is not what the lane found
             assert lane.actions[0].text == "submit [HELD]"
+            await lab.finish()
+
+    run(main())
+
+
+# ---------------------------------------------------------------------- what runs on while a lane waits (P91)
+
+
+def test_a_lane_with_an_open_session_keeps_its_slot_while_its_flag_waits_and_gives_it_up_once_closed(tmp_path):
+    server = FakeModelServer([
+        tool_calls_reply([("session_start", {"command": "sleep 60", "wait_seconds": 0}),
+                          ("submit_flag", {"flag": "t{maybe}"})]),
+    ])
+    handouts = {"note": handout(tmp_path), "other": handout(tmp_path, "other")}
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, max_lanes=1, handouts=handouts, bench_after=0)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            assert lab.driver.running(lane) == "its session s1 still runs"
+            lab.deck.recheck_waits()
+            assert not lane.benched and len(lab.deck.lanes) == 1
+            assert lane.actions[-1].text.endswith(": its session s1 still runs")
+            await lab.driver.runs[lane.id].toolbox.close_sessions("test")
+            assert lab.driver.running(lane) == ""
+            lab.deck.recheck_waits()
+            assert lane.benched and len(lab.deck.lanes) == 2  # the queued challenge started in its slot
             await lab.finish()
 
     run(main())

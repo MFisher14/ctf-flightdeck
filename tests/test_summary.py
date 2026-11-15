@@ -84,6 +84,9 @@ class Driver:
         assert self.deck is not None
         self.escalations.append((model, lane_summary(self.deck, lane, before=summary), lane_summary(self.deck, lane)))
 
+    def running(self, lane) -> str:
+        return ""  # nothing of a lane runs while it waits (P91): the catch-all below would answer None
+
     def __getattr__(self, name):
         return lambda *args, **kwargs: None
 

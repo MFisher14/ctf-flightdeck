@@ -103,7 +103,7 @@ PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves t
     "openai": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "anthropic": (ANTHROPIC_BASE_URL, "ANTHROPIC_API_KEY"),
 }
-_LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit", "submit_limited", "wrong_stop", "variant_tries")
+_LANE_KEYS = ("max_lanes", "max_waiting", "runtime", "image", "token_cap", "dollar_cap", "submit", "submit_limited", "wrong_stop", "variant_tries")
 LIGHT_ENGINES = ("rules", "openai", "anthropic", "cactus", "decider")
 MODEL_ENGINES = ("openai", "anthropic")  # the light engines that take a model, a base_url and a key_env
 _LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price", "threshold", "thinking")
@@ -198,6 +198,7 @@ class LightConfig:
 @dataclass(frozen=True)
 class LaneConfig:
     max_lanes: int = 4
+    max_waiting: int = 4  # lanes that may give their slot up while they wait for you, each keeping its workspace (P91); 0: none
     runtime: str = "docker"  # docker | host
     image: str = "ctf-flightdeck-lane:1"  # lane.IMAGE: built by `flightdeck image build`
     token_cap: int | None = 400_000  # None: no cap
@@ -649,6 +650,10 @@ ladder = []
 [lanes]
 max_lanes = 4                   # lanes at once; the rest wait in the queue. "unlimited": no limit (the [governor] still
                                 # holds new lanes back while this machine is over a limit). In the console: /config lanes N
+max_waiting = 4                 # a lane that waits for you (a live-box answer at once; a flag or more budget after a
+                                # minute) gives its slot to the next queued lane, and takes one again once answered. At
+                                # most this many go without a slot at once, each keeping its workspace. 0: lanes keep
+                                # their slots while they wait
 runtime = "docker"              # "docker": a container per lane; "host": on this machine
 image = "ctf-flightdeck-lane:1" # the lanes' docker image: `flightdeck image build` makes it (never pulled)
 token_cap = 400000              # per lane; false for no cap
@@ -1293,8 +1298,12 @@ def _lanes(path: Path, table: dict) -> LaneConfig:
         raise _error(
             path, ("lanes", "image"), "must be a docker image name: no spaces or control characters, and not starting with -"
         )
+    max_waiting = table.get("max_waiting", defaults.max_waiting)
+    if not _is_int(max_waiting) or max_waiting < 0:
+        raise _error(path, ("lanes", "max_waiting"), f"must be a whole number, 0 or more (0: lanes keep their slots while they wait){_got(max_waiting)}")
     return LaneConfig(
         max_lanes=max_lanes,
+        max_waiting=max_waiting,
         runtime=_choice(path, table, ("lanes", "runtime"), defaults.runtime, RUNTIMES),
         image=image,
         token_cap=_cap(path, table, "token_cap", defaults.token_cap, whole=True),

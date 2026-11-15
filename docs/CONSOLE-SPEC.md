@@ -525,7 +525,10 @@ more, as it does at 100%; escalate is offered at 80% only.
 A lane waiting for a live-box answer gives its slot up (P83): the next queued challenge starts in
 it, and the lane's transcript says which lane took it. Once answered, the lane goes on if a slot
 is free; if none is, its state reads `queued` (`que` in the compact layout) until one frees, and it
-takes that one before any queued challenge. Other approvals keep their slot.
+takes that one before any queued challenge. A lane waiting for a flag answer or more budget does
+the same once it has waited a minute (P91), so an answer you give at once keeps its slot. At most
+`max_waiting` lanes (`[lanes]`, 4 by default) are without a slot at once; one more keeps its
+slot, as does a lane with a session still open, and its transcript says why, once.
 
 ## Interventions
 
