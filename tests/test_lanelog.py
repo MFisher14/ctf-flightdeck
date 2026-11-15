@@ -887,7 +887,8 @@ def test_help_lists_the_details_key_and_command_and_the_keys_that_page_the_trans
     from ctf_flightdeck.console.screens import KEY_HELP, LANE_KEY_HELP, HelpScreen
 
     keys = dict(LANE_KEY_HELP)
-    assert "ctrl+o" not in dict(KEY_HELP) and "pgup pgdn" not in dict(KEY_HELP)  # keys of a lane's view (P65)
+    assert "pgup pgdn" not in dict(KEY_HELP)  # a key of a lane's view (P65)
+    assert dict(KEY_HELP)["ctrl+o"].startswith("Attach files")  # in the lane list it is the file window (P85), not details
     assert keys["ctrl+o"] == "Details on or off. Off: a row for each entry, and the needs-you card in three"
     assert keys["pgup pgdn"] == f"Scroll the transcript; pgup at the top of a long one shows {MOUNTED} more entries"
     _, app, _ = one_lane("simple")
