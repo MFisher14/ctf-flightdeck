@@ -570,6 +570,19 @@ class AgentDriver:
         if run.task is not None and not run.task.done() and run.task is not asyncio.current_task():
             run.task.cancel()  # its finally closes the workspace
 
+    def running(self, lane: Lane) -> str:
+        """What of the lane runs on while it waits for the player ("" for nothing): its open
+        sessions, whose processes the lane's state does not stop (core/driver.py). The deck
+        keeps the lane's slot while they run; they close after ten minutes unused."""
+        run = self.runs.get(lane.id)
+        sessions = run.toolbox.sessions if run is not None else None
+        names = [s.name for s in sessions.open.values() if not s.eof] if sessions is not None else []
+        if not names:
+            return ""
+        if len(names) == 1:
+            return f"its session {names[0]} still runs"
+        return f"its sessions {', '.join(names)} still run"
+
     def takeover(self, lane: Lane) -> Takeover:
         """The player's shell in the lane's workspace. TakeoverRefused when the lane has none
         now: its workspace is not ready yet, or it has ended."""
