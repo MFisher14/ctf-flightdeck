@@ -28,7 +28,10 @@ run's secrets out of it before anything cuts it and fences it like the shell's o
 bytes at the end of a read that could be the start of a secret wait for the next read (or the
 process's end), so a secret written across two reads is still found whole. The read says how
 many it held; a read that sees no more output after them releases them (a prompt that ends
-without a newline, say), and a read that matched `until` shows the match whole.
+without a newline, say), and a read that matched `until` shows the match whole. What such a
+read showed that could start a secret is scrubbed again with the next read's output, so the
+rest of the secret is still found; and the oldest bytes dropped from a full buffer never end
+partway into a secret.
 """
 
 from __future__ import annotations
@@ -67,6 +70,7 @@ class Read:
     waited: float  # seconds the read waited
     exit_code: int | None = None  # why == "ended": the process's status, None when it is not known
     held: int = 0  # bytes at the end held back for the next read: they may start a secret
+    carried: bytes = b""  # the end of the last read's output that may start a secret: scrubbed with this one, not shown again
 
 
 class Session:
@@ -87,6 +91,9 @@ class Session:
         self.eof = False
         self.busy = False  # a send or a read is under way: the idle timer waits
         self.held = 0  # bytes at the buffer's start the last read held back (unfinished): not news to the next
+        self.added = 0  # bytes ever stored (dropped ones too): with _mark, what came after the last send
+        self._mark = 0  # `added` when the last send began: what came before it is no reply to it
+        self.carry = b""  # the end of what was shown that could start a secret: scrubbed again with what follows
         self._head: bytearray | None = bytearray() if process.marker else None
         self._changed = asyncio.Event()
         self._last = 0.0  # loop time of the last output
@@ -138,10 +145,16 @@ class Session:
         if not data:
             return
         self.buffer += data
+        self.added += len(data)
         over = len(self.buffer) - self.cap
+        if over > 0 and self.unfinished is not None:
+            # a secret the cut would split is kept whole, so that the scrubber finds it: the
+            # buffer may then pass the cap by less than a secret's length
+            over -= self.unfinished(bytes(self.buffer[:over]))
         if over > 0:
             del self.buffer[:over]
             self.dropped += over
+            self.held = max(0, self.held - over)
         self._last = asyncio.get_running_loop().time()
         self._changed.set()
 
@@ -150,6 +163,7 @@ class Session:
         stdin = self.process.proc.stdin
         if stdin is None or self.process.proc.returncode is not None or stdin.is_closing():
             raise SessionMistake(f"session {self.name} has ended; read what it wrote with session_send and no input")
+        self._mark = self.added  # what it wrote before this is no reply to it: it ends no read
         try:
             stdin.write(data)
             await asyncio.wait_for(stdin.drain(), SEND_TIMEOUT)
@@ -162,17 +176,24 @@ class Session:
     async def read(self, wait: float, until: bytes | None = None) -> Read:
         """What the process wrote, after waiting at most `wait` seconds: until `until` is in the
         output, until it has been quiet for QUIET seconds after writing something (with no
-        `until`), or until its output ends."""
+        `until`), or until its output ends. Only output written since the last send ends the
+        read: what came before it is shown too, but a reply is waited for. `carried` in the
+        result is the end of the last read's output that could start a secret: the caller
+        scrubs it with this output, so a secret cut between two reads is still found."""
         loop = asyncio.get_running_loop()
         begun = loop.time()
         end = begun + wait
         why = "waited"
+        found = -1
         while True:
             now = loop.time()
-            news = len(self.buffer) > self.held or self._last > begun  # what is held back is no reason to stop
-            if until is not None and until in self.buffer:
-                why = "matched"
-                break
+            since = self.added - self._mark  # bytes written since the last send
+            news = min(since, len(self.buffer) - self.held) > 0  # what is held back is no reason to stop
+            if until is not None:
+                found = self.buffer.find(until, max(0, len(self.buffer) - since - len(until) + 1))
+                if found >= 0:
+                    why = "matched"
+                    break
             if self.eof:
                 why = "ended"
                 break
@@ -201,12 +222,23 @@ class Session:
             # after it since (a prompt with no newline, say), is released, so nothing waits for good
             keep = self.unfinished(bytes(self.buffer))
             if why == "matched" and until is not None:  # what matched is shown whole
-                keep = min(keep, len(self.buffer) - self.buffer.find(until) - len(until))
+                keep = min(keep, len(self.buffer) - found - len(until))
         output = bytes(self.buffer[: len(self.buffer) - keep])
         del self.buffer[: len(output)]
         self.held = len(self.buffer)
         dropped, self.dropped = self.dropped, 0
-        return Read(output, dropped, why, loop.time() - begun, code, held=self.held)
+        carried = self.carry
+        if output:
+            self.carry = self.tail(carried + output)
+        return Read(output, dropped, why, loop.time() - begun, code, held=self.held, carried=carried if output else b"")
+
+    def tail(self, shown: bytes) -> bytes:
+        """The end of `shown` that could start a secret: what a released hold or a matched
+        `until` showed of one. The next output is scrubbed together with it."""
+        if self.unfinished is None or not shown:
+            return b""
+        size = self.unfinished(shown)
+        return shown[len(shown) - size:] if size else b""
 
     async def stop(self) -> None:
         """Kill the process and everything it started; never raises."""

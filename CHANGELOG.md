@@ -4,6 +4,12 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- A lane's session no longer answers one call late. Output a program wrote before a send (a
+  debugger still loading, say) comes with the send's read but no longer ends it, so the read
+  waits for the reply, and `until` is looked for only in what came after the send. A secret of
+  the run's that a session writes is now taken out even when a read showed its start (after a
+  pause, or inside what `until` matched), and when the session's full buffer drops its oldest
+  bytes.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
@@ -15,7 +21,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   gone), or a signal ends it, you are back in the console straight away, the lane is handed
   back as it was (a paused lane stays paused), and the status line says why: `the shell did
   not start: docker was not found (is it installed and on your PATH?)`, or `the shell exited at
-  once with status 1`. A shell that never ran is not told to the lane.
+  once with status 1`. A shell that never ran is not told to the lane, except that the
+  take-over closed its sessions, when it had any.
 - `flightdeck mock` no longer rings the terminal's bell unless your config says `bell = true`
   under `[console]`: its lanes are scripted and need no one. A run rings as before, and
   `bell = false` still silences both.

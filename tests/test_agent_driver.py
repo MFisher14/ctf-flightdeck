@@ -1999,6 +1999,51 @@ def test_a_take_over_closes_the_lanes_sessions_and_the_hand_back_says_so(tmp_pat
     run(main())
 
 
+def test_a_take_over_whose_shell_never_ran_still_tells_the_lane_its_sessions_were_closed(tmp_path, monkeypatch):
+    """The console could not hand the terminal over (abandon), or begin() failed after it had
+    closed the sessions: nothing was done in the workspace, but the sessions are gone, and
+    the lane hears that once."""
+    counter = {"n": 0}
+
+    def responder(record):
+        counter["n"] += 1
+        return _a_lane_with_a_session(counter)
+
+    server = FakeModelServer(responder=responder)
+    told = "The player tried to take over your shell, which closed your sessions (s1): start again what you still need."
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the lane waiting on a candidate")
+            run_ = lab.driver.runs[lane.id]
+            notes = list(run_.notes)
+            session = take_over(lab, lane)
+            await asyncio.wait_for(session.begin(), 10)
+            session.abandon()
+            session.abandon()  # the console may say it twice: the lane hears it once
+            assert run_.notes == [*notes, told]
+            assert lab.deck.apply(iv.HandBack(lane.id, "no shell")).ok
+
+            await run_.toolbox.sessions.start("cat")  # a second session, which the next begin() closes
+
+            def no_shell():
+                raise OSError("no shell here")
+
+            monkeypatch.setattr(run_.workspace, "interactive_shell", no_shell)
+            session = take_over(lab, lane)
+            with pytest.raises(OSError, match="no shell here"):
+                await asyncio.wait_for(session.begin(), 10)
+            monkeypatch.undo()
+            assert run_.notes[-1] == told.replace("(s1)", "(s2)")
+            assert lab.deck.apply(iv.HandBack(lane.id, "no shell")).ok
+            await lab.finish()
+
+    run(main())
+
+
 def test_a_lanes_end_closes_its_sessions(tmp_path):
     counter = {"n": 0}
 
