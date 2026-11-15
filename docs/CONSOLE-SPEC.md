@@ -48,8 +48,23 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   several, a card to queue or claim it and to open any of its lanes (`1`-`9`). A parked challenge
   can be queued again, from its card or with `/queue`.
 - **Fleet**: one compact row per lane, scrolling, **sorted by attention** (below). Finished lanes
-  collapse into one row. 40+ rows stay usable. The list keeps its scroll position. The
-  attention cell (`!`) shows what the lane most urgently needs from you (an alert or an approval);
+  collapse into one row. 40+ rows stay usable. The list keeps its scroll position.
+  The keys act on the selected lane, and the selection follows the cursor, which never selects
+  the finished row (P96):
+  - A filter that hides the selected lane selects the lane row the cursor is drawn on (the
+    nearest lane row when the cursor is on the finished row), so the row drawn highlighted is
+    the one `a`, the numbers and Enter act on. Clearing the filter leaves it there. Only a
+    filter that leaves no lane row keeps the hidden lane selected, and every key refuses it.
+  - A lane the player answered from the list (approved, declined or killed it, by key, number,
+    command bar or `A`) that then folds into the finished row hands the selection to the first
+    lane shown that needs the player, in attention order, as `ctrl+n` in a lane's view; with
+    none, to the row that was under it (above it, when it was the last row). The answer counts
+    while the selection stays on that lane: a player who moved off it and back, or a lane that
+    ended with no answer of the player's (a teammate's solve, a lane that gave up), keeps the
+    finished lane selected, and the cursor points at the finished row. An answer given in a
+    lane's own view moves nothing in the list.
+
+  The attention cell (`!`) shows what the lane most urgently needs from you (an alert or an approval);
   with nothing to answer, `sending` while a flag of the lane is on its way to the platform (its
   answer comes back on its own), else an informational alert, if any. The cost column has room
   for its markers: `$0.42+` when some spend had no price (what is known, as "at least"), and `…`
@@ -64,8 +79,8 @@ corner in any font). The header's segments are solid blocks with a `╱` between
     through a lane's view, `/layout` and a resize.
   - Its first row is a rule that names the lane and its challenge: the lane the keys and the
     command bar act on, so with the board in focus it is the challenge's only lane, and `no
-    lane` when no lane or several work it, or when the filter hides the selected lane. It
-    follows the selection.
+    lane` when no lane or several work it, or when the filter hides the selected lane (it
+    does only when it leaves no lane row: P96). It follows the selection.
   - Under the rule, six rows at most, oldest first, each cut at the edge and never wrapped.
     They are the calm transcript's rows (Focus view, below) with a run of tool calls opened:
     every call is a row (`⏺ the call → the first line of its output`, each with ` …+N lines`
@@ -379,7 +394,7 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   |---|---|
   | none, on a board the player fills | `/new add a challenge  ? help  q quit` |
   | none, on a platform's board | `? help  q quit` |
-  | hidden by the filter | as for none: every key refuses it, and the bar's title says `no lane` |
+  | hidden by a filter that leaves no lane row | as for none: every key refuses it, and the bar's title says `no lane` (a filter that leaves a lane row selects it: Fleet view) |
   | needs nothing, or has finished | `enter open  / commands  ? help  q quit` |
   | waits for an approval | `a approve  d decline  enter open  / commands  ? help  q quit` |
   | has an alert with numbered answers | `1-9 answer`, and `x dismiss` when the alert is about its course, then `enter open  / commands  ? help  q quit` |

@@ -535,7 +535,14 @@ The lane list's keys act on the selected lane: `p` pause, `h` hint, `r` redirect
 `e` escalate, `t` take over, `a` approve, `d` decline, `x` dismiss, `1`-`9`/`0` quick answers,
 `c` claim (team), `/` commands, `s` sort, `?` help, `q` quit; `A`
 approves every waiting flag; **Space** peeks at the lane and **Enter** opens it full screen. They act in both layouts; the
-simple layout's key line shows only the ones that apply now. The whole design is in the
+simple layout's key line shows only the ones that apply now.
+
+The selected lane is the highlighted row. A filter that hides it selects the row the cursor
+is on instead, so the keys always act on the lane you see highlighted; a filter that leaves no
+lane at all refuses every key until `esc` clears it. When you approve, decline or kill a lane
+from the list and it ends, folding into `N finished`, the selection moves on to the next lane
+that needs you (as `ctrl+n` does in a lane's view), or to the row under it when none does. A
+lane that ends on its own, with no answer of yours, stays selected, so you see what happened. The whole design is in the
 [console spec](CONSOLE-SPEC.md).
 
 **Help.** `?` opens help for where you are: in the lane list, and in a lane while its chat box
