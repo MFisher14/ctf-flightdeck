@@ -4,6 +4,10 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- A lane on a model server whose context is too small for it (Ollama's 4,096-token default)
+  no longer refreshes its context on nearly every call, which hid each tool's output from its
+  model. When a fresh context alone takes most of what the server keeps, the lane says once
+  that the server's context is too small and what to set, and goes on in its context.
 - A lane waiting for your answer to a flag or to more budget now gives its slot to the next
   queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
   once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes

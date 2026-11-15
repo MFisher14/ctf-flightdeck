@@ -223,3 +223,44 @@ def test_a_run_that_never_refreshes_says_the_server_dropped_messages_and_goes_on
     assert sent[2] == ["system", "user"] + ["assistant", "tool"] * 2  # not refreshed
     assert any(DROPPED in t and "never refreshes a lane" in t for t in texts), texts
     assert not [t for t in texts if "context refreshed" in t], texts
+
+
+CRAMPED = "is too small for a lane"
+
+
+def test_a_server_context_a_fresh_context_nearly_fills_is_said_once_and_not_refreshed_into(tmp_path):
+    """Ollama at its 4,096-token default: the drop is seen at 3,900 and the lane is refreshed,
+    but its fresh context alone counts 3,500 of them. Refreshing at 3,900 from then on would
+    replace the context on nearly every call, so the model never saw a tool's output: the lane
+    goes on in its context instead, and the player is told once that the server's is too small."""
+    sent, texts, fits = run_lane(tmp_path, [
+        shell(1, 3_000),
+        shell(2, 3_900),
+        shell(3, 3_890),  # the drop: fits 3,900, refreshed at once
+        shell(4, 3_500),  # the first call of the fresh context: it takes 3,500 of the 3,900
+        shell(5, 3_950),  # past 3,900: not refreshed, told why
+        shell(6, 3_940),  # another drop: not said again, not refreshed
+        shell(7, 3_960),
+    ])
+    assert fits == {"small": 3_900}
+    assert sent[3] == ["system", "user", "user"]  # the refresh after the drop
+    assert sent[5] == ["system", "user", "user"] + ["assistant", "tool"] * 2  # grown, not refreshed at 3,950
+    assert sent[7] == ["system", "user", "user"] + ["assistant", "tool"] * 4  # nor after the second drop
+    assert len([t for t in texts if DROPPED in t]) == 1, texts
+    told = [t for t in texts if CRAMPED in t]
+    assert len(told) == 1 and "takes 3,500 of them" in told[0] and "from 3,900 prompt tokens on" in told[0], texts
+    assert len([t for t in texts if "context refreshed" in t]) == 1, texts
+
+
+def test_a_fresh_context_with_room_under_the_point_is_still_refreshed_at_it(tmp_path):
+    """The other side of the line: a fresh context of 2,900 leaves a quarter of the 3,900 free,
+    so the lane is refreshed there as before, and nothing says the server is too small."""
+    sent, texts, fits = run_lane(tmp_path, [
+        shell(1, 3_000),
+        shell(2, 3_900),
+        shell(3, 3_890),  # the drop: refreshed at once
+        shell(4, 2_900),  # the fresh context takes under three quarters of 3,900
+        shell(5, 3_950),  # refreshed
+    ])
+    assert sent[5] == ["system", "user", "user"]
+    assert not [t for t in texts if CRAMPED in t], texts

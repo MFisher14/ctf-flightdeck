@@ -324,6 +324,10 @@ class _Run:
     # the last answered call: (its context, how many messages it sent, the model asked, the one
     # that answered, the prompt tokens the server counted), for _dropped; None before the first
     counted: tuple[list[dict], int, str, str, int] | None = None
+    # the context the lane's last refresh made, and the prompt tokens its first answered call
+    # counted (None until then): how much of a model's refresh point a fresh context takes (_cramped)
+    refreshed: list[dict] | None = None
+    fresh: int | None = None
 
 
 @dataclass
@@ -448,6 +452,7 @@ class AgentDriver:
         self.max_tokens = max_tokens
         self.compact_at = compact_at  # None: never refresh a lane's context
         self.fits: dict[str, int] = {}  # model -> the smallest count of a call just before its server dropped messages (_dropped)
+        self.cramped: set[str] = set()  # the models the player was told leave a fresh context too little room (_cramped)
         self.l1 = l1  # the player's no-model solvers, run before a lane's first model call; None: none
         if instance not in INSTANCE_POLICIES:
             raise ValueError(f"instance must be one of {', '.join(INSTANCE_POLICIES)}, got {instance!r}")
@@ -684,6 +689,8 @@ class AgentDriver:
                 await self._until_over(run)  # it gave up: no more model calls, though a flag of it may still wait
                 return
             if run.messages is messages:  # not escalated during the turn
+                if messages is run.refreshed and run.fresh is None:
+                    run.fresh = reply.usage.prompt_tokens  # what a fresh context of the lane takes (_cramped)
                 dropped = self._dropped(run, model, messages, sent, reply)
                 self._refresh_if_long(run, reply.usage.prompt_tokens, model, now=dropped)
 
@@ -1170,6 +1177,8 @@ class AgentDriver:
             return False
         known = self.fits.get(model)
         self.fits[model] = fitted if known is None else min(known, fitted)
+        if self._cramped(run, model):
+            return True  # no refresh helps: _refresh_if_long says so, once a model, not at every drop
         lane_id = run.lane_id
         first = known is None
         self._say(lane_id, f"{lane_id}: the model server left out messages of this context: it counted {tokens:,} prompt "
@@ -1188,16 +1197,38 @@ class AgentDriver:
         """Past compact_at prompt tokens, continue in a fresh context: the same prefix and
         brief (so the API's cache still hits) plus a summary, instead of the whole history.
         Sooner for a model whose server was seen to drop messages (`fits`, _dropped), and at
-        once (`now`) after a call it dropped some of. Never when compact_at is None."""
+        once (`now`) after a call it dropped some of. Never when compact_at is None, nor when
+        a fresh context of the lane leaves too little room under that point (_cramped): the
+        player is told so, once a model."""
         lane = self._lane(run)
         if self.compact_at is None or lane is None or lane.finished:
             return
         point = min(self.compact_at, self.fits.get(model, self.compact_at))
         if not now and prompt_tokens < point:
             return
+        if self._cramped(run, model):
+            if model not in self.cramped:
+                self.cramped.add(model)
+                self._say(lane.id, f"{lane.id}: the server's context for {model} is too small for a lane: it drops messages "
+                                   f"from {self.fits[model]:,} prompt tokens on, and a fresh context of this lane takes "
+                                   f"{run.fresh:,} of them, so a refresh would come again within a turn. Lanes on {model} "
+                                   f"go on without their oldest messages instead. Give the server a longer context (Ollama: "
+                                   f"OLLAMA_CONTEXT_LENGTH=65536 where it runs, then restart it) and set context under "
+                                   f"[api] to it (docs/MODELS.md)")
+            return
         summary = lane_summary(self.deck, lane)
         run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": self.redact(prompts.refresh(summary, prompt_tokens))}]
+        run.refreshed, run.fresh = run.messages, None
         self._say(lane.id, f"context refreshed at {prompt_tokens:,} prompt tokens (a summary replaces the history)")
+
+    def _cramped(self, run: _Run, model: str) -> bool:
+        """Whether a fresh context of the lane takes more than three quarters of the point its
+        model's server was seen to drop messages at (`fits`): a refresh there would leave too
+        little room for a turn, so the lane would be refreshed again on nearly every call and
+        its model would never see a tool's output. Known only once a refresh's first call is
+        answered (run.fresh); before that, False."""
+        fits = self.fits.get(model)
+        return run.fresh is not None and fits is not None and run.fresh * 4 > fits * 3
 
     # ------------------------------------------------------------------ helpers
 
