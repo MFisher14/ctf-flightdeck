@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: eleven proposals, P69 to P79 (2026-11-14)
+## Built, not released: eighteen proposals, P69 to P86 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P79); the lines for players are under Unreleased in
+[DECISIONS.md](DECISIONS.md) (P69 to P86); the lines for players are under Unreleased in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -81,6 +81,20 @@ Proposals built and waiting for a release, in the order of their numbers in
   queued challenge starts in it, and once answered the lane takes the next free slot before
   anything queued. It was the last item left of M5 that was not about coding-agent lanes or a
   real event.
+- **Tests wait for what must happen, also on a busy machine** (P84). A console test's
+  `pilot.pause()` waits until the screen has settled, not until the process looks idle, and
+  the tests that waited for a time now wait for the condition they meant. No change to
+  flightdeck itself; CONTRIBUTING says what a pause waits for.
+- **Three leftovers from the review** (P85). `flightdeck init --force` replaces a config whole
+  (`config_edit.replace_file`), never writes over it in place; a `/new` with images that fails
+  after it was answered removes the copies of its drop and says so; `ctrl+o` in the lane list
+  opens the file window for the selected lane's challenge, as a bare `/attach` does.
+- **Claude lanes checked against a real Claude Code** (P86,
+  [#3](https://github.com/MFisher14/ctf-flightdeck/issues/3), in part). A run of Claude Code
+  2.1.325 with no tools: a claude lane now ends a turn with an interrupt request, not SIGINT
+  (which ended a claude waiting for a message), counts the output tokens its events miss, and
+  charges a call an interrupt cut short. Still open: claude's tool calls, a whole `practice
+  --agent claude` run, and all of codex.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
