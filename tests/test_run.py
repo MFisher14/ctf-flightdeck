@@ -882,6 +882,7 @@ def test_a_run_with_an_l1_pack_runs_its_engines_before_any_model_call(tmp_path):
         run = prepare_run(RunOptions(board=board(tmp_path), config=config(tmp_path, server.base_url), pack=pack))
         assert [m.id for m in run.driver.l1.manifests] == ["reader"]
         assert any(note.startswith("L1: 1 engine(s) from your pack run first") for note in run.notes())
+        assert run.driver.l1.model_after == 60.0  # the config's [l1] model_after, by default
 
         async def main():
             run.release()

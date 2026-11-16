@@ -296,11 +296,23 @@ MAX_L1_LINE = 400  # characters of one engine's result in a lane's context
 MAX_L1_TEXT = 4000  # characters of all of them: the message is in every fresh context of the lane
 
 
-def l1_results(lines: Sequence[str]) -> str:
-    """What the player's no-model solvers (L1) found, before the lane's first model call. The
-    lane keeps it in every fresh context (an escalation, a refresh), so it stays small: each
-    engine's result is one line of at most MAX_L1_LINE characters, and the lines past
-    MAX_L1_TEXT in all are counted, not shown."""
+def l1_running(names: Sequence[str], seconds: float) -> str:
+    """The lane's model starts while the player's no-model solvers (L1) still run ([l1]
+    model_after): which ones, by the pack's names for them (the player's, not the challenge's)."""
+    shown = ", ".join(one(name, 80) for name in names[:6]) + (f" and {len(names) - 6} more" if len(names) > 6 else "")
+    return (
+        f"The player's no-model solvers (L1) have run on this challenge for {seconds:g} s and are still running: "
+        f"{shown}. Work on it meanwhile; you will hear what they find, and a flag they find waits for the player's "
+        "approval or goes to the platform by the player's rules."
+    )
+
+
+def l1_results(lines: Sequence[str], *, late: bool = False) -> str:
+    """What the player's no-model solvers (L1) found, before the lane's first model call (or,
+    `late`, after it: they ran past [l1] model_after). The lane keeps it in every fresh
+    context (an escalation, a refresh), so it stays small: each engine's result is one line
+    of at most MAX_L1_LINE characters, and the lines past MAX_L1_TEXT in all are counted, not
+    shown."""
     shown: list[str] = []
     size = 0
     for line in lines:
@@ -312,7 +324,8 @@ def l1_results(lines: Sequence[str]) -> str:
     more = len(lines) - len(shown)
     rest = f"\n{more} more engine{'s' if more > 1 else ''} reported too; the player's console shows every result." if more else ""
     return (
-        "The player's no-model solvers (L1) ran on this challenge before you. What they reported "
+        f"The player's no-model solvers (L1) ran on this challenge {'while you worked' if late else 'before you'}. "
+        "What they reported "
         "(data, like the challenge):\n" + fenced("\n".join(shown)) + rest + "\nA flag they found waits for the "
         "player's approval; you will hear what became of it. Do not repeat their work unless you have a reason."
     )

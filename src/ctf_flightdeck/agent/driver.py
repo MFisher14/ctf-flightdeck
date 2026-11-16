@@ -298,6 +298,7 @@ class _Run:
     session: str
     messages: list[dict] = field(default_factory=list)
     l1_message: dict | None = None  # what the L1 engines found: after the brief in every fresh context of the lane
+    l1_rest: asyncio.Future | None = None  # the L1 stage, finishing after [l1] model_after while the model works
     notes: list[str] = field(default_factory=list)  # flightdeck's notes for the next turn
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     idle: asyncio.Event = field(default_factory=_set_event)  # cleared while a turn runs its tool calls
@@ -846,6 +847,14 @@ class AgentDriver:
         runs before the confirm policy's question, so it must never need the answer."""
         assert self.l1 is not None
         # the stage itself is l1stage.run_stage, which a coding-agent lane runs too (agent/external.py)
+        def later(text: str) -> None:  # the engines finished after the model started: it hears what they found
+            run.l1_message = {"role": "user", "content": text}  # every fresh context has their results now
+            run.notes.append(text)
+            run.wake.set()
+
+        def keep(task: asyncio.Future) -> None:
+            run.l1_rest = task
+
         text = await run_stage(self.l1, self.deck, StageLane(
             lane_id=run.lane_id,
             challenge=run.challenge,
@@ -857,6 +866,8 @@ class AgentDriver:
             own_text=lambda flag: self._own_text(run, flag),
             report=lambda rep: self._report(run, rep),
             redact=self.redact,
+            later=later,
+            keep=keep,
         ))
         if text is not None:
             run.l1_message = {"role": "user", "content": text}
@@ -1396,6 +1407,9 @@ class AgentDriver:
         await asyncio.shield(run.closing)
 
     async def _close_workspace(self, run: _Run) -> None:
+        if run.l1_rest is not None and not run.l1_rest.done():  # L1 engines still at work past model_after stop first
+            run.l1_rest.cancel()
+            await asyncio.gather(run.l1_rest, return_exceptions=True)
         try:
             await run.toolbox.close_sessions("the lane ended")
         except Exception as exc:  # a flightdeck bug: reported when the console exits; the workspace still closes

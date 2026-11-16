@@ -65,6 +65,7 @@ class L1Stage:
     record: ProcessRecord | None = None  # the run's record of process groups: an engine on this machine is in it while it runs
     urls: Mapping[str, Sequence[str]] = field(default_factory=dict)  # challenge id -> its live instance: what online engines in Docker reach
     toolkit: str = ""  # [l1] lane_tools: the pack's note for a lane's brief (pack.lane_note); "": lanes are not told of the pack
+    model_after: float = 0.0  # [l1] model_after: seconds the engines get before the lane's model starts anyway; 0: it waits for all
 
     def __post_init__(self) -> None:
         if self.image is not None and self.pack is None:
@@ -154,11 +155,57 @@ class StageLane:
     own_text: Callable[[str], str]  # why a claimed flag waits, as the challenge's own text holds it or may; "" when nothing says so
     report: Callable[[TurnReport], None]
     redact: Callable[[str], str] = str  # takes what the lane never shows out of an engine's words (never out of a flag it gave)
+    # model_after: what the engines found once the model has started (the lane keeps it for
+    # every fresh context, and the model hears it as a note), and the lane's hold on the task
+    # that finishes the stage (cancelled when the lane closes). Without both, the stage waits
+    # for every engine, whatever model_after says
+    later: Callable[[str], None] | None = None
+    keep: Callable[[asyncio.Future[Any]], None] | None = None
 
 
 async def run_stage(stage: L1Stage, deck: Any, lane: StageLane) -> str | None:
-    """Run the engines routed to the lane's challenge, before the lane's model does anything.
-    A flag one found is the lane's candidate (claimed, unless the runner found it in what a
+    """Run the engines routed to the lane's challenge, before the lane's model does anything,
+    for at most stage.model_after seconds (0: as long as they take). What finish() says of
+    them, when they are done in time. Else the model starts with a note that they still run
+    (prompts.l1_running), and a task the lane keeps (lane.keep) finishes the stage: their
+    flags go to the deck as below, and what they found goes to the lane (lane.later). An
+    engine's own time limit is its manifest's: a pack whose engine runs out its limit no
+    longer holds the model for it (2026-11-16: the solver pack's intake ran its 300 s on two
+    practice challenges before any model started)."""
+    work = asyncio.ensure_future(stage.run(lane.lane_id, lane.challenge, online=lane.online))
+    if stage.model_after <= 0 or lane.later is None or lane.keep is None:
+        return await finish(work, deck, lane)
+    try:
+        done, _ = await asyncio.wait({work}, timeout=stage.model_after)
+    except asyncio.CancelledError:
+        work.cancel()
+        raise
+    if done:
+        return await finish(work, deck, lane)
+    names = [hit.manifest.id for hit in stage.routed(lane.challenge)]
+    lane.note(f"L1: {_engines(names)} still running after {stage.model_after:g} s: the lane's model starts now, "
+              "and hears what they find")
+    later, keep = lane.later, lane.keep
+
+    async def rest() -> None:
+        text = await finish(work, deck, lane, late=True)
+        if text is not None and not lane.over():
+            later(text)
+
+    task = asyncio.ensure_future(rest())
+    task.add_done_callback(lambda _: work.cancel())  # the lane closed first: the engines stop with it
+    keep(task)
+    return prompts.l1_running(names, stage.model_after)
+
+
+def _engines(names: Sequence[str]) -> str:
+    shown = ", ".join(names[:6]) + (f" and {len(names) - 6} more" if len(names) > 6 else "")
+    return f"{'engine' if len(names) == 1 else 'engines'} {shown}"
+
+
+async def finish(work: asyncio.Future[list[EngineRun]], deck: Any, lane: StageLane, *, late: bool = False) -> str | None:
+    """What the engines routed to the lane's challenge found, once they are done (`work`;
+    `late`: after the lane's model started, past model_after). A flag one found is the lane's candidate (claimed, unless the runner found it in what a
     text engine printed, or the challenge's own text holds it or may: lane.own_text, as for a
     flag the model gives, and the lane says why). Returns what they all found, for the lane's
     context (prompts.l1_results: fenced as data), or None when there is nothing to say there:
@@ -169,7 +216,7 @@ async def run_stage(stage: L1Stage, deck: Any, lane: StageLane) -> str | None:
     once (lane.online): it runs before the confirm policy's question, so it must never need
     the answer."""
     try:
-        runs = await stage.run(lane.lane_id, lane.challenge, online=lane.online)
+        runs = await work
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # a broken pack or an L1 bug: the lane goes on without L1, loudly
@@ -211,4 +258,4 @@ async def run_stage(stage: L1Stage, deck: Any, lane: StageLane) -> str | None:
                               f"{engine.manifest.id} gave it as its flag")
     if lane.over():
         return None
-    return prompts.l1_results([lane.redact(result_line(engine)) for engine in runs])
+    return prompts.l1_results([lane.redact(result_line(engine)) for engine in runs], late=late)
