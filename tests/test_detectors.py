@@ -525,3 +525,40 @@ def test_cached_tokens_weigh_a_tenth_in_the_effort_budget():
     assert EffortDetector(DetectConfig()).check(lane, challenge, 0.0) is None
     lane.cached_tokens = 0  # the same tokens, none cached: that is real spend
     assert EffortDetector(DetectConfig()).check(lane, challenge, 0.0) is not None
+
+
+# A Morse challenge as the practice set's signal-lamp has it: a real lane decoded it with its
+# own few lines of Python, so no step said "morse", but its output was dots and dashes, and
+# its next step a table keyed by them. Both are the lane on the hint (2026-11-16 run).
+LAMP = "The lighthouse keeper blinks the lamp at night: longs and shorts, all in a log."
+LAMP_OUTPUT = "- . -|.|.|. - - .#-|. . . .|.#. - . .|. -|- -|. - - .#. - . .|. .|-#- .|- . .|. . ."
+LAMP_TABLE = "$ python3 -I -c \"M={'.-':'a','-...':'b','-.-.':'c','-..':'d','.':'e'}; print(M)\""
+LAMP_STEPS = ["$ ls", "$ head lamp_log.csv", "$ python3 times.py lamp_log.csv", "$ wc -l lamp_log.csv"]
+
+
+def test_hint_quiet_when_the_lanes_output_is_morse_though_no_step_names_it():
+    det = HintDetector(CFG)
+    ch = fx.challenge(category="misc", description=LAMP)
+    decoding = fx.lane(*LAMP_STEPS, fx.step("$ python3 -I -c 'to_marks(rows)'", LAMP_OUTPUT))
+    assert det.check(decoding, ch, 0.0) is None
+    elsewhere = fx.lane(*LAMP_STEPS, fx.step("$ python3 -I -c 'stats(rows)'", "mean 0.41 max 1.2 min 0.1"))
+    signal = det.check(elsewhere, ch, 0.0)  # the same lane without the dots and dashes: off the hint
+    assert signal is not None and signal.kind is AlertKind.HINT and "Morse" in signal.reason
+
+
+def test_hint_quiet_when_the_lane_writes_a_table_keyed_by_dots_and_dashes():
+    det = HintDetector(CFG)
+    ch = fx.challenge(category="misc", description=LAMP)
+    assert det.check(fx.lane(*LAMP_STEPS, LAMP_TABLE), ch, 0.0) is None
+
+
+def test_three_different_python_scripts_with_the_same_first_line_are_no_loop():
+    # a real lane decoding Morse ran three scripts that each began "import csv", and the
+    # python tool's step said only that first line: the loop detector killed it (2026-11-16)
+    det = LoopDetector(CFG)
+    ch = fx.challenge(category="misc")
+    scripts = [f"python: import csv\nrows = list(csv.reader(open('lamp_log.csv')))\nprint(rows[{i}])" for i in range(3)]
+    assert det.check(fx.lane("$ ls", *scripts), ch, 0.0) is None
+    same = fx.lane("$ ls", *[scripts[0]] * 3)
+    signal = det.check(same, ch, 0.0)
+    assert signal is not None and signal.kind is AlertKind.LOOP  # the same script three times still is

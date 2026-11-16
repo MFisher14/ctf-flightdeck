@@ -103,7 +103,8 @@ COMMANDS = (
     Command("copy", "[output|command|flag|all]", "copy from the lane with no mouse: its last output, that call's command, its flag, or all",
             words=_copies),
     Command("open", "<lane>", "open a lane in the focus view", words=lambda state: state.lanes),
-    Command("note", "<text>", "a note for every lane: running ones read it on their next turn, later ones at their start", lane=False),
+    Command("broadcast", "<text>", "to every lane: running ones read it on their next turn, later ones at their start",
+            lane=False),  # /note until 0.7.0: the maintainer renamed it (2026-11-16)
     Command("settings", "", "your setup and its health: the config, the key, the models, and doctor's checks; "
                            "c there changes this run's", lane=False),
     Command("config", "[lanes N|unlimited | submit auto|confirm | file]", "this run's settings: lanes at once, auto approve (submit auto)", lane=False),
@@ -231,7 +232,7 @@ class Aim:
 
 def goes_to(typed: str) -> Aim:
     """Where the text typed so far would go: read by `parse`, so it is what enter would do.
-    A command that takes no lane (/note, /config, /approve all) is the run's; a lane command
+    A command that takes no lane (/broadcast, /config, /approve all) is the run's; a lane command
     that names a lane (`/kill L07`) goes to that one; everything else goes to the lane the
     bar acts on: a plain message, a lane command that names none, and text `parse` refuses
     (a name not typed whole yet, a stray word), which goes nowhere until it is put right.

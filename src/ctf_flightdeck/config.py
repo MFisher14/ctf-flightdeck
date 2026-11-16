@@ -215,6 +215,7 @@ class L1Config:
     concurrency: int = 4  # engines run at once on one challenge
     image: str | None = None  # the docker image engines run in when lanes run in Docker; None: the lane image
     lane_tools: bool = False  # lanes' models may call the pack's engines: the pack mounted read-only, its note in the brief
+    model_after: float = 60.0  # seconds the engines get before the lane's model starts anyway; 0: the model waits for every engine
 
 
 @dataclass(frozen=True)
@@ -820,6 +821,8 @@ engine = "rules"   # rules | openai | anthropic | cactus | decider
 # lane_tools = true             # the lanes' models may call the pack's engines too (a pack that says how: flightdeck's own does).
 #                               # Docker lanes then run in the image above, with the pack mounted read-only
 concurrency = 4                 # engines run at once on one challenge
+model_after = 60                # seconds the engines get before the lane's model starts anyway (they run on,
+                                # and the model hears what they find); 0: the model waits for every engine
 
 [notify]
 # Opt-in: a webhook flightdeck POSTs a small JSON message to during a run (docs/GUIDE.md, "Headless
@@ -1437,11 +1440,15 @@ def _is_origin(value: str) -> bool:
 
 
 def _l1(path: Path, table: dict) -> L1Config:
-    _known(path, ("l1",), table, ("pack", "concurrency", "image", "lane_tools"))
+    _known(path, ("l1",), table, ("pack", "concurrency", "image", "lane_tools", "model_after"))
     defaults = L1Config()
     concurrency = table.get("concurrency", defaults.concurrency)
     if not _is_int(concurrency) or concurrency < 1:
         raise _error(path, ("l1", "concurrency"), f"must be a whole number, at least 1{_got(concurrency)}")
+    model_after = table.get("model_after", defaults.model_after)
+    if isinstance(model_after, bool) or not isinstance(model_after, int | float) or not 0 <= model_after <= 86_400:
+        raise _error(path, ("l1", "model_after"), f"must be a number of seconds from 0 to 86400 (0: the model waits "
+                                                   f"for every engine){_got(model_after)}")
     image = None
     if "image" in table:
         image = _string(path, table, ("l1", "image"), "")
@@ -1453,7 +1460,7 @@ def _l1(path: Path, table: dict) -> L1Config:
     if "pack" not in table:
         if lane_tools:
             raise _error(path, ("l1", "lane_tools"), "needs a pack: set [l1] pack too")
-        return L1Config(concurrency=concurrency, image=image)
+        return L1Config(concurrency=concurrency, image=image, model_after=float(model_after))
     raw = _string(path, table, ("l1", "pack"), "")
     try:
         pack = Path(raw).expanduser()
@@ -1461,7 +1468,7 @@ def _l1(path: Path, table: dict) -> L1Config:
         raise _error(path, ("l1", "pack"), "starts with ~ for a home directory that cannot be found") from None
     if not raw or not pack.is_absolute():
         raise _error(path, ("l1", "pack"), "must be an absolute path or start with ~")
-    return L1Config(pack=pack, concurrency=concurrency, image=image, lane_tools=lane_tools)
+    return L1Config(pack=pack, concurrency=concurrency, image=image, lane_tools=lane_tools, model_after=float(model_after))
 
 
 def _notify(path: Path, table: dict) -> NotifyConfig:

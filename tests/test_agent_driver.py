@@ -2151,6 +2151,131 @@ def test_an_l1_engine_that_solves_it_waits_for_approval_before_any_model_call(tm
     run(main())
 
 
+def test_an_l1_flag_the_handout_holds_waits_then_waits_aside_and_the_model_starts(tmp_path):
+    # the engine read the flag out of the handout: it may be the challenge's decoy (a planted
+    # flag.txt), so it waits for the player and no model is asked. Unanswered for bench_after
+    # it waits aside, and the model starts: under autopilot nobody answers, and a decoy that
+    # held the lane kept every model off the challenge (welcome-mat, 2026-11-16)
+    server = FakeModelServer(responder=lambda record: text_reply("looking at the note"))
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path)}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"reader": SOLVES}),
+                      bench_after=3600)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the L1 flag's approval", timeout=30)
+            assert (lane.pending.flag, lane.pending.can_aside, lane.pending.aside) == ("t{note}", True, False)
+            await asyncio.sleep(0.3)
+            assert server.requests == [] and lane.state is LaneState.WAITING
+            lab.deck.config = dataclasses.replace(lab.deck.config, bench_after=0)  # the hour has passed
+            lab.deck.recheck_waits()  # the run calls this every few seconds
+            assert lane.state is LaneState.RUNNING and lane.pending.aside
+            await until(lambda: len(server.requests) >= 1, "the model's first call while the flag waits aside", timeout=30)
+            assert lane.pending.flag == "t{note}"
+            assert lab.deck.apply(iv.Approve(lane.id)).ok and lane.state is LaneState.SOLVED
+            await lab.finish()
+
+    run(main())
+
+
+def gated(gate: Path) -> str:
+    """An engine that works until the test opens `gate` (a file), then builds the flag from
+    the note's word: the test, not a clock, says when it is done."""
+    return f"""
+    import time
+    from pathlib import Path
+    from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+    def solve(challenge_dir):
+        end = time.monotonic() + 60
+        while not Path({str(gate)!r}).exists() and time.monotonic() < end:
+            time.sleep(0.05)
+        word = (challenge_dir / "note.txt").read_text().split()[-1]
+        return SolverResult("solved", flags=["t{{" + word + "}}"], evidence=[Evidence("built", "the note's word", "note.txt", 0)])
+    """
+
+
+def test_an_l1_engine_past_model_after_runs_on_while_the_model_works_and_the_model_hears_what_it_found(tmp_path):
+    # the solver pack's intake ran its full 300 s on two practice challenges before any model
+    # started (2026-11-16): past [l1] model_after the model starts, and the engine runs on
+    gate = tmp_path / "gate"
+    server = FakeModelServer(responder=lambda record: tool_call_reply("shell", {"command": "sleep 0.1; cat note.txt"}))
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path, files={"note.txt": "the word is note\n"})}
+            stage = dataclasses.replace(l1_stage(tmp_path, handouts, {"slow": gated(gate)}), model_after=0.2)
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: len(server.requests) >= 1, "the model's first call while the engine runs", timeout=30)
+            first = server.requests[0]["json"]["messages"]
+            assert any("have run on this challenge for 0.2 s and are still running: slow." in str(m.get("content"))
+                       for m in first)
+            assert "L1: engine slow still running after 0.2 s: the lane's model starts now, and hears what they find" in [
+                a.text for a in lane.actions]
+            assert lane.pending is None and not [e for e in lab.deck.events if e.kind is EventKind.L1]
+            gate.touch()
+            await until(lambda: lane.pending is not None, "the engine's flag, found after the model started", timeout=30)
+            assert (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{note}")
+            l1 = [e for e in lab.deck.events if e.kind is EventKind.L1]
+            assert [(e.data["engine"], e.data["status"]) for e in l1] == [("slow", "solved")]
+            run_ = lab.driver.runs[lane.id]
+            assert "ran on this challenge while you worked" in run_.l1_message["content"]  # fresh contexts carry it
+            assert lab.deck.apply(iv.Decline(lane.id)).ok  # the lane carries on, and its model hears the results
+            await until(lambda: any("ran on this challenge while you worked" in str(m.get("content"))
+                                    for r in server.requests for m in r["json"]["messages"]),
+                        "the model hears what the engine found", timeout=30)
+            await lab.finish()
+
+    run(main())
+
+
+def test_an_l1_engine_still_running_stops_when_its_lane_is_killed(tmp_path):
+    gate = tmp_path / "gate"
+    server = FakeModelServer(responder=lambda record: tool_call_reply("shell", {"command": "sleep 0.1; cat note.txt"}))
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path, files={"note.txt": "the word is note\n"})}
+            stage = dataclasses.replace(l1_stage(tmp_path, handouts, {"slow": gated(gate)}), model_after=0.2)
+            lab = Lab(tmp_path, server, handouts=handouts, l1=stage)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: len(server.requests) >= 1, "the model's first call while the engine runs", timeout=30)
+            rest = lab.driver.runs[lane.id].l1_rest
+            assert rest is not None and not rest.done()
+            assert lab.deck.apply(iv.Kill(lane.id, requeue=False)).ok
+            await until(lambda: rest.done(), "the engine's stage stops with its lane", timeout=30)
+            assert rest.cancelled() and not [e for e in lab.deck.events if e.kind is EventKind.L1]
+            await lab.finish()
+
+    run(main())
+
+
+def test_with_model_after_0_the_model_waits_for_every_engine(tmp_path):
+    gate = tmp_path / "gate"
+    server = FakeModelServer(responder=lambda record: text_reply("should not be asked yet"))
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path, files={"note.txt": "the word is note\n"})}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"slow": gated(gate)}))
+            assert lab.driver.l1.model_after == 0
+            lab.release()
+            lane = lab.lane()
+            await asyncio.sleep(0.5)
+            assert server.requests == [] and lane.pending is None
+            gate.touch()
+            await until(lambda: lane.pending is not None, "the engine's flag", timeout=30)
+            assert server.requests == []
+            await lab.finish()
+
+    run(main())
+
+
 def test_when_l1_does_not_solve_it_the_model_hears_what_the_engines_found(tmp_path):
     server = FakeModelServer(responder=lambda record: tool_call_reply("submit_flag", {"flag": "t{note}"}))
 

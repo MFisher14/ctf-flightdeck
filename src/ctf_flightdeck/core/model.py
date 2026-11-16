@@ -171,6 +171,11 @@ class Pending:
     detail: str
     flag: str | None = None
     at: float = 0.0  # set by the deck
+    # an L1 flag no engine vouched for (often the challenge's decoy) may wait aside: once the
+    # player has not answered it for the deck's bench_after, the lane goes on working while it
+    # waits, so a decoy never keeps a model off the challenge while the player is away
+    can_aside: bool = False
+    aside: bool = False  # it waits aside now: the lane works on; any other wait comes first
 
 
 class Actor(StrEnum):
@@ -368,7 +373,7 @@ class EventKind(StrEnum):
     WARNING = "warning"  # something did not happen as asked, with the reason
     L1 = "l1"  # a no-model solver ran on a challenge: engine, status, flags, seconds, notes
     SPEND = "spend"  # tokens or dollars spent outside a turn (a reply dropped at escalation, a judge): why, model
-    SLOT = "slot"  # a lane gave its slot up while it waits for a live-box answer, waits for one again, or took one (P83)
+    SLOT = "slot"  # a lane gave its slot up while it waits for a live-box answer, waits for one again, or took one (P83); its flag waits aside (P101)
     ROUTE = "route"  # a light model routed a challenge at a lane's start: its family, a category guess, by whom
 
 

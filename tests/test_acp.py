@@ -280,7 +280,9 @@ def test_an_acp_lane_starts_a_session_in_its_workspace_runs_steps_and_a_flag_spl
         try:
             lab.release()
             lane = lab.lane()
-            await until(lambda: lane.pending is not None, "the candidate flag")
+            # the flag is seen in the chunks before the turn's last words are a step: wait for both (P84)
+            await until(lambda: lane.pending is not None and "says: That is it." in steps(lane),
+                        "the candidate flag and the turn's last step")
             assert (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{note}")
             assert steps(lane) == ["says: Looking at the files.", "$ cat note.txt", "$ tr 'a-z' 'n-za-m' < note.txt",
                                    "says: That is it."]

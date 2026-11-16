@@ -1494,6 +1494,11 @@ class _Run:
                 self.flags.add(rep.flag)  # raised: the agent finding it again does not raise it again
             self.report(rep)
 
+        def later(text: str) -> None:  # the engines finished after the CLI started: the agent hears what they found
+            self.l1_text = text  # every later opening has their results now
+            self.notes.append(text)
+            self.sync()
+
         self.l1_text = await run_stage(stage, driver.deck, StageLane(
             lane_id=self.lane_id,
             challenge=self.challenge,
@@ -1505,6 +1510,8 @@ class _Run:
             own_text=self.own_text,
             report=report,
             redact=driver.redact,
+            later=later,
+            keep=self.track,
         ))
 
     async def changes(self) -> tuple[FileChange, ...]:

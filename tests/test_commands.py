@@ -346,7 +346,7 @@ def test_the_console_is_asked_for_its_state_only_by_a_command_whose_words_follow
 
 
 def test_a_command_without_words_of_its_own_lists_nothing_after_its_name():
-    for typed in ("/hint ", "/kill ", "/kill p", "/approve ", "/config ", "/settings ", "/new ", "/attach ", "/note ", "/filter ", "/diff "):
+    for typed in ("/hint ", "/kill ", "/kill p", "/approve ", "/config ", "/settings ", "/new ", "/attach ", "/broadcast ", "/note ", "/filter ", "/diff "):
         assert complete(typed, state=state) == [], typed
     assert [name for name, command in BY_NAME.items() if command.words] == ["copy", "open", "theme", "layout", "queue", "autopilot", "sort"]
 

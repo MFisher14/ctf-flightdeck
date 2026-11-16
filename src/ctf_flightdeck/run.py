@@ -1236,7 +1236,7 @@ def prepare_run(options: RunOptions) -> Run:
             manifests, handouts, run_dir, deck_config.flag_format, concurrency=config.l1.concurrency,
             image=config.lanes.image if runtime == "docker" else None, pack=options.pack,  # D17: engines run where lanes do
             engine_image=config.l1.image if runtime == "docker" else None, toolkit=toolkit,
-            labels=marks, record=processes, urls=urls,
+            labels=marks, record=processes, urls=urls, model_after=config.l1.model_after,
         )
     write_run_setup(run_dir, _setup(  # for the flight card of `flightdeck share`, and the solve records
         config, options, deck_config, ladder, agent=options.agent, ctfd=bool(plan.ctfd),

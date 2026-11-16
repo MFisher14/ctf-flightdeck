@@ -40,6 +40,7 @@ from pathlib import Path
 
 LEXICON_FILE = "hints.toml"
 ENTRY_KEYS = ("id", "name", "advice", "description", "actions")
+OPTIONAL_KEYS = ("shapes",)
 TOP_KEYS = ("boilerplate", "technique")
 
 _ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -84,6 +85,41 @@ runs read write open find get gets set print info value field note notes help
 """.split())
 """Words too common to be a one-word cue: they appear in descriptions and outputs that hint at
 nothing ("Flag format", "Download the attachment", "I hid the flag")."""
+
+
+# Shapes: what a lane's work looks like when it follows a technique whose tools need no name.
+# A lane decoding Morse with its own few lines of Python shows no "morse" anywhere, but its
+# output is dots and dashes, and its code holds a table keyed by them. A cue cannot say so (a
+# symbol-only cue would match far too much), so the lexicon names a shape and the code here
+# recognises it. Every pattern runs in time linear in the text: its pieces are disjoint
+# character classes, so nothing backtracks more than a group's few characters.
+_DOTS = ".·•"  # . · •
+_DASHES = "-−_"  # - − _
+_MORSE_GROUP = rf"[{re.escape(_DOTS + _DASHES)}]{{1,7}}"
+_MORSE_RUN = re.compile(rf"(?:{_MORSE_GROUP}[ \t/|#]+){{5,}}{_MORSE_GROUP}")
+_MORSE_KEY = re.compile(rf"""['"]{_MORSE_GROUP}['"]\s*:""")
+MORSE_SYMBOLS = 3  # dots, and dashes, a run must hold of each: "----- -----" is a rule, ". . . . . ." an ellipsis
+MORSE_KEYS = 4  # dot-dash keys a table must have: one quoted '-' in a dict is nothing
+
+
+def _shows_morse(text: str) -> bool:
+    """Morse in `text`: a run of six or more dot-dash groups apart by spaces, slashes, bars or
+    '#' with at least MORSE_SYMBOLS dots and as many dashes ("- . -|.|. - - ."), or a table
+    with MORSE_KEYS keys made only of dots and dashes ({'.-': 'a', '-...': 'b', ...})."""
+    for match in _MORSE_RUN.finditer(text):
+        run = match.group()
+        if sum(run.count(c) for c in _DOTS) >= MORSE_SYMBOLS and sum(run.count(c) for c in _DASHES) >= MORSE_SYMBOLS:
+            return True
+    keys = 0
+    for _ in _MORSE_KEY.finditer(text):
+        keys += 1
+        if keys >= MORSE_KEYS:
+            return True
+    return False
+
+
+SHAPES = {"morse": ("Morse dots and dashes", _shows_morse)}
+"""Shape name -> (what it is, for a reason; its recogniser)."""
 
 
 class LexiconError(ValueError):
@@ -159,8 +195,12 @@ class Technique:
     advice: str  # what to do, for the redirect suggestion
     description: tuple[str, ...]  # cues, as written in the lexicon
     actions: tuple[str, ...]
+    shapes: tuple[str, ...] = ()  # names in SHAPES: what the lane's work looks like when no cue names it
 
     def __post_init__(self) -> None:
+        unknown = [shape for shape in self.shapes if shape not in SHAPES]
+        if unknown:
+            raise ValueError(f"no shape {', '.join(map(repr, unknown))}: the shapes are {', '.join(SHAPES)}")
         object.__setattr__(self, "_description", tuple((cue, normalize(cue).rstrip()) for cue in self.description))
         object.__setattr__(self, "_actions", tuple((cue, *_action_needle(cue)) for cue in self.actions))
 
@@ -177,7 +217,19 @@ class Technique:
         return sorted(found)
 
     def action_cue(self, texts: Iterable[str]) -> str | None:
-        """The first action cue found in any of `texts` (commands, outputs, a plan), or None."""
+        """The first action cue found in any of `texts` (commands, outputs, a plan), or None.
+        After the cues, the technique's shapes: what one found answers as its name in SHAPES."""
+        texts = list(texts)
+        found = self._cue_in(texts)
+        if found is not None:
+            return found
+        for shape in self.shapes:
+            name, shows = SHAPES[shape]
+            if any(text and shows(text) for text in texts):
+                return name
+        return None
+
+    def _cue_in(self, texts: Iterable[str]) -> str | None:
         for text in texts:
             if not text:
                 continue
@@ -302,7 +354,7 @@ def _cue_problem(cue: object, key: str) -> str | None:
 def _technique(entry: object, where: str) -> Technique:
     if not isinstance(entry, dict):
         raise LexiconError(f"{where} is not a table")
-    extra = sorted(set(entry) - set(ENTRY_KEYS))
+    extra = sorted(set(entry) - set(ENTRY_KEYS) - set(OPTIONAL_KEYS))
     if extra:
         raise LexiconError(f"{where} has unknown keys: {', '.join(extra)}")
     missing = [key for key in ENTRY_KEYS if key not in entry]
@@ -325,7 +377,14 @@ def _technique(entry: object, where: str) -> Technique:
             if problem is not None:
                 raise LexiconError(f"{where}: {key} cue {cue!r} {problem}")
         cues[key] = tuple(value)
-    return Technique(technique_id, entry["name"].strip(), entry["advice"].strip(), cues["description"], cues["actions"])
+    shapes = entry.get("shapes", [])
+    if not isinstance(shapes, list) or any(not isinstance(s, str) for s in shapes):
+        raise LexiconError(f"{where}: shapes must be a list of shape names ({', '.join(SHAPES)})")
+    unknown = [s for s in shapes if s not in SHAPES]
+    if unknown:
+        raise LexiconError(f"{where}: no shape {', '.join(map(repr, unknown))}; the shapes are {', '.join(SHAPES)}")
+    return Technique(technique_id, entry["name"].strip(), entry["advice"].strip(), cues["description"], cues["actions"],
+                     tuple(shapes))
 
 
 @cache

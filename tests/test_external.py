@@ -4063,3 +4063,49 @@ def test_a_cli_agent_built_by_hand_keeps_its_secret_out_of_repr():
 
 def test_nothing_here_can_run_a_real_cli():
     assert shutil.which("claude") is None and shutil.which("codex") is None
+
+
+def test_a_coding_agent_lane_starts_its_cli_past_model_after_while_an_l1_engine_runs_on(tmp_path):
+    """[l1] model_after for a coding-agent lane: past it the CLI starts, told the engines
+    still run; the engine's flag comes in later, and the agent hears what they found."""
+    import dataclasses
+
+    from ctf_flightdeck.agent.l1stage import L1Stage
+    from ctf_flightdeck.l1.manifest import discover
+
+    from l1_kit import python_engine
+
+    gate = tmp_path / "gate"
+    slow = f"""
+    import time
+    from pathlib import Path
+    from ctf_flightdeck.l1.result import Evidence, SolverResult
+
+    def solve(challenge_dir):
+        end = time.monotonic() + 60
+        while not Path({str(gate)!r}).exists() and time.monotonic() < end:
+            time.sleep(0.05)
+        word = (challenge_dir / "word.txt").read_text().strip()
+        return SolverResult("solved", flags=["t{{" + word + "}}"], evidence=[Evidence("decode", "the word", "word.txt", 0)])
+    """
+
+    async def main():
+        handouts = {"note": handout(tmp_path, files=WORD)}
+        python_engine(tmp_path / "pack", "slow", slow, route='keywords = ["about"]')
+        stage = dataclasses.replace(L1Stage(discover(tmp_path / "pack"), handouts, tmp_path / "runs", FLAG), model_after=0.2)
+        lab = Lab(tmp_path, SAYS["claude"], handouts=handouts, l1=stage)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lab.fake.starts() != [], "the CLI starts while the engine runs", timeout=30)
+            assert "have run on this challenge for 0.2 s and are still running: slow." in first_message(lab)
+            assert lane.pending is None and l1_events(lab.deck) == []
+            gate.touch()
+            await until(lambda: lane.pending is not None, "the engine's flag", timeout=30)
+            assert (lane.pending.kind, lane.pending.flag) == (PendingKind.SUBMIT, "t{note}")
+            assert l1_events(lab.deck) == [("slow", "solved", ["t{note}"])]
+            assert "ran on this challenge while you worked" in lab.run(lane).l1_text
+        finally:
+            await lab.finish()
+
+    run(main())

@@ -269,3 +269,56 @@ def test_url_blanking_and_matching_stay_linear_on_a_long_scheme_like_run():
     assert without_urls(text) == text
     assert named_techniques(text) == []
     assert time.perf_counter() - started < 2.0
+
+
+# ---------------------------------------------------------------------- shapes
+
+@pytest.mark.parametrize("text", [
+    "- . -|.|.|. - - .#-|. . . .|.#. - . .",  # one symbol a token, letters by bars, words by '#'
+    "... --- ... / .- -... -.-.",  # the usual groups, words by '/'
+    "··· −−− ··· ·− −··· −·−·",  # · and −
+    "M = {'.-': 'a', '-...': 'b', '-.-.': 'c', '-..': 'd'}",  # a table keyed by them
+    'table = {"a": 1, ".-": "a", "-...": "b", "-.-.": "c", "-..": "d"}',
+])
+def test_the_morse_shape_sees_dots_and_dashes(text):
+    morse = lexicon().get("morse")
+    assert morse.action_cue([text]) == "Morse dots and dashes"
+
+
+@pytest.mark.parametrize("text", [
+    "----- ----- ----- ----- ----- -----",  # a rule: no dots
+    ". . . . . . . .",  # an ellipsis: no dashes
+    "$ ls -la . -- -r",  # a command's options: too few groups
+    "M = {'-': 1, '.': 2}",  # two keys are no table
+    "drwxr-xr-x 2 user user 4096 . ..",
+    "",
+])
+def test_the_morse_shape_does_not_see_what_is_not_morse(text):
+    morse = lexicon().get("morse")
+    assert morse.action_cue([text]) is None
+
+
+def test_the_morse_shape_is_linear_on_a_long_line_that_nearly_matches():
+    morse = lexicon().get("morse")
+    nearly = ("-" * 7 + " ") * 40_000 + "x"  # dashes only: every run is found and turned down
+    begun = time.perf_counter()
+    assert morse.action_cue([nearly, "." * 200_000]) is None
+    assert time.perf_counter() - begun < 2.0
+
+
+def test_a_technique_without_shapes_ignores_dots_and_dashes():
+    sstv = lexicon().get("sstv")
+    assert sstv.shapes == ()
+    assert sstv.action_cue(["... --- ... / .- -... -.-."]) is None
+
+
+def test_the_loader_refuses_a_shape_it_does_not_know(tmp_path):
+    bad = tmp_path / "hints.toml"
+    bad.write_text('[[technique]]\nid = "x"\nname = "X"\nadvice = "Do x."\n'
+                   'description = ["xyzzy plugh"]\nactions = ["xyzzy"]\nshapes = ["semaphore"]\n')
+    with pytest.raises(LexiconError, match="no shape 'semaphore'.*morse"):
+        load_lexicon(bad)
+    bad.write_text('[[technique]]\nid = "x"\nname = "X"\nadvice = "Do x."\n'
+                   'description = ["xyzzy plugh"]\nactions = ["xyzzy"]\nshapes = "morse"\n')
+    with pytest.raises(LexiconError, match="shapes must be a list"):
+        load_lexicon(bad)

@@ -770,6 +770,13 @@ def test_the_l1_table_names_a_pack_and_how_many_engines_run_at_once(tmp_path):
     assert own.l1.image == "my-pack:1" and config.l1.image is None  # unset: engines run in the lane image
 
 
+def test_l1_model_after_is_how_long_engines_hold_the_model_and_0_waits_for_all(tmp_path):
+    assert L1Config().model_after == 60.0  # the solver pack's intake held the model 300 s (2026-11-16)
+    assert load_config(write(tmp_path, LADDER + '[l1]\npack = "~/s"\nmodel_after = 15\n')).l1.model_after == 15.0
+    assert load_config(write(tmp_path, LADDER + '[l1]\npack = "~/s"\nmodel_after = 0\n')).l1.model_after == 0.0
+    assert load_config(write(tmp_path, LADDER + '[l1]\nmodel_after = 2.5\n')).l1.model_after == 2.5  # no pack: kept all the same
+
+
 @pytest.mark.parametrize(
     "table, message",
     [
@@ -781,6 +788,11 @@ def test_the_l1_table_names_a_pack_and_how_many_engines_run_at_once(tmp_path):
         ('lane_tools = "yes"', "l1.lane_tools must be true or false"),
         ('lane_tools = true', "l1.lane_tools needs a pack"),
         ('engines = "x"', "l1.engines"),
+        ("model_after = -1", "l1.model_after must be a number of seconds from 0 to 86400"),
+        ("model_after = true", "l1.model_after must be a number of seconds from 0 to 86400"),
+        ('model_after = "60"', "l1.model_after must be a number of seconds from 0 to 86400"),
+        ("model_after = nan", "l1.model_after must be a number of seconds from 0 to 86400"),
+        ("model_after = 86401", "l1.model_after must be a number of seconds from 0 to 86400"),
     ],
 )
 def test_a_bad_l1_table_is_an_error_that_names_the_key(tmp_path, table, message):

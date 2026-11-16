@@ -867,7 +867,7 @@ class Deck:
         for alert in rep.alerts:
             self._raise(lane, alert)
         if rep.flag is not None:
-            self._candidate(lane, rep.flag, claimed=rep.claimed)
+            self._candidate(lane, rep.flag, claimed=rep.claimed, aside=rep.aside)
             if lane.finished:
                 return  # submitted automatically and correct
         if rep.pending is not None:
@@ -1012,14 +1012,14 @@ class Deck:
     def _resume(self, lane: Lane) -> Outcome:
         if lane.state is not LaneState.PAUSED:
             return Outcome(False, f"{lane.id} is not paused")
-        if lane.pending:
+        if lane.pending and not lane.pending.aside:
             lane.state = LaneState.WAITING
         elif self._back_to_work(lane):
             self.driver.resume(lane)
         self._note(lane, "resumed by the player", Actor.PLAYER)
         if lane.state is LaneState.WAITING:  # back in its wait: a live-box one gives its slot up now
             self._maybe_bench(lane)
-        waits = " (it waits for your approval)" if lane.pending else ""
+        waits = " (it waits for your approval)" if lane.pending and not lane.pending.aside else ""
         if lane.state is LaneState.QUEUED:
             waits = f" (it waits for a free slot: {self._busy()})"
         return Outcome(True, f"Resumed {lane.id}{waits}")
@@ -1050,7 +1050,7 @@ class Deck:
         self._on_thread("tell_all")
         text = text.strip()
         if not text:
-            return Outcome(False, "Empty note; nothing sent")
+            return Outcome(False, "Empty message; nothing sent")
         if len(self.standing) >= MAX_STANDING:
             return Outcome(False, f"{MAX_STANDING} notes for every lane are standing already; a lane's own message (h) still works")
         self.standing.append(text)
@@ -1167,7 +1167,7 @@ class Deck:
             return Outcome(False, f"{lane.id} is not taken over")
         if lane.paused_before_takeover:  # the player paused it before: it stays paused until Resume
             lane.state = LaneState.PAUSED
-        elif lane.pending:
+        elif lane.pending and not lane.pending.aside:
             lane.state = LaneState.WAITING
         elif self._back_to_work(lane):
             self.driver.resume(lane)
@@ -1601,6 +1601,11 @@ class Deck:
         lane.state = state
         lane.ended_at = self.now
         lane.result = result
+        aside = [p.flag for p in [lane.pending, *lane.waiting] if p is not None and p.aside and p.flag]
+        if aside and state is not LaneState.SOLVED:
+            # an L1 flag that waited aside goes with the lane: said, since the player never answered it
+            self._note(lane, f"ended with {', '.join(aside)} still waiting aside for you: it is not asked any more "
+                             "(the run log has the L1 result that gave it)")
         lane.pending = None
         lane.waiting.clear()
         lane.hints.clear()
@@ -1641,17 +1646,26 @@ class Deck:
         lane.alerts = [a for a in lane.alerts if a.kind not in COURSE_ALERTS]
 
     def _ask(self, lane: Lane, pending: Pending) -> None:
-        """Queue an approval. A flag goes in front of any other kind; nothing is dropped."""
+        """Queue an approval. A flag goes in front of any other kind; nothing is dropped. A
+        flag that waits aside goes behind everything else, and anything that is not aside
+        goes in front of it: an aside flag is current only when nothing else waits, so the
+        lane works on only then."""
         pending = replace(pending, at=self.now)
         current = lane.pending
         if current is None:
             lane.pending = pending
-        elif pending.kind in FLAG_PENDING and current.kind not in FLAG_PENDING:
+        elif current.aside and not pending.aside:
+            lane.waiting.insert(0, current)
+            lane.pending = pending
+        elif pending.kind in FLAG_PENDING and current.kind not in FLAG_PENDING and not pending.aside:
             lane.waiting.insert(0, current)
             lane.pending = pending
         else:
-            if pending.kind in FLAG_PENDING:  # a flag waits only behind other flags
-                index = next((i for i, p in enumerate(lane.waiting) if p.kind not in FLAG_PENDING), len(lane.waiting))
+            if pending.aside:
+                lane.waiting.append(pending)
+            elif pending.kind in FLAG_PENDING:  # a flag waits only behind other flags
+                index = next((i for i, p in enumerate(lane.waiting) if p.kind not in FLAG_PENDING or p.aside),
+                             len(lane.waiting))
                 lane.waiting.insert(index, pending)
             else:
                 lane.waiting.append(pending)
@@ -1664,7 +1678,12 @@ class Deck:
     def _became_current(self, lane: Lane) -> None:
         pending = lane.pending
         assert pending is not None
-        if lane.state in (LaneState.RUNNING, LaneState.QUEUED):
+        if pending.aside:
+            # the lane goes on working while this waits: one back from another wait runs again
+            # (or waits for a slot, if it gave its own up)
+            if lane.state is LaneState.WAITING:
+                self._back_to_work(lane)
+        elif lane.state in (LaneState.RUNNING, LaneState.QUEUED):
             # a lane that waited for a slot to go on waits for the player now (still without
             # one): it takes no free slot until this is answered, and then asks for one again
             if lane.state is LaneState.QUEUED:
@@ -1701,11 +1720,16 @@ class Deck:
         workspace); resumed or handed back into its wait, it is asked again, and a flag or
         budget wait is timed from then."""
         pending = lane.pending
-        if pending is None or lane.benched or lane.finished or self.closing:
+        if pending is None or pending.aside or lane.benched or lane.finished or self.closing:
             return
         if lane.state in (LaneState.PAUSED, LaneState.TAKEOVER):
             self._wait_began.pop(lane.id, None)
             return
+        if pending.can_aside and lane.state is LaneState.WAITING:
+            began = self._wait_began.setdefault(lane.id, self.now)
+            if self.now - began >= self.config.bench_after:
+                self._set_aside(lane)
+            return  # the lane keeps its slot meanwhile: it goes back to work, not to the bench
         if pending.kind is not PendingKind.LIVE_BOX:
             if lane.state is not LaneState.WAITING:
                 return
@@ -1722,6 +1746,31 @@ class Deck:
             self._note(lane, f"keeps its slot while it waits for {waits_for}: {why}")
             self._emit(EventKind.SLOT, f"{lane.id} keeps its slot while it waits for {waits_for}: {why}",
                        lane.id, lane.challenge_id, data={"slot": "kept", "for": pending.kind.value, "why": why})
+
+    def _set_aside(self, lane: Lane) -> None:
+        """The lane's flag that may wait aside has waited bench_after for the player: it waits
+        aside now, behind anything else the lane waits for, and the lane works on when nothing
+        else holds it. The flag's question stays open: the player answers it as before."""
+        pending = lane.pending
+        assert pending is not None and pending.flag is not None
+        pending.aside = True
+        waited = int(self.now - self._wait_began.get(lane.id, self.now))
+        self._note(lane, f"{pending.flag} has waited {waited} s for you: it waits aside now, and the lane works on "
+                         "meanwhile (approve or decline it whenever you like)")
+        # a slot event, not a pending one: no new question came up (every reader of PENDING
+        # events counts one as a question for the player), the lane works on in its slot
+        self._emit(EventKind.SLOT, f"{lane.id}: {pending.flag} waits aside; the lane works on meanwhile",
+                   lane.id, lane.challenge_id, data={"slot": "aside", "for": pending.kind.value, "flag": pending.flag})
+        index = next((i for i, p in enumerate(lane.waiting) if not p.aside), None)
+        if index is not None:  # something else waits first: it is the question now, and the lane waits on for it
+            lane.pending = lane.waiting.pop(index)
+            lane.waiting.append(pending)
+            self._wait_began[lane.id] = self.now
+            self._became_current(lane)
+            return
+        self._sync_flag_alert(lane)
+        if self._back_to_work(lane):
+            self.driver.resume(lane)
 
     def _keeps_slot(self, lane: Lane) -> str:
         """Why the waiting lane must keep its slot ("" when it may give it up): as many lanes
@@ -1792,7 +1841,9 @@ class Deck:
 
     def _resolve(self, lane: Lane) -> None:
         """The current approval is answered: the next one comes up, or the lane runs again."""
-        lane.pending = lane.waiting.pop(0) if lane.waiting else None
+        # anything that is not aside first: _ask keeps that order, and this keeps it too
+        index = next((i for i, p in enumerate(lane.waiting) if not p.aside), 0)
+        lane.pending = lane.waiting.pop(index) if lane.waiting else None
         if lane.pending is not None:
             self._became_current(lane)
             return
@@ -1831,7 +1882,8 @@ class Deck:
             reason += f" {more} more candidate{'s wait' if more > 1 else ' waits'} behind it."
         self._raise(lane, Alert(AlertKind.FLAG, reason, answers))
 
-    def _candidate(self, lane: Lane, flag: str, *, claimed: bool = True) -> None:
+    def _candidate(self, lane: Lane, flag: str, *, claimed: bool = True, aside: bool = False) -> None:
+        """`aside`: when the flag waits for the player, it may wait aside after a while (Pending.can_aside)."""
         if not self._flag_re.fullmatch(flag):
             self._note(lane, f"candidate {flag} does not match the flag format; not submitted")
             return
@@ -1875,7 +1927,7 @@ class Deck:
         # in a comment) waits for the player: a wrong try can cost a CTFd attempt. So does
         # every flag of a challenge whose tries the platform counts: flightdeck never spends
         # one of them on its own.
-        self._ask(lane, Pending(PendingKind.SUBMIT, self._detail(ch, flag), flag=flag))
+        self._ask(lane, Pending(PendingKind.SUBMIT, self._detail(ch, flag), flag=flag, can_aside=aside))
 
     def _submit(self, lane: Lane, flag: str, *, approved: bool = False) -> bool | None:
         """Submit through the board. None: the board cannot check flags, so the player

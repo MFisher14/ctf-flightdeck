@@ -88,8 +88,8 @@ def hints(deck, lane_id: str) -> list[str]:
     ("/copy all", Aim(ask=Ask.READ)),
     ("/fork", Aim(ask=Ask.ACT)),  # its prompt
     ("/fork L2 try the other port", Aim(lane="L02", ask=Ask.FORK)),
-    ("/note", Aim(run=True)),
-    ("/note the flag format is flag{...}", Aim(run=True)),
+    ("/broadcast", Aim(run=True)),
+    ("/broadcast the flag format is flag{...}", Aim(run=True)),
     ("/config", Aim(run=True)),
     ("/settings", Aim(run=True)),  # an alias, whole
     ("/queue", Aim(run=True)),
@@ -109,7 +109,7 @@ def test_goes_to_reads_what_is_typed_as_enter_would(typed, aim):
 
 def test_every_command_that_takes_no_lane_is_the_runs_and_every_lane_command_is_not():
     no_lane = {command.name for command in COMMANDS if goes_to(f"/{command.name}").run}
-    assert {"note", "config", "queue", "new", "theme", "layout", "help", "quit"} <= no_lane
+    assert {"broadcast", "config", "queue", "new", "theme", "layout", "help", "quit"} <= no_lane
     assert not no_lane & {"hint", "redirect", "fork", "kill", "approve", "decline", "dismiss", "escalate", "pause", "takeover", "diff", "copy", "open"}
     to_a_lane = {command.name: goes_to(f"/{command.name}") for command in COMMANDS if command.name not in no_lane}
     assert all(not aim.run and aim.lane is None for aim in to_a_lane.values())
@@ -128,7 +128,7 @@ def test_the_title_names_the_lane_no_lane_or_the_run():
     assert views.bar_title(deck, "/hint", lane).plain == "to L01 · Alpha"
     assert views.bar_title(deck, "/pause l3", lane).plain == "to L03 · Gamma"  # the lane the command names, not the one selected
     assert views.bar_title(deck, "/pause L09", lane).plain == "no lane L09"
-    assert views.bar_title(deck, "/note x", lane).plain == "the run" == views.BAR_RUN
+    assert views.bar_title(deck, "/broadcast x", lane).plain == "the run" == views.BAR_RUN
     assert views.bar_title(deck, "", None).plain == "no lane" == views.BAR_NO_LANE
     assert views.bar_title(deck, "/pause", None).plain == "no lane"
     assert views.bar_title(deck, "/pause L02", None).plain == "to L02 · Beta"  # a command that names its lane needs none selected
@@ -144,7 +144,7 @@ def test_the_lane_is_what_the_title_shows_strongest_and_a_theme_colours_it():
             styles = {named.plain[span.start:span.end]: str(span.style) for span in named.spans}
             assert str(named.style) == theme.MUTED  # "to", and whatever no span colours
             assert styles == {"L01": f"bold {theme.TEXT}", " · ": theme.MUTED, "Alpha": theme.TEXT}
-            assert str(views.bar_title(deck, "/note", None).style) == theme.MUTED
+            assert str(views.bar_title(deck, "/broadcast", None).style) == theme.MUTED
             assert str(views.bar_title(deck, "", None).style) == theme.MUTED
     finally:
         theme.use(themes.DEFAULT)
@@ -182,9 +182,9 @@ def test_the_title_reads_the_run_while_a_command_that_takes_no_lane_is_typed():
     async def script(pilot):
         await press(pilot, "slash")
         assert title(app) == "to L02 · Beta"  # nothing named yet
-        await press(pilot, *"no")
-        assert title(app) == "to L02 · Beta"  # /no is not a command: the menu lists /note, enter would only fill it in
-        await press(pilot, *"te")
+        await press(pilot, *"broad")
+        assert title(app) == "to L02 · Beta"  # /broad is not a command: the menu lists /broadcast, enter would only fill it in
+        await press(pilot, *"cast")
         assert title(app) == "the run"
         await press(pilot, *" read the handout first")
         assert title(app) == "the run"
@@ -417,14 +417,14 @@ def test_an_unsent_message_and_the_title_each_stay_with_their_lane():
 
     async def script(pilot):
         await open_focus(pilot, app, "L01")
-        await press(pilot, *"/note for every")
+        await press(pilot, *"/broadcast to all")
         assert title(app) == "the run"
         app.screen.show_lane("L02")  # the draft stays behind with L01
         await pilot.pause()
         assert bar(app).field.value == "" and title(app) == "to L02 · Beta"
         app.screen.show_lane("L01")
         await pilot.pause()
-        assert bar(app).field.value == "/note for every" and title(app) == "the run"
+        assert bar(app).field.value == "/broadcast to all" and title(app) == "the run"
 
     drive(app, script, SIZE)
 
@@ -477,7 +477,7 @@ def test_the_title_names_a_lane_that_has_ended_only_for_what_it_still_takes():
     assert views.bar_title(deck, "/hint l2 look again", at_work).plain == "L02 has finished"  # the lane a command names
     assert views.bar_title(deck, "/open L02", at_work).plain == "to L02 · Beta"
     assert views.bar_title(deck, "/pause L01", None).plain == "L01 has finished"
-    assert views.bar_title(deck, "/note x", killed).plain == "the run"  # a note is for the lanes to come as well
+    assert views.bar_title(deck, "/broadcast x", killed).plain == "the run"  # a note is for the lanes to come as well
     assert views.bar_title(deck, "a message", at_work).plain == "to L03 · Gamma"
     refused = views.bar_title(deck, "a message", killed)
     assert str(refused.style) == theme.MUTED and not refused.spans  # as `no lane`: it names nobody
