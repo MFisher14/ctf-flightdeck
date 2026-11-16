@@ -353,7 +353,7 @@ view, then `BOTH_KEY_HELP` and the rest.
 | Model client | `agent/client.py` | OpenAI-compatible chat completions over httpx. [More](#model-client). |
 | Anthropic client | `agent/anthropic_client.py` | The Anthropic Messages API through the official SDK, and fast mode. [More](#anthropic-client). |
 | Fallback | `agent/fallback.py` | An optional second API that a lane moves to when the first keeps failing. [More](#fallback). |
-| Coding-agent lanes | `agent/external.py` | `play --agent claude\|codex`: the `LaneDriver` protocol over the CLI's own event stream. [More](#coding-agent-lanes). |
+| Coding-agent lanes | `agent/external.py`, `agent/acp.py` | `play --agent claude\|codex\|acp`: the `LaneDriver` protocol over the CLI's own event stream, or the Agent Client Protocol. [More](#coding-agent-lanes). |
 | Held secrets | `agent/held.py` | The first redaction layer for both kinds of lane: each secret the run holds becomes `[NAME]`, by value, in a lane's text. [More](#credentials). |
 
 ### Agent driver
@@ -721,6 +721,15 @@ container, outside the bind-mounted `/work`: the exec wrapper makes that folder 
 every start, removes a link or a file at its name without following it, refuses a folder another
 user owns, and keeps it for the lane's later starts (codex resumes from it). A host lane keeps it
 next to the workspace.
+
+ACP agents (`agent/acp.py`, P100): `play --agent acp` runs the agent `[agents.acp]` names as an
+`_Run` of its own, speaking the Agent Client Protocol (version 1, JSON-RPC 2.0 on its stdio):
+`initialize`, `session/new` in the workspace, one `session/prompt` per turn, `session/cancel` as
+the interrupt. Its permission requests are answered by `judge()` (commands run; reads and edits only
+in the workspace; the rest refused) and `choose()` (allow once); its file requests go through
+`open_inside` and `write_inside`. Its whole HOME is kept outside the workspace, since its
+configuration folder is not known. It reports no cost in general (P7); a USD cost in
+`usage_update` counts. Tested against `tests/fake_acp_agent.py` only.
 
 ## 5. L1
 
