@@ -126,6 +126,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   OpenAI-compatible server at `127.0.0.1`, `localhost` or `::1` as it treats Ollama and MLX:
   no dollar cap, the token cap kept, and one line in the setup notes for a local proxy to a
   paid API.
+- **The welcome screen names one key where there is one way on** (P93). On a loaded board
+  and in the mock, Enter and esc both opened the console under two names; the key line now
+  says `enter  open the console` alone, and esc and q still close it. An empty board keeps
+  both, since there Enter opens `/new`.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

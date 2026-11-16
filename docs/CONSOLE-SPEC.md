@@ -572,6 +572,14 @@ slot, as does a lane with a session still open, and its transcript says why, onc
 `h`, `r` and `e` are refused on a lane that gave up and stays open only for its flag's answer (it
 takes no more turns): fork it (`f`), or answer its flag or wait for the platform's answer.
 
+### The welcome screen
+
+The first console a player opens, and the mock every time, start on a welcome screen (P50). Its
+last row names the keys that lead somewhere different (P93). On an empty board the player fills
+there are two: `enter  add your first challenge` opens `/new`, and `esc  just show me the
+console` does not. On a loaded board and in the mock both would open the console, so the row
+is `enter  open the console` alone; `esc` and `q` still close it there, unnamed.
+
 ### Help
 
 `?` (or `/help`) opens help for where you are (P65): in the lane list, and in a lane's view

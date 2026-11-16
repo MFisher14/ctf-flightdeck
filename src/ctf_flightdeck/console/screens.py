@@ -495,7 +495,10 @@ class WelcomeScreen(FittedModal, ModalScreen[bool]):
     one thing to do next. Enter does that thing (True); esc just closes it (False). `simple`:
     the console opens in the simple layout, which has no board to describe.
 
-    Its last row, the keys, says that one thing, and is always on screen: on a short terminal
+    Its last row, the keys, says that one thing. Only an empty board the player fills has two
+    (Enter adds a first challenge, esc just shows the console), so only there is esc named; on
+    any other board both open the console, and the row names Enter alone (P93). It is always on
+    screen: on a short terminal
     the dialog loses its blank rows, and the text over the keys scrolls if it still does not
     fit (FittedModal)."""
 
@@ -535,8 +538,11 @@ class WelcomeScreen(FittedModal, ModalScreen[bool]):
                 third = ("/new", "hand over a challenge: its text, files, a screenshot") if self.empty and not self.is_mock \
                     else ("a", "approve a flag an agent found (d declines it)")
                 yield Static(_meanings(("enter", "open a lane to watch it and talk to it"), third, ("?", "every key, any time")))
-            go = "add your first challenge" if self.empty and not self.is_mock else "open the console"
-            yield Static(_keys(("enter", go), ("esc", "just show me the console")), classes="keys")
+            if self.empty and not self.is_mock:  # two ways out, so both are named
+                keys = _keys(("enter", "add your first challenge"), ("esc", "just show me the console"))
+            else:  # one way out: esc and q close it too, unnamed, since they do what Enter does
+                keys = _keys(("enter", "open the console"))
+            yield Static(keys, classes="keys")
 
     def action_go(self) -> None:
         self.dismiss(True)

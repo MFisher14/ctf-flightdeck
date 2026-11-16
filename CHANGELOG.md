@@ -9,6 +9,10 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   did for Ollama and MLX: a lane no longer stops on its first turn to ask about a budget nothing
   can price. The token cap still holds. The setup notes say, in one line, that a local proxy to
   a paid API should set `dollar_cap` and `[prices]`.
+- The welcome screen's key line is `enter  open the console` alone on a board with challenges
+  and in the mock, where esc did the same thing under another name. On an empty board, where
+  Enter adds your first challenge, `esc  just show me the console` is still named. esc and q
+  still close the welcome screen everywhere.
 - A lane's session no longer answers one call late. Output a program wrote before a send (a
   debugger still loading, say) comes with the send's read but no longer ends it, so the read
   waits for the reply, and `until` is looked for only in what came after the send. A secret of

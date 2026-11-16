@@ -105,7 +105,7 @@ In a script or a pipe `flightdeck` alone asks nothing and prints these commands 
 
 **Your first console.** The first console you open, and the mock, start on a welcome screen: what
 the board, the lanes and the command bar are, and the keys you need; Enter goes on (on an empty
-board, to adding your first challenge). With challenges on the board it names three keys to begin
+board, to adding your first challenge, and there `esc` shows the console with nothing added). With challenges on the board it names three keys to begin
 with: Enter to open a lane to watch it and talk to it, `a` to approve a flag an agent found, and `?`
 for every key, any time ([The console](#the-console)).
 
