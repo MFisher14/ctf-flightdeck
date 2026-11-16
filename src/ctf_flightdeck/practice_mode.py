@@ -92,9 +92,10 @@ class TimelineError(Exception):
     """The timeline cannot be used. The message names the file and what is wrong."""
 
 
-def load_timeline(board: Board, path: Path | None = None) -> Timeline:
+def load_timeline(board: Board, path: Path | None = None, *, required: bool = False) -> Timeline:
     """The board's release timeline: from `path` if given, else from the timeline.json at
-    the board's root if there is one, else the whole board at the start.
+    the board's root if there is one, else the whole board at the start (with `required`, a
+    board without one is a TimelineError: the player asked for its timeline).
 
     Waves come out in time order and every challenge on the board is in exactly one: the
     challenges no wave lists join the wave at 0 (after its own ids), or make one.
@@ -103,6 +104,8 @@ def load_timeline(board: Board, path: Path | None = None) -> Timeline:
     if path is None:
         own = _root(board) / TIMELINE_FILE
         if not _present(own):
+            if required:
+                raise TimelineError(f"{_show(own)}: no such file, so the board has no timeline to release it on: {TIMELINE_FORM}")
             return Timeline((Wave(0.0, tuple(ids)),))
         where, data = own, _read_json(own, follow=False)
     else:
@@ -185,6 +188,17 @@ def _amount(value: object) -> float | None:
 # ---------------------------------------------------------------------- releasing waves
 
 
+def replay(timeline: Timeline, *, speed: float = 1.0, start: float = 0.0) -> Timeline:
+    """The timeline as a run plays it: each wave `speed` times sooner than in the event, from
+    `start` on the deck's clock (when the board is released, not when the run was prepared).
+    TimelineError for a speed that is not a number above 0."""
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not (math.isfinite(speed) and speed > 0):
+        raise TimelineError(f"the speed must be a number above 0 (2 plays the timeline twice as fast), not {speed!r}")
+    if _amount(start) is None:
+        raise TimelineError(f"the start must be a number of seconds, 0 or more, not {start!r}")
+    return Timeline(tuple(Wave(start + wave.at / speed, wave.ids) for wave in timeline.waves))
+
+
 class Release:
     """Puts a board on the deck wave by wave, each when the deck's clock reaches its time.
 
@@ -242,7 +256,7 @@ class Release:
                     f"{', '.join(_quote(cid) for cid in stray)}"
                 )
             challenges = [replace(self._challenges[cid]) for cid in wave.ids]
-            self.deck.release(challenges, entries, self._label(index))
+            self.deck.release(challenges, entries, self._label(index), then=self._then(index))
             self.released.append(wave)
             out.append(wave)
         return out
@@ -250,6 +264,15 @@ class Release:
     def _label(self, index: int) -> str:
         total = len(self._waves)
         return "Board" if total == 1 else f"Wave {index + 1} of {total}"
+
+    def _then(self, index: int) -> str:
+        """What the release line of the wave at `index` says of the wave after it, by the
+        deck's clock (the console's header clock); "" after the last."""
+        if index + 1 >= len(self._waves):
+            return ""
+        coming = self._waves[index + 1]
+        many = len(coming.ids)
+        return f"next: {self._label(index + 1)} at {fmt.clock(coming.at)} ({many} challenge{'' if many == 1 else 's'})"
 
 
 def _check_covers(timeline: Timeline, ids: list[str]) -> None:

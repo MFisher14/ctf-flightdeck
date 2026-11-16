@@ -500,8 +500,11 @@ class Deck:
 
     # ------------------------------------------------------------------ board
 
-    def release(self, challenges: Sequence[Challenge], entries: Sequence[QueueEntry], label: str = "Release") -> None:
-        """Put challenges on the board and queue the triaged entries, in order."""
+    def release(
+        self, challenges: Sequence[Challenge], entries: Sequence[QueueEntry], label: str = "Release", *, then: str = ""
+    ) -> None:
+        """Put challenges on the board and queue the triaged entries, in order. `then`, when
+        given, ends the release line: what comes next (a timeline's next wave)."""
         self._on_thread("release")
         seen: set[str] = set()
         for ch in challenges:
@@ -535,6 +538,8 @@ class Deck:
         # status line shows in its place: so this line says it too, or a player sees one lane of 4 and no why
         if self.queue and self.gated:
             line += f" · no new lane starts for now: {self.gated}"
+        if then:
+            line += f" · {then}"
         self._emit(
             EventKind.RELEASE,
             line,

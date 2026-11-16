@@ -41,6 +41,7 @@ from ctf_flightdeck.practice_mode import (
     TimelineError,
     Wave,
     load_timeline,
+    replay,
     score,
     scorecard,
 )
@@ -442,6 +443,66 @@ def test_a_hand_made_timeline_out_of_time_order_goes_out_in_time_order(tmp_path)
     clock.t = 7200.0
     assert release.tick() == [Wave(7200.0, ("delta",))]
     assert releases(deck) == ["Wave 1 of 3", "Wave 2 of 3", "Wave 3 of 3"] and release.done
+
+
+def test_each_release_line_names_the_next_wave_by_the_decks_clock_and_the_last_names_none(tmp_path):
+    board = load_board(make_board(tmp_path / "archive", timeline=WAVES))
+    deck, clock, _ = make_deck(board)
+    release = Release(deck, board, load_timeline(board), cheapest_first(board))
+    release.tick()
+    clock.t = 600.0
+    release.tick()
+    clock.t = 7200.0
+    release.tick()
+    lines = [event.text for event in deck.events if event.kind is EventKind.RELEASE]
+    assert lines[0].endswith(" · next: Wave 2 of 3 at T+00:10:00 (1 challenge)"), lines[0]
+    assert lines[1].endswith(" · next: Wave 3 of 3 at T+02:00:00 (1 challenge)"), lines[1]
+    assert "next" not in lines[2], lines[2]
+
+
+def test_a_board_released_whole_says_nothing_of_a_next_wave(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+    deck, _, _ = make_deck(board)
+    Release(deck, board, load_timeline(board), cheapest_first(board)).tick()
+    (line,) = [event.text for event in deck.events if event.kind is EventKind.RELEASE]
+    assert line.startswith("Board: 4 challenges") and "next" not in line
+
+
+def test_a_required_timeline_the_board_does_not_have_is_an_error_naming_the_file(tmp_path):
+    board = load_board(make_board(tmp_path / "archive"))
+    with pytest.raises(TimelineError) as caught:
+        load_timeline(board, required=True)
+    assert str(caught.value).startswith(str(tmp_path / "archive" / "timeline.json") + ": no such file")
+    with_one = load_board(make_board(tmp_path / "other", timeline=WAVES))
+    assert len(load_timeline(with_one, required=True).waves) == 3
+
+
+def test_replay_moves_each_wave_to_the_start_and_divides_its_time_by_the_speed():
+    timeline = Timeline((Wave(0.0, ("alpha", "bravo")), Wave(600.0, ("charlie",)), Wave(7200.0, ("delta",))))
+    assert replay(timeline) == timeline
+    assert replay(timeline, speed=60, start=12.5) == Timeline(
+        (Wave(12.5, ("alpha", "bravo")), Wave(22.5, ("charlie",)), Wave(132.5, ("delta",)))
+    )
+    assert replay(timeline, speed=0.5).waves[1].at == 1200.0  # slower than the event, too
+
+
+@pytest.mark.parametrize("speed", [0, -2, float("nan"), float("inf"), True, "60"])
+def test_replay_refuses_a_speed_that_is_not_a_number_above_0(speed):
+    with pytest.raises(TimelineError, match="the speed must be a number above 0"):
+        replay(Timeline((Wave(0.0, ("alpha",)),)), speed=speed)
+
+
+def test_a_replayed_timeline_goes_out_on_the_decks_clock_from_its_start(tmp_path):
+    board = load_board(make_board(tmp_path / "archive", timeline=WAVES))
+    deck, clock, _ = make_deck(board)
+    clock.t = 30.0  # the run was prepared for 30 s before its board was released
+    release = Release(deck, board, replay(load_timeline(board), speed=10, start=clock.t), cheapest_first(board))
+    assert [wave.ids for wave in release.tick()] == [("alpha", "bravo")]
+    clock.t = 89.0  # 30 + 600 / 10 = 90
+    assert release.tick() == []
+    clock.t = 90.0
+    assert [wave.ids for wave in release.tick()] == [("charlie",)]
+    assert release.next_at == 750.0
 
 
 # ---------------------------------------------------------------------- scoring a run
