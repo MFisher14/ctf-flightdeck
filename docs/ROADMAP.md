@@ -3,11 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: proposals after 0.6.0 (2026-11-16)
+## Released: 0.7.0, timeline replay, ACP agents and real agent runs (2026-11-16)
 
-Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md); the lines for players are under Unreleased in
-[CHANGELOG.md](../CHANGELOG.md).
+Two proposals (P99, P100) and what running the real agents found; the lines for players are
+under 0.7.0 in [CHANGELOG.md](../CHANGELOG.md).
 
 - **Timeline replay in `play`** (P99; until now in "Still open from M0 to M4"). `play --waves`
   releases a folder board wave by wave from its `timeline.json`, `--timeline FILE` from another

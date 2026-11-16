@@ -2,7 +2,12 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Unreleased
+## 0.7.0 (2026-11-16)
+
+Archived boards replay wave by wave in `play`, and any agent that speaks the Agent Client
+Protocol can run lanes. Claude Code, codex and Claude Code's ACP adapter each played the whole
+practice set for real, which fixed a doctor check and switched on Claude's prompt cache on
+OpenRouter; `practice` now says what the set cost.
 
 - `flightdeck practice` says what the whole practice set cost when it was measured ($0.02 on
   Haiku 5.5) before it starts; docs/MODELS.md has the runs.
