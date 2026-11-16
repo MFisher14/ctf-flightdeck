@@ -1427,7 +1427,7 @@ def test_a_coding_agent_lane_in_docker_reaches_its_clis_api_and_its_instance_and
     import ctf_flightdeck.run as run_module
 
     monkeypatch.setattr(run_module, "_check_docker", lambda image: None)
-    monkeypatch.setattr(run_module, "_check_image_has", lambda image, program: None)
+    monkeypatch.setattr(run_module, "_check_image_has", lambda image, key, program: None)
 
     folder = board(tmp_path, urls=urls)
 
