@@ -52,6 +52,14 @@ async def call(box: Toolbox, name: str, args: dict, *, turn: int = 1, index: int
 
 
 def alive(pid: int) -> bool:
+    """Whether `pid` still runs. A killed child of this test process stays a zombie until it is
+    reaped, and a zombie answers kill(pid, 0) as if it ran: it is reaped here, and counts as gone
+    (on Linux the loop that started it may close before it reaps it)."""
+    try:
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except ChildProcessError:
+        pass  # not this process's child, or reaped already: kill(pid, 0) says
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
