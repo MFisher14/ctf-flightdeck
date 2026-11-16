@@ -89,6 +89,11 @@ asks it before it starts a queued lane (Deck.start_gate). While a limit binds no
 starts; nothing running is stopped, and starts resume by themselves. A reading that cannot
 be taken is a note before the run starts and holds nothing.
 
+A folder board's timeline (`play --waves`, `--timeline FILE`, `--speed`: P99) is read and
+checked here before anything starts; release() then puts out its first waves and a task on the
+console's loop each later one when the deck's clock reaches it (practice_mode.Release). An
+event whose platform puts out its own challenges refuses a timeline.
+
 What a run starts carries its marks (leftovers.py): its containers flightdeck's labels, and
 its process groups on this machine a record in the run folder, which a note in flightdeck's
 state folder names (so it is found wherever --run-dir put it). Before a run starts, what
@@ -119,7 +124,6 @@ from urllib.parse import quote
 
 from .agent.client import ChatClient
 from .agent.driver import COMPACT_AT, AgentDriver
-from .agent.egress import CLI_API
 from .agent.fallback import api_name, build_client
 from .agent.l1stage import L1Stage
 from .agent.workspace import DockerWorkspace, HostWorkspace, Workspace, docker_unavailable
@@ -218,7 +222,7 @@ class RunOptions:
     bench_after: float = BENCH_AFTER  # seconds a lane waits for a flag or budget answer before it gives its slot up (P91)
     host_reading: Callable[[Path], Reading] | None = None  # how the governor reads the machine; None: governor.probe
     confirm: Callable[[str], bool] | None = None  # asks the player yes or no (the pull policy "confirm"); None: nobody to ask
-    agent: str | None = None  # "claude" | "codex": lanes are that coding-agent CLI instead of flightdeck's own loop
+    agent: str | None = None  # "claude" | "codex" | "acp": lanes are that coding agent instead of flightdeck's own loop
     agent_auth: str | None = None  # the CLI's credential: claude "api-key" | "oauth-token", codex "api-key" | "login"
     autopilot: bool | None = None  # engage autopilot when the board is released; None: the config's [autopilot] engage
     budget_dollars: float | None = None  # the run budget autopilot needs, in dollars; None: the config's
@@ -226,6 +230,10 @@ class RunOptions:
     say: Callable[[str], None] | None = None  # says a line to the player before the console is up (the wait for the start)
     now: Callable[[], datetime] | None = None  # the time of day, with its zone (the event's start and end); None: the system's
     sleep: Callable[[float], None] | None = None  # how the wait for the event's start passes time; None: time.sleep
+    waves: bool = False  # release a folder board wave by wave from its timeline.json (P99); timeline names another file
+    timeline: Path | None = None  # the timeline file to release the board on (implies waves); None: the board's timeline.json
+    speed: float = 1.0  # the timeline played this many times as fast as the event (with waves or timeline only)
+    replay_seconds: float = 1.0  # the longest the timeline's task sleeps before it looks at the deck's clock again
 
 
 @dataclass(eq=False)
@@ -310,6 +318,8 @@ class Run:
     engage: bool = False  # engage autopilot when the board is released (--autopilot, or [autopilot] engage)
     governor: Governor | None = None  # the host governor (governor.py), unless [governor] turns it off: the deck's start gate
     stopper: Callable[[str], None] | None = None  # ends the run as quitting does, saying why: whoever flies the run sets it (the console: app())
+    timeline: Any = None  # practice_mode.Timeline: the board goes out wave by wave on it (play --waves, --timeline); None: whole
+    replay: Any = None  # practice_mode.Release, once the board is released on the timeline
 
     def notes(self) -> list[str]:
         """Things the player should know before lanes start."""
@@ -394,7 +404,10 @@ class Run:
         if self.governor is not None:  # its first reading was taken before the deck had a lane to start
             self._tasks.append(asyncio.create_task(self._govern(), name="flightdeck host governor"))
         self._tasks.append(asyncio.create_task(self._waits(), name="flightdeck waits"))
-        self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
+        if self.timeline is None:
+            self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
+        else:
+            self._start_replay()
         if self.watches_folder:  # a folder board takes challenges added during the run
             for b in self.board.challenges:
                 self._folders[b.handout.name] = _mtime(b.handout)
@@ -613,6 +626,44 @@ class Run:
                 failing = False
             self.deck.recheck_starts()
 
+    def _start_replay(self) -> None:
+        """The board on its timeline (P99): the waves at the start go out now, and each later
+        one when the deck's clock reaches it, counted from now and divided by the speed. Each
+        wave is triaged when it goes out, so a challenge solved or claimed by then is not queued."""
+        from .practice_mode import Release, replay
+
+        items = {b.challenge.id: b for b in self.board.challenges}
+        timeline = replay(self.timeline, speed=self.options.speed, start=self.deck.now)
+        self.replay = Release(
+            self.deck, self.board, timeline, lambda ids: self.entries([items[cid] for cid in ids], skip=self._held())
+        )
+        self.replay.tick()
+        if not self.replay.done:
+            self._tasks.append(asyncio.create_task(self._replay(), name="flightdeck timeline"))
+
+    async def _replay(self) -> None:
+        """Put out each wave of the timeline when it is due, until the last is out. A wave
+        that cannot be released is a warning, and the next still goes out on time."""
+        release = self.replay
+        assert release is not None
+        while not release.done:
+            wait = release.next_at - self.deck.now
+            await asyncio.sleep(max(0.0, min(wait, self.options.replay_seconds)))
+            if self.deck.closing:
+                return
+            try:
+                release.tick()
+            except Exception as exc:  # a bug, or a deck that refused the wave: say so, and keep to the timeline
+                self.deck.warn(f"could not release the timeline's next wave: {type(exc).__name__}: {exc}", data={"source": "timeline"})
+
+    def _unreleased(self) -> set[str]:
+        """The board's challenges its timeline has not put out yet."""
+        if self.timeline is None:
+            return set()
+        if self.replay is None:
+            return {cid for wave in self.timeline.waves for cid in wave.ids}
+        return {cid for wave in self.replay.waiting for cid in wave.ids}
+
     async def _waits(self) -> None:
         """Every waits_seconds, have the deck give up the slots of the lanes that have waited
         for the player long enough (Deck.recheck_waits, P91): the deck has no clock of its own
@@ -724,7 +775,8 @@ class Run:
                 self.deck.warn(f"board: not added: {exc}", data={"source": "board"})
                 continue
             cid = item.challenge.id
-            if cid in self.deck.challenges or any(b.challenge.id == cid for b in new):
+            # one the timeline holds for a later wave is the board's already: its wave puts it out (P99)
+            if cid in self.deck.challenges or cid in self._unreleased() or any(b.challenge.id == cid for b in new):
                 if cid != folder.name or self._handouts.get(cid) != item.handout:
                     self.deck.warn(f"board: not added: {_show(folder)} has the id {cid}, which the board already has", data={"source": "board"})
                 continue  # the same folder, its challenge.json touched: the run keeps what it read at first
@@ -1034,6 +1086,7 @@ def prepare_run(options: RunOptions) -> Run:
     if board is not None and not board.challenges:
         plan.notes.append("the board is empty: in the console, /new adds a challenge (its name, then its text and files); "
                           "`flightdeck add` does the same from another terminal")
+    timeline = _timeline(options, plan.profile, board, plan.notes)
     ladder, agent, key, spare_key = config.models, None, None, None
     if options.agent is not None:  # lanes are a coding-agent CLI: its own login, its own models
         ladder = _agent_ladder(options.agent, config, plan.notes)
@@ -1046,7 +1099,7 @@ def prepare_run(options: RunOptions) -> Run:
                 "reaches its instance, and on the host it reaches whatever its CLI can reach, so flightdeck "
                 "cannot hold it to that: play this event with flightdeck's own lanes (no --agent)"
             )
-        agent = _find_agent(options.agent, model, options.agent_auth)
+        agent = _find_agent(options.agent, model, options.agent_auth, config)
         plan.notes.append(f"lanes are {options.agent} on {model} ({agent.auth})" if agent.auth else f"lanes are {options.agent} on {model}")
         plan.notes.extend(agent.warnings)
         unpriced = [m for m in ladder if m not in config.prices]
@@ -1058,6 +1111,12 @@ def prepare_run(options: RunOptions) -> Run:
                 f"codex reports its tokens but no cost, and your config has no price for {', '.join(unpriced)}: a lane on "
                 f"{on} shows its dollars as unknown{asks}; a table like [prices.{json.dumps(unpriced[0])}] in your config "
                 "(input and output, in dollars per million tokens) prices one"
+            )
+        if options.agent == "acp" and config.lanes.dollar_cap:
+            plan.notes.append(
+                f"an ACP agent reports no cost in general, so an acp lane's dollars show as unknown and it asks you once "
+                f"before it carries on without its ${config.lanes.dollar_cap:g} cap (unless the agent reports its cost in "
+                "USD); it reports no tokens either, so a token cap is never reached"
             )
     else:
         try:
@@ -1085,9 +1144,10 @@ def prepare_run(options: RunOptions) -> Run:
         raise RunError(str(exc)) from None
     if runtime == "docker":
         _check_docker(config.lanes.image)
-        if agent is not None:
-            _check_image_has(config.lanes.image, agent.kind)
     manifests = _l1_manifests(options.pack)
+    if runtime == "docker" and agent is not None:
+        # the CLI must be in the image its lanes run in: the pack's under lane_tools
+        _check_image_has(*agent_lane_image(config, has_pack=manifests is not None), agent.program or agent.kind)
     if runtime == "docker" and manifests is not None and config.l1.image:
         _check_l1_image(config.l1.image)
     team = _team_channel(options, plan)
@@ -1168,9 +1228,7 @@ def prepare_run(options: RunOptions) -> Run:
             # the lane sees the pack where it is on this machine, read-only, and runs in the
             # pack's image: the pack's own Python and tools are there, not in the lane image
             lane_mounts = ((options.pack, str(options.pack)),)
-            lane_image = config.l1.image or config.lanes.image
-            if lane_image != config.lanes.image and agent is not None:
-                _check_image_has(lane_image, agent.kind)  # the CLI must be in the image its lane runs in
+            lane_image = agent_lane_image(config, has_pack=True)[0]
         plan.notes.append("L1: the lanes' models may call your pack's engines (lane_tools)"
                           + (f"; lanes run in {lane_image} with the pack mounted read-only" if runtime == "docker" else ""))
     if manifests is not None:
@@ -1244,7 +1302,7 @@ def prepare_run(options: RunOptions) -> Run:
     def workspace(lane: Lane, challenge: Challenge) -> Workspace:
         root = run_dir / lane.id.lower() / "work"
         if runtime == "docker":
-            reach, later = lane_reach(urls[challenge.id], instance, api=CLI_API[agent.kind] if agent is not None else ())
+            reach, later = lane_reach(urls[challenge.id], instance, api=agent.api if agent is not None else ())
             return DockerWorkspace(
                 root,
                 handouts[challenge.id],
@@ -1345,6 +1403,7 @@ def prepare_run(options: RunOptions) -> Run:
         processes=processes, lights=lights, status=status, notifier=notifier, autopilot=autopilot, engage=engage,
         instances=instances,
         governor=governor,
+        timeline=timeline,
     )
     if submits is not None:
         submits.solved = run._apply_solves
@@ -1571,6 +1630,49 @@ def _check_options(options: RunOptions) -> None:
         raise RunError(f"instance must be auto, confirm or off, not {options.instance!r}")
     if options.submit not in (None, "confirm", "auto"):
         raise RunError(f"submit must be confirm or auto, not {options.submit!r}")
+    value = options.replay_seconds
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value > 0):
+        raise RunError(f"replay_seconds must be a positive number of seconds, not {value!r}")
+    value = options.speed
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value > 0):
+        raise RunError(f"--speed must be a number above 0 (60 plays an hour of the event in a minute), not {value!r}")
+    if value != 1 and not (options.waves or options.timeline is not None):
+        raise RunError("--speed plays a board's timeline faster or slower: give it with --waves (the board's timeline.json) "
+                       "or --timeline FILE")
+
+
+def _timeline(options: RunOptions, profile: EventProfile | None, board: Board | None, notes: list[str]):
+    """The timeline the board goes out on (play --waves or --timeline: P99), with a note that
+    says how; None to release the whole board at the start. RunError when it cannot be used:
+    an event whose platform puts out its own challenges, or a timeline file that is missing or
+    wrong (practice_mode.load_timeline names the file and the problem)."""
+    if not options.waves and options.timeline is None:
+        return None
+    from . import fmt
+    from .practice_mode import TIMELINE_FILE, TimelineError, load_timeline
+
+    asked = "--timeline" if options.timeline is not None else "--waves"
+    if profile is not None and profile.platform != "manual":
+        raise RunError(f"{asked} replays a folder board's timeline, but this event's board comes from {profile.platform}, "
+                       f"which puts out its own challenges: play it without {asked}")
+    assert board is not None  # a board with no platform is loaded before this
+    if not board.challenges:
+        raise RunError(f"{asked}: the board is empty, so there is nothing to release on a timeline")
+    try:
+        timeline = load_timeline(board, options.timeline, required=True)
+    except TimelineError as exc:
+        raise RunError(f"{asked}: {exc}") from None
+    where = _show(options.timeline) if options.timeline is not None else f"the board's {TIMELINE_FILE}"
+    speed = options.speed
+    faster = "" if speed == 1 else f", {speed:g} times as fast as the event"
+    many = len(timeline.waves)
+    if many == 1:
+        notes.append(f"timeline: {where} has one wave, so the whole board goes out at the start")
+    else:
+        last = timeline.waves[-1].at / speed
+        notes.append(f"timeline: the board goes out in {many} waves from {where}{faster}: the first at the start, "
+                     f"the last {fmt.duration(last)} after it; each release line names the next")
+    return timeline
 
 
 def _mtime(folder: Path) -> float:
@@ -2393,8 +2495,13 @@ DEFAULT_AGENT_LADDERS = {"claude": ("sonnet", "opus")}  # Claude Code's own mode
 
 def _agent_ladder(kind: str, config: Config, notes: list[str]) -> tuple[str, ...]:
     """The models a `kind` lane may use, weakest first: [agents] in the config, else the default."""
-    if kind not in ("claude", "codex"):
-        raise RunError(f"--agent must be claude or codex, not {kind!r}")
+    if kind not in ("claude", "codex", "acp"):
+        raise RunError(f"--agent must be claude, codex or acp, not {kind!r}")
+    if kind == "acp" and config.acp is None:
+        raise RunError(
+            f'--agent acp needs [agents.acp] in {config.source}: the agent\'s command line and its models, like '
+            'command = ["my-agent", "--acp", "--model", "{model}"] and models = ["model-a", "model-b"] (docs/GUIDE.md)'
+        )
     ladder = config.agents.get(kind)
     if ladder:
         return ladder
@@ -2408,10 +2515,19 @@ def _agent_ladder(kind: str, config: Config, notes: list[str]) -> tuple[str, ...
     return ladder
 
 
-def _find_agent(kind: str, model: str, auth: str | None):
+def _find_agent(kind: str, model: str, auth: str | None, config: Config | None = None):
     from .agent.external import AgentError, find_agent
 
     try:
+        if kind == "acp":
+            from .agent.acp import find_acp_agent
+
+            if auth is not None:
+                raise RunError("--agent-auth is for claude and codex: an ACP agent's credential is [agents.acp] env")
+            acp = config.acp if config is not None else None
+            if acp is None:
+                raise RunError("--agent acp needs [agents.acp] in your config")
+            return find_acp_agent(acp.command, model, env=acp.env, api=acp.api, hold=acp.hold, environ=_environment())
         return find_agent(kind, model, auth=auth, environ=_environment())
     except AgentError as exc:
         raise RunError(str(exc)) from None
@@ -2427,13 +2543,22 @@ def _environment() -> dict[str, str]:
         raise RunError(str(exc)) from None
 
 
-def _check_image_has(image: str, program: str) -> None:
+def agent_lane_image(config, *, has_pack: bool) -> tuple[str, str]:
+    """The image a docker lane runs in, and the config key that names it: the pack's image
+    ([l1] image) when the pack is the lanes' toolkit (lane_tools), else [lanes] image. A
+    coding-agent CLI must be in that one; play and doctor --agent ask about the same image."""
+    if has_pack and config.l1.lane_tools and config.l1.image:
+        return config.l1.image, "[l1] image"
+    return config.lanes.image, "[lanes] image"
+
+
+def _check_image_has(image: str, key: str, program: str) -> None:
     """A docker lane runs the agent's CLI inside its container, so the lane image must have it."""
     problem = image_lacks(image, program)
     if problem is not None:
         raise RunError(
-            f"{problem}: run them on this machine with --host, or build an image that has {program} and set "
-            "[lanes] image in your config"
+            f"{problem}: run them on this machine with --host, or build an image FROM {image} that has {program} "
+            f"and set {key} in your config to it"
         )
 
 
@@ -2444,7 +2569,8 @@ def image_lacks(image: str, program: str) -> str | None:
     docker = shutil.which("docker") or "docker"
     try:
         probe = subprocess.run(
-            [docker, "run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "sh", image, "-c", f"command -v {program}"],
+            [docker, "run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "sh", image, "-c", 'command -v "$1"',
+             "sh", program],
             capture_output=True, text=True, timeout=120,
         )
     except subprocess.TimeoutExpired:

@@ -341,8 +341,9 @@ def test_play_help_shows_the_event_and_team_options():
     assert "Usage: flightdeck play [OPTIONS] [BOARD]" in out
     assert "--submit <confirm|auto> confirm: you approve each flag; auto: a flag a lane claims goes at once; the rest wait for you" in out
     assert "Spends model tokens: on the model API in your config, or with --agent on that CLI's own API key or subscription." in out
-    assert ("--agent <claude|codex> Lanes are this coding-agent CLI (its own API key or subscription and its own models: [agents] "
-            "in your config)") in out
+    assert ("--agent <claude|codex|acp> Lanes are this coding-agent CLI (its own API key or subscription and its own models: "
+            "[agents] in your config) instead of flightdeck's own loop; acp: the agent [agents.acp] names, spoken to over the "
+            "Agent Client Protocol.") in out
 
 
 def _commands(command, path=("flightdeck",)):

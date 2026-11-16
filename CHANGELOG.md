@@ -2,6 +2,31 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## 0.7.0 (2026-11-16)
+
+Archived boards replay wave by wave in `play`, and any agent that speaks the Agent Client
+Protocol can run lanes. Claude Code, codex and Claude Code's ACP adapter each played the whole
+practice set for real, which fixed a doctor check and switched on Claude's prompt cache on
+OpenRouter; `practice` now says what the set cost.
+
+- `flightdeck practice` says what the whole practice set cost when it was measured ($0.02 on
+  Haiku 5.5) before it starts; docs/MODELS.md has the runs.
+- Claude models on OpenRouter now use Anthropic's prompt cache: each request carries OpenRouter's
+  automatic cache breakpoint. Before, a practice run on `anthropic/claude-haiku-5.5` read none of
+  its prompt from the cache.
+- `play --waves` releases an archived board wave by wave, as its `timeline.json` says the event
+  did; `--timeline FILE` uses another file, and `--speed 60` plays an hour of the event in a
+  minute. Each wave's line in the status bar names the next wave and its time. Without them
+  `play` puts the whole board out at the start, as before. A missing or wrong timeline stops
+  the run before it starts and names the file.
+- `doctor --agent` looks for the CLI in the image a docker lane really runs in: the pack's image
+  (`[l1] image`) when `lane_tools` is on, as `play` does, and the fix names that key. Before, doctor
+  said ready while play refused.
+- `--agent acp` runs lanes as any agent that speaks the Agent Client Protocol: name its command
+  line, models and credential variables under `[agents.acp]`. Its permission requests are
+  answered by flightdeck's own policy, and its files stay in the lane's workspace. Tried with
+  Claude Code's ACP adapter on the practice set (12 of 14 solved).
+
 ## 0.6.0 (2026-11-16)
 
 Lanes that keep a program running: sessions for gdb, radare2, an interpreter or `nc`, on a

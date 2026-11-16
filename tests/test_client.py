@@ -1032,3 +1032,48 @@ def test_the_reply_builders_make_complete_chat_completion_bodies():
     assert plain["choices"][0]["finish_reason"] == "stop"
     assert plain["choices"][0]["message"] == {"role": "assistant", "content": "hi"}
     assert "cost" not in plain["usage"] and plain["usage"]["prompt_tokens_details"] == {"cached_tokens": 0}
+
+
+@pytest.mark.parametrize("base_url, model, cached", [
+    ("https://openrouter.ai/api/v1", "anthropic/claude-haiku-5.5", True),
+    ("https://openrouter.ai/api/v1", "openai/gpt-5.5", False),  # OpenAI's models cache by themselves
+    ("https://llm.example.test/v1", "anthropic/claude-haiku-5.5", False),  # another server may refuse the field
+])
+def test_openrouters_claude_models_get_its_automatic_cache_breakpoint(base_url, model, cached):
+    """Anthropic caches only up to a breakpoint the request marks: without one, a practice run
+    on OpenRouter's anthropic/claude-haiku-5.5 read 0% of its prompt tokens from the cache.
+    The request goes nowhere: httpx's MockTransport answers it and keeps what was sent."""
+    sent: list[dict] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                                         "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+
+    async def run() -> None:
+        async with ModelClient(base_url, "test-key-not-real", max_retries=0, transport=httpx.MockTransport(answer)) as client:
+            await client.chat(model, MESSAGES, [], session_id=SESSION)
+
+    asyncio.run(run())
+    (body,) = sent
+    assert ("cache_control" in body) is cached
+    if cached:
+        assert body["cache_control"] == {"type": "ephemeral"}
+        assert body["session_id"] == SESSION and "provider" not in body  # sticky routing stays as it was
+
+
+def test_a_cache_control_of_the_players_own_extra_body_is_kept_on_openrouter():
+    sent: list[dict] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]})
+
+    async def run() -> None:
+        async with ModelClient("https://openrouter.ai/api/v1", "test-key-not-real", max_retries=0,
+                               transport=httpx.MockTransport(answer),
+                               extra_body={"cache_control": {"type": "ephemeral", "ttl": "1h"}}) as client:
+            await client.chat("anthropic/claude-sonnet-5.5", MESSAGES, [], session_id=SESSION)
+
+    asyncio.run(run())
+    assert sent[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}

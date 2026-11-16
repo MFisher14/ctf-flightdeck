@@ -813,6 +813,9 @@ def test_practice_without_a_config_says_how_to_make_one(tmp_path, monkeypatch):
     result = CliRunner().invoke(cli.app, ["practice"])
     assert result.exit_code == 2
     assert "none.toml" in result.output and "config" in result.output
+    # what one full run was measured to cost comes first, before anything is spent (#43)
+    first = result.output.splitlines()[0]
+    assert first.startswith("flightdeck: the whole practice set cost $0.02 on Haiku 5.5") and "docs/MODELS.md" in first
 
 
 # ---------------------------------------------------------------------- M2-M3 wiring: L1 first, detectors on
@@ -1427,7 +1430,7 @@ def test_a_coding_agent_lane_in_docker_reaches_its_clis_api_and_its_instance_and
     import ctf_flightdeck.run as run_module
 
     monkeypatch.setattr(run_module, "_check_docker", lambda image: None)
-    monkeypatch.setattr(run_module, "_check_image_has", lambda image, program: None)
+    monkeypatch.setattr(run_module, "_check_image_has", lambda image, key, program: None)
 
     folder = board(tmp_path, urls=urls)
 
@@ -1631,3 +1634,19 @@ def test_lane_tools_puts_the_packs_note_in_every_lanes_brief_and_a_pack_without_
         (pack / "pack.toml").write_text('name = "p"\n')  # the pack no longer says how a lane calls it
         with pytest.raises(RunError, match="lane_tools is on, but the pack p is no toolkit for lanes"):
             prepare_run(RunOptions(board=board(tmp_path / "again"), config=path, runtime="host", pack=pack))
+
+
+def test_the_image_an_agent_lane_runs_in_is_the_packs_under_lane_tools(tmp_path):
+    from ctf_flightdeck.config import load_config
+    from ctf_flightdeck.run import agent_lane_image
+
+    path = tmp_path / "c.toml"
+    base = '[api]\nkey_env = ""\n[models]\nladder = ["a/b"]\n[lanes]\nimage = "lane:1"\n'
+    path.write_text(base + f'[l1]\npack = "{tmp_path}"\nimage = "pack:1"\nlane_tools = true\n')
+    cfg = load_config(path)
+    assert agent_lane_image(cfg, has_pack=True) == ("pack:1", "[l1] image")
+    assert agent_lane_image(cfg, has_pack=False) == ("lane:1", "[lanes] image")  # no pack found: no toolkit
+    path.write_text(base + f'[l1]\npack = "{tmp_path}"\nimage = "pack:1"\n')  # lane_tools off
+    assert agent_lane_image(load_config(path), has_pack=True) == ("lane:1", "[lanes] image")
+    path.write_text(base + f'[l1]\npack = "{tmp_path}"\nlane_tools = true\n')  # no pack image: lanes keep theirs
+    assert agent_lane_image(load_config(path), has_pack=True) == ("lane:1", "[lanes] image")

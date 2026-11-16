@@ -16,7 +16,10 @@ What it models. From the docs (code.claude.com headless and cli-reference; the C
 non-interactive docs and codex-rs/exec), with what is ASSUMED (not checked against a real
 run) marked. CHECKED marks what was compared with a real run of Claude Code 2.1.325 on
 2026-11-14 (P86: print mode, stream-json both ways, no tools, a trivial prompt; and the same
-command line logged out, which calls no model).
+command line logged out, which calls no model). On 2026-11-16 the real claude 2.1.325 (in
+docker, fenced network) and codex 0.167.0 (host, saved login) each played the whole practice
+set through flightdeck's driver, tool calls and all, and solved 12 and 13 of 14: the shapes
+the driver reads are right for both, though the fields below keep their marks.
 
 Claude Code: `claude -p --input-format stream-json --output-format stream-json --verbose ...`
 - Options it does not know are refused (exit 1); stream-json output in print mode needs

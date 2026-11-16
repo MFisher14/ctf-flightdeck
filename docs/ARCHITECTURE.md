@@ -353,7 +353,7 @@ view, then `BOTH_KEY_HELP` and the rest.
 | Model client | `agent/client.py` | OpenAI-compatible chat completions over httpx. [More](#model-client). |
 | Anthropic client | `agent/anthropic_client.py` | The Anthropic Messages API through the official SDK, and fast mode. [More](#anthropic-client). |
 | Fallback | `agent/fallback.py` | An optional second API that a lane moves to when the first keeps failing. [More](#fallback). |
-| Coding-agent lanes | `agent/external.py` | `play --agent claude\|codex`: the `LaneDriver` protocol over the CLI's own event stream. [More](#coding-agent-lanes). |
+| Coding-agent lanes | `agent/external.py`, `agent/acp.py` | `play --agent claude\|codex\|acp`: the `LaneDriver` protocol over the CLI's own event stream, or the Agent Client Protocol. [More](#coding-agent-lanes). |
 | Held secrets | `agent/held.py` | The first redaction layer for both kinds of lane: each secret the run holds becomes `[NAME]`, by value, in a lane's text. [More](#credentials). |
 
 ### Agent driver
@@ -721,6 +721,15 @@ container, outside the bind-mounted `/work`: the exec wrapper makes that folder 
 every start, removes a link or a file at its name without following it, refuses a folder another
 user owns, and keeps it for the lane's later starts (codex resumes from it). A host lane keeps it
 next to the workspace.
+
+ACP agents (`agent/acp.py`, P100): `play --agent acp` runs the agent `[agents.acp]` names as an
+`_Run` of its own, speaking the Agent Client Protocol (version 1, JSON-RPC 2.0 on its stdio):
+`initialize`, `session/new` in the workspace, one `session/prompt` per turn, `session/cancel` as
+the interrupt. Its permission requests are answered by `judge()` (commands run; reads and edits only
+in the workspace; the rest refused) and `choose()` (allow once); its file requests go through
+`open_inside` and `write_inside`. Its whole HOME is kept outside the workspace, since its
+configuration folder is not known. It reports no cost in general (P7); a USD cost in
+`usage_update` counts. Tested against `tests/fake_acp_agent.py` only.
 
 ## 5. L1
 
@@ -1285,10 +1294,13 @@ folder or no run there fails in one line that names what is missing; a run playe
 
 Where: `practice_mode.py`.
 
-Scores a past run against the board's answers (`flightdeck score`). `Release`, which puts a board on
-the deck wave by wave from its `timeline.json`, is built and tested, but no command uses it: `play`
-releases the whole board at the start, and `score` reads a timeline only to tell the challenges a
-run had not reached from those added to the folder since. It counts a run's solves by the report's
+Scores a past run against the board's answers (`flightdeck score`), and puts a board on the deck
+wave by wave from its `timeline.json` (`Release`). `play --waves` and `--timeline FILE` use
+`Release` (P99): `Run.release` hands it the timeline moved to the deck's clock at the release and
+divided by `--speed` (`practice_mode.replay`), and a task on the console's loop ticks it when the
+next wave is due. Each wave's release line names the next (`Deck.release(then=...)`). Without
+them `play` releases the whole board at the start. `score` reads a timeline only to tell the
+challenges a run had not reached from those added to the folder since. It counts a run's solves by the report's
 rule (`runrecord.Credit`, `runrecord.solvers`), against the board the run played
 (`practice_mode.played`); a solve marked `before_run` (the platform's, or the team folder's at the
 start) is no solve during the run.

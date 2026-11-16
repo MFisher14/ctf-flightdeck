@@ -426,10 +426,11 @@ class Submit(StrEnum):
 class Agent(StrEnum):
     claude = "claude"
     codex = "codex"
+    acp = "acp"
 
 
 AGENT_HELP = ("Lanes are this coding-agent CLI (its own API key or subscription and its own models: [agents] in your config) instead of "
-              "flightdeck's own loop.")
+              "flightdeck's own loop; acp: the agent [agents.acp] names, spoken to over the Agent Client Protocol.")
 HEADLESS_HELP = (
     "No console: the run writes status.json in its run folder, approvals wait (nothing is approved), and SIGTERM or "
     "Ctrl-C stops it as quitting does."
@@ -496,6 +497,19 @@ def play(
     autopilot: Annotated[bool | None, typer.Option("--autopilot/--no-autopilot", metavar="", help=AUTOPILOT_HELP)] = None,
     budget_dollars: Annotated[float | None, typer.Option("--budget-dollars", min=0.0, metavar="DOLLARS", help=BUDGET_DOLLARS_HELP)] = None,
     budget_tokens: Annotated[int | None, typer.Option("--budget-tokens", min=1, metavar="TOKENS", help=BUDGET_TOKENS_HELP)] = None,
+    waves: Annotated[
+        bool, typer.Option("--waves", metavar="", help="Release the board wave by wave, as its timeline.json says the event did "
+                           "(default: the whole board at the start).")
+    ] = False,
+    timeline: Annotated[
+        Path | None,
+        typer.Option("--timeline", dir_okay=False, metavar="FILE", help="Release the board wave by wave on this timeline file "
+                     "instead of the board's timeline.json."),
+    ] = None,
+    speed: Annotated[
+        float, typer.Option("--speed", metavar="FACTOR", help="With --waves or --timeline: play the timeline this many times "
+                            "as fast as the event (60: an hour in a minute).")
+    ] = 1.0,
 ) -> None:
     """Play a board with agent lanes; with --event, by the event's rules: its CTFd board
     (pulled, new waves, flags submitted, solves followed) and the team folder. Spends model
@@ -531,6 +545,7 @@ def play(
         agent_auth=agent_auth,
         autopilot=autopilot, budget_dollars=budget_dollars, budget_tokens=budget_tokens,
         say=lambda line: typer.echo(f"flightdeck: {line}", err=True),
+        waves=waves, timeline=_path(timeline) if timeline else None, speed=speed,
     )
     try:
         run = prepare_run(options)
@@ -751,13 +766,14 @@ def practice(
 ) -> None:
     """Play the practice set that ships with flightdeck (14 small synthetic challenges, answers
     checked by hash). Spends model tokens like `play`."""
-    from .practice_set import practice_dir
+    from .practice_set import MEASURED, practice_dir
 
     try:
         board = practice_dir()
     except FileNotFoundError as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
         raise typer.Exit(2) from None
+    typer.echo(f"flightdeck: {MEASURED}", err=True)
     play(
         board=board, answers=None, config=config, max_lanes=max_lanes, host=host,
         team=False, submit=None, model=model, run_dir=run_dir, pack=pack, agent=agent, agent_auth=agent_auth,

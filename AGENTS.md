@@ -3,9 +3,9 @@
 ctf-flightdeck is an open-source terminal harness for playing CTFs with AI agents. The player is the
 operator: the harness pulls and triages challenges, runs no-model (L1) solvers, spins up agent lanes,
 and submits. The player watches every lane and steps in when something looks wrong.
-**Status: 0.6.0 is released (PyPI, public on GitHub): lane sessions, noCTF and GZCTF presets, ctfd-whale,
-rCTF v2 and GZCTF instances, settings and health, a waiting lane gives up its slot, `start` on the json-api
-platforms, `$XDG_CONFIG_HOME` (P69 to P98). Next: the Later milestone (`docs/ROADMAP.md`).**
+**Status: 0.7.0 is released (PyPI, public on GitHub): timeline replay in `play` (P99), ACP agents as lanes
+(P100), both coding-agent CLIs and an ACP adapter run for real on the practice set, Claude's prompt cache on
+OpenRouter. Next: the Later milestone (`docs/ROADMAP.md`).**
 Keep this file short: every agent re-reads it on every turn.
 
 ## Where things are

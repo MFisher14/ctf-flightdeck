@@ -3,6 +3,30 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Released: 0.7.0, timeline replay, ACP agents and real agent runs (2026-11-16)
+
+Two proposals (P99, P100) and what running the real agents found; the lines for players are
+under 0.7.0 in [CHANGELOG.md](../CHANGELOG.md).
+
+- **Timeline replay in `play`** (P99; until now in "Still open from M0 to M4"). `play --waves`
+  releases a folder board wave by wave from its `timeline.json`, `--timeline FILE` from another
+  file, and `--speed` plays it faster or slower. Each wave's release line names the next. Until
+  now `play` put the whole board out at the start, and `practice_mode.Release` was used by no
+  command.
+- **ACP agents as lanes** (P100; until now in "Still open from M0 to M4"). `--agent acp` runs
+  the agent `[agents.acp]` names over the Agent Client Protocol, version 1. Besides a fake,
+  the real `@agentclientprotocol/claude-agent-acp` 0.99.1 (Claude Code's ACP adapter) on Haiku 5.5, on the host, played the whole practice set on 2026-11-16: 12 of 14 solved, $0.03 in the cost it reported.
+- **Both coding-agent CLIs played the whole practice set for real** (2026-11-16,
+  [#3](https://github.com/MFisher14/ctf-flightdeck/issues/3)): claude 2.1.325 in docker lanes
+  behind the fenced network, with tool calls (12 of 14), and codex 0.167.0 on the host with a
+  saved ChatGPT login (13 of 14). It found that `doctor --agent` checked `[lanes] image` while
+  `play` under `lane_tools` runs lanes in `[l1] image`; both now ask about the same image.
+- **What the practice set costs** ([#43](https://github.com/MFisher14/ctf-flightdeck/issues/43)):
+  $0.02 on Haiku 5.5, through OpenRouter or as claude lanes ([MODELS.md](MODELS.md#what-the-practice-set-costs)),
+  and `flightdeck practice` says so before it starts. Measuring it found that Claude models on
+  OpenRouter used no prompt cache; each request now carries OpenRouter's cache breakpoint (0% to
+  72% of the prompt read from the cache).
+
 ## Released: 0.6.0, lane sessions and more platforms (2026-11-16)
 
 Thirty proposals, in the order of their numbers in [DECISIONS.md](DECISIONS.md) (P69 to P98),
@@ -440,15 +464,15 @@ console in a few minutes, without reading the architecture:
 
 Planned in a milestone and not built:
 
-- **ACP agents.** The coding-agent lanes are the `claude` and `codex` CLIs only.
+- **ACP agents in docker, and other agents.** `--agent acp` (P100) has met one real agent, Claude
+  Code's ACP adapter, on the host. Not run yet: an ACP lane in docker, and any other agent.
 - **A real capture of the `claude` and `codex` streams.** The driver is tested against a fake CLI
   built from their docs, and so is a coding-agent lane's fenced network (below). Claude Code's
   stream was compared with a real run on 2026-11-14 (P86: 2.1.325, a prompt with no tools), and
-  the differences fixed; still open: claude's tool calls, a whole `practice --agent claude` run,
-  the fenced network with a real CLI, and all of codex.
-- **Timeline replay in `play`.** Releasing a board wave by wave from its `timeline.json` is built
-  and tested, but `play` releases the whole board at the start. Scoring a past run against the
-  board's answers works (`flightdeck score`).
+  the differences fixed. On 2026-11-16 both played the whole practice set for real: claude in
+  docker lanes behind the fenced network (12 of 14, $0.02 on Haiku), codex on the host with a
+  saved ChatGPT login (13 of 14). Still open: codex in docker (it needs `CODEX_API_KEY`) and a
+  raw capture of each stream's fields.
 
 Built since (2026-11-12, issue #14): **the per-origin egress allowlist.** A Docker lane that may
 reach its instance reaches only the hosts and ports its challenge's `urls` name, and a
@@ -533,7 +557,8 @@ Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible en
 - Team mode: claims, teammate-solved stop, live-box courtesy.
 
 Not done in M2: evaluating ACP, the per-origin egress allowlist and a real capture of the CLI
-streams (under "Still open" above; the egress allowlist was built later, issue #14).
+streams (under "Still open" above; the egress allowlist was built later, issue #14; ACP lanes
+were built after 0.6.0, P100).
 
 ### M3: detectors and practice
 

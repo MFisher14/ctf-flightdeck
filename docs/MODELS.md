@@ -330,6 +330,23 @@ challenges cannot show whether a bigger model solves what a smaller one cannot.
 price: worth it when minutes matter, such as an event's last hour. Opus 5.5 in fast mode cost
 less than Fable 5.2 at standard speed and finished the board three times as fast.
 
+## What the practice set costs
+
+The whole practice set (`flightdeck practice`, 14 challenges), each setup played once on
+2026-11-16, headless, with the solver pack's L1 engine first. One run each, so rough.
+
+| Lanes | Solved | Tokens (cached) | Cost | Time |
+|---|---:|---:|---:|---:|
+| Haiku 5.5 through OpenRouter, autopilot | 13 of 14 | 289k (72%) | $0.02 | 5 min |
+| `--agent claude` (Claude Code 2.1.325, Haiku), docker, autopilot | 12 of 14 | 375k (82%) | $0.02 | 9 min |
+| `--agent codex` (codex 0.167.0, a ChatGPT login), host | 13 of 14 | 538k (78%) | not reported | 9 min |
+
+The challenge none of them solved is `welcome-mat`: its planted decoy waits for your approval,
+and a headless run approves nothing. The OpenRouter run before Claude's prompt cache was
+switched on there read 0% of 217k tokens from the cache and cost $0.03. Most of each run's time
+is two challenges on which the pack's intake engine runs its whole 300-second limit before the
+lane's model starts.
+
 ## Measure your own
 
 ```sh

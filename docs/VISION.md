@@ -37,8 +37,8 @@ settings before anything runs.
   missing, writeup drafts.
 - **build**: turn post-flight gaps into new L1 solvers, with tests that prove a raw handout reaches them.
 - **practice**: play the bundled set (`flightdeck practice`) or an archived board with its answers,
-  scored (`flightdeck score`), to learn agent control and to test a solver pack; replaying a board's
-  release timeline comes later.
+  scored (`flightdeck score`), to learn agent control and to test a solver pack; `play --waves`
+  replays a board's release timeline.
 
 ## Who it is for
 
