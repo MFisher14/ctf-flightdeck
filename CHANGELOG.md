@@ -4,6 +4,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- Claude models on OpenRouter now use Anthropic's prompt cache: each request carries OpenRouter's
+  automatic cache breakpoint. Before, a practice run on `anthropic/claude-haiku-5.5` read none of
+  its prompt from the cache.
 - `play --waves` releases an archived board wave by wave, as its `timeline.json` says the event
   did; `--timeline FILE` uses another file, and `--speed 60` plays an hour of the event in a
   minute. Each wave's line in the status bar names the next wave and its time. Without them

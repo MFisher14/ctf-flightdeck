@@ -10,7 +10,12 @@ Caching. Most of a lane's tokens are the same prefix re-read every turn, so cach
 most of the bill. OpenRouter routes requests with the same `session_id` to the provider
 that served them before, which keeps the prefix in that provider's cache. A
 `provider.order` would switch that sticky routing off, so the client never sends a
-`provider` object at all (docs/ARCHITECTURE.md).
+`provider` object at all (docs/ARCHITECTURE.md). Sticky routing is not enough for Claude:
+Anthropic caches only up to a breakpoint the request marks. So a request to OpenRouter
+for one of its `anthropic/` models carries OpenRouter's automatic breakpoint, a top-level
+`cache_control` of type ephemeral, which OpenRouter moves to the last cacheable block as
+the conversation grows (CLAUDE_CACHE). A practice run on anthropic/claude-haiku-5.5
+without it, 2026-11-16, read 0% of 217k prompt tokens from the cache.
 
 Secrets. The API key goes in the Authorization header and nowhere else: not in a repr, an
 error message or an exception chain. Error text from the server has the key cut out before
@@ -67,6 +72,8 @@ CONNECT_TIMEOUT = 15.0  # seconds: a connection that takes longer is not coming
 _OWN_FIELDS = frozenset({"model", "messages", "session_id", "tools", "tool_choice", "max_tokens", "temperature",
                          "provider", "stream"})  # what extra_body may not set: the client's own, and what it never sends
 MAX_SESSION_ID = 256  # OpenRouter's limit on session_id
+OPENROUTER_HOST = "openrouter.ai"
+CLAUDE_CACHE = {"type": "ephemeral"}  # OpenRouter's automatic prompt-cache breakpoint for its anthropic/ models
 MAX_ERROR_TEXT = 300  # characters of the server's own words kept in a ModelError
 
 IMAGE_KEY = "_image"  # on a tool message: {"media_type": ..., "data": base64} of the image its result shows
@@ -279,6 +286,7 @@ class ModelClient:
         self.backoff = backoff
         self.max_tokens = max_tokens
         self.extra_body = _extra(extra_body)
+        self._openrouter = (self._url.host or "").lower() == OPENROUTER_HOST
         self._key = api_key
         self._where = str(self._url.copy_with(userinfo=b"", query=None, fragment=None))
         headers = {"Content-Type": "application/json", "X-Title": app_name}
@@ -328,7 +336,10 @@ class ModelClient:
         driver holds a paused lane's retries there, and stops them (by raising) once the
         call no longer matters. Whatever it raises comes out of chat() as it is."""
         limit = self.max_tokens if max_tokens is None else max_tokens
-        content = _request_body(model, messages, tools, session_id, limit, temperature, self.extra_body)
+        extra = self.extra_body
+        if self._openrouter and model.startswith("anthropic/") and "cache_control" not in (extra or {}):
+            extra = {**(extra or {}), "cache_control": dict(CLAUDE_CACHE)}  # Anthropic caches only to a breakpoint
+        content = _request_body(model, messages, tools, session_id, limit, temperature, extra)
         if self._closed:
             raise RuntimeError("the model client is closed")
         tries = self.max_retries + 1
