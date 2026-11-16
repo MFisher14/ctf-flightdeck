@@ -270,7 +270,7 @@ def test_a_selected_lane_that_the_filter_hides_is_not_peeked_at_since_no_key_act
 
     async def script(pilot):
         await select(pilot, app, "L01")
-        await press(pilot, "space", "slash", *"filter beta", "enter")
+        await press(pilot, "space", "slash", *"filter zzz", "enter")  # no row left to take the selection (P96)
         assert app.fleet.selected_lane == "L01" and app.fleet.bar_lane() is None  # as test_console has it: p warns there
         assert peek_text(app)[0].startswith("no lane ─") and "step-8" not in " ".join(peek_text(app))
         await press(pilot, "p")

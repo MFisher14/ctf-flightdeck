@@ -221,6 +221,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         self.filter_text = ""
         self.show_finished = False
         self.selected_lane: str | None = None  # the lane the keys act on
+        self._answered: str | None = None  # the selected lane, once the player answered it here (answered)
         self.selected_challenge: str | None = None
         self.board_focused = False
         self.compact = False  # the compact layout (views.compact of the terminal's width)
@@ -437,10 +438,13 @@ class FleetScreen(Screen, inherit_bindings=False):
                 rows += [(lane.id, views.lane_cells(deck, lane, lane.id == self.selected_lane, compact=self.compact, simple=self.simple)) for lane in done]
         return rows
 
-    def _render_lanes(self, rebuild: bool = False) -> None:
+    def _render_lanes(self, rebuild: bool = False, *, filtered: bool = False) -> None:
+        """Draw the lane list. `filtered`: the player just set or changed the filter
+        (set_filter), the only time a filter that hides the selected lane moves it (P96)."""
         table = self.query_one("#lanes", DataTable)
         if not table.columns:
             return
+        self._forget_settled_answer()
         rows = self._lane_rows()
         keys = [key for key, _ in rows]
         columns = [key for key, _, _ in self._lane_columns]
@@ -450,9 +454,13 @@ class FleetScreen(Screen, inherit_bindings=False):
                     table.update_cell(key, column, cells.get(column, Text("")))
         else:
             old_row = table.cursor_coordinate.row
+            old_keys = [row.key.value for row in table.ordered_rows]
             scroll_y = table.scroll_y
             selected_hidden = self.selected_lane is not None and self.selected_lane not in keys
-            if self._lane_cursor in keys and not (selected_hidden and self._lane_cursor != views.FINISHED_ROW):
+            moved = self._moved_selection(keys, old_keys, old_row, filtered) if selected_hidden else None
+            if moved is not None:
+                target = moved
+            elif self._lane_cursor in keys and not (selected_hidden and self._lane_cursor != views.FINISHED_ROW):
                 target = self._lane_cursor
             elif self.selected_lane in keys:
                 target = self.selected_lane
@@ -465,17 +473,84 @@ class FleetScreen(Screen, inherit_bindings=False):
                 for key, cells in rows:
                     table.add_row(*(cells.get(c, Text("")) for c in columns), key=key)
                 if target is not None:
-                    table.move_cursor(row=keys.index(target), animate=False, scroll=False)
+                    table.move_cursor(row=keys.index(target), animate=False, scroll=moved is not None)
                 elif keys:
                     table.move_cursor(row=min(old_row, len(keys) - 1), animate=False, scroll=False)
-                table.scroll_to(y=scroll_y, animate=False, immediate=True)
+                if moved is None:
+                    table.scroll_to(y=scroll_y, animate=False, immediate=True)
             self._lane_cursor = _cursor_key(table)
-            if self.selected_lane is None and self._lane_cursor not in (None, views.FINISHED_ROW):
+            if moved is not None:
+                self.selected_lane, self._answered = moved, None  # the keys act on the row the cursor is on
+                if not self.board_focused:
+                    self._follow_on_board(moved)
+                self._render_lanes()  # its row takes the selection's mark
+            elif self.selected_lane is None and self._lane_cursor not in (None, views.FINISHED_ROW):
                 self.selected_lane = self._lane_cursor  # first lanes on screen: select the top one
                 self._render_lanes()
         self.query_one("#lanes-pane").border_title = views.lanes_title(
             self.fd.deck, self.sort, self.filter_text, board_hidden=self.board_hidden, compact=self.compact, simple=self.simple
         )
+
+    def _moved_selection(self, keys: list[str], old_keys: list[str], old_row: int, filtered: bool) -> str | None:
+        """The lane the selection moves to now that the selected lane has no row (P96), or
+        None when it stays. Two cases move it, and only to a lane row of `keys`:
+
+        - the player answered the selected lane from the lane list (answered) and it folded
+          into the finished row: the first lane shown that needs the player, in attention
+          order, as ctrl+n has it in a lane's view; else the lane that was under it (the
+          lane above it when it was the last). This comes first: a lane answered under a
+          filter that matched its approval no longer matches it, and still goes on so;
+        - the player just set or changed the filter (`filtered`) and it hides the selected
+          lane: the lane row the cursor is drawn on (where it was, or the nearest lane row to
+          it when that is the finished row), so the keys and enter act on the row the player
+          sees highlighted.
+
+        A lane that finished with no answer of the player's (a teammate's solve, its budget)
+        keeps the selection, and the cursor points at the finished row; a lane whose own turn
+        takes it out of the filter keeps it too, and the keys refuse it until the player
+        moves: the selection never jumps to another lane with no key of theirs."""
+        deck = self.fd.deck
+        lane = deck.lanes.get(self.selected_lane or "")
+        lane_keys = [key for key in keys if key != views.FINISHED_ROW]
+        if lane is None or not lane_keys:
+            return None
+        if not (lane.finished and lane.id == self._answered):
+            if not filtered or views.lane_matches(deck, lane, self.filter_text, simple=self.simple):
+                return None
+            row = min(old_row, len(keys) - 1)
+            if keys[row] != views.FINISHED_ROW:
+                return keys[row]
+            above = [key for key in keys[:row] if key != views.FINISHED_ROW]
+            return above[-1] if above else lane_keys[0]
+        shown = set(lane_keys)
+        needing = [other.id for other in deck.needing() if other.id in shown]
+        if needing:
+            return needing[0]
+        if lane.id in old_keys:
+            at = old_keys.index(lane.id)
+            below = [key for key in old_keys[at + 1:] if key in shown]
+            above = [key for key in old_keys[:at] if key in shown]
+            if below or above:
+                return below[0] if below else above[-1]
+        return lane_keys[0]
+
+    def answered(self, lane_id: str) -> None:
+        """The player answered `lane_id` (approved, declined, killed) from the lane list: if
+        it is the selected lane and folds into the finished row, the selection goes on to the
+        next lane that needs the player (_moved_selection). Forgotten once the selection
+        moves, and once the answer is settled without ending the lane (_forget_settled_answer).
+        The caller draws the list again."""
+        if lane_id == self.selected_lane:
+            self._answered = lane_id
+
+    def _forget_settled_answer(self) -> None:
+        """The answer stops counting once it is settled and the lane goes on: a rejected flag,
+        a decline. A lane that ends later, on its own, is no answer of the player's and keeps
+        the selection (P96). A flag on its way to the platform is not settled yet: its answer
+        comes back on its own, and a lane that is solved by it then moves the selection on."""
+        lane = self.fd.deck.lanes.get(self._answered or "")
+        if lane is None or (not lane.finished and not self.fd.deck.sending(lane.id)):
+            self._answered = None
 
     def peek_room(self) -> int:
         """The rows the lane list and the peek have between them now: the lanes panel's, as it
@@ -530,7 +605,7 @@ class FleetScreen(Screen, inherit_bindings=False):
         key = _cursor_key(event.data_table)  # the live cursor, not a stale event
         self._lane_cursor = key
         if key and key != views.FINISHED_ROW and key != self.selected_lane:
-            self.selected_lane = key
+            self.selected_lane, self._answered = key, None
             self._render_lanes()
             self._follow_on_board(key)
         self.board_focused = False
@@ -592,6 +667,8 @@ class FleetScreen(Screen, inherit_bindings=False):
             self.show_finished = True
         if not views.lane_matches(deck, lane, self.filter_text, simple=self.simple):
             self.filter_text = ""
+        if lane_id != self.selected_lane:
+            self._answered = None
         self.selected_lane = self._lane_cursor = lane_id
         self.board_focused = False
         self._render_lanes(rebuild=True)
@@ -770,7 +847,7 @@ class FleetScreen(Screen, inherit_bindings=False):
 
     def set_filter(self, text: str) -> None:
         self.filter_text = text.strip()
-        self._render_lanes(rebuild=True)
+        self._render_lanes(rebuild=True, filtered=True)
         self._render_why()
 
     def _leave_bar(self) -> None:

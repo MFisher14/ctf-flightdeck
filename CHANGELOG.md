@@ -18,6 +18,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   `$XDG_CONFIG_HOME/ctf-flightdeck`. A file you already have in `~/.config/ctf-flightdeck` is
   still read when the new folder has none, and each command says so once on stderr (`flightdeck
   doctor` in a `config folder` line), so nothing is ignored in silence.
+- The lane list's keys act on the row you see highlighted. A filter that hides the selected
+  lane now selects the row the cursor is on, where before the keys went on refusing the hidden
+  lane. And when you approve, decline or kill a lane from the list and it ends, the selection
+  moves on to the next lane that needs you (or the row under it), instead of staying on the
+  folded `N finished` row.
 - A lane's session no longer answers one call late. Output a program wrote before a send (a
   debugger still loading, say) comes with the send's read but no longer ends it, so the read
   waits for the reply, and `until` is looked for only in what came after the send. A secret of

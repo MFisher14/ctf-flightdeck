@@ -993,7 +993,7 @@ def test_a_filter_that_hides_the_selected_lane_gives_the_simple_key_line_the_no_
         app.fleet.select_lane("L02")
         await pilot.pause()
         assert footer_line(app).strip() == APPROVAL
-        app.fleet.set_filter("gamma")  # hides the selected lane: every key refuses it
+        app.fleet.set_filter("zzz")  # hides the selected lane and every other: every key refuses it
         await pilot.pause()
         assert app.fleet.selected_lane == "L02" and app.fleet.bar_lane() is None
         assert footer_line(app).strip() == NO_LANE_BY_HAND  # as help's "now" and the bar's `no lane` say

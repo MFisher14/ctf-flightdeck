@@ -140,6 +140,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   under a site-bound `RCTF_TOKEN_<NAME>`-style variable. The event file carries the `[http]`
   table `flightdeck http example --preset NAME` prints. The home screen's form asks the same.
   Not built: a table of your own routes from start, and asking the site which platform it runs.
+- **The lane list's selection follows what you see** (P96, proposed). A filter that hides the
+  selected lane selects the row the cursor is on, so the keys act on the highlighted row; a
+  lane you approve, decline or kill from the list that folds into `N finished` hands the
+  selection to the next lane that needs you, else to the row under it.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
