@@ -1,7 +1,7 @@
 """What `flightdeck start` writes: an event folder that `flightdeck play FOLDER` opens.
 
     FOLDER/event.toml   the event profile (preflight.py), from the player's answers
-    FOLDER/board/       the board: pulled from CTFd by the run, or filled by hand
+    FOLDER/board/       the board: pulled from CTFd or a JSON-API platform by the run, or filled by hand
 
 This module is the answers and the file; the questions are in start_cli.py. The profile holds
 no secret: a token goes to the player's keys file (keys.py) under the variable named here.
@@ -22,7 +22,8 @@ from .text import untrusted
 
 EVENT_FILE = "event.toml"
 BOARD_DIR = "board"
-PLATFORMS = ("ctfd", "manual")
+PLATFORMS = ("ctfd", "manual", "http")  # http: a platform with a JSON API, by one of its presets (platform/http_presets)
+SIGNS_IN = ("ctfd", "http")  # the platforms whose event has a site, a token and a submit policy
 SUBMITS = ("confirm", "auto")
 
 
@@ -33,13 +34,15 @@ class StartError(ValueError):
 @dataclass(frozen=True)
 class EventAnswers:
     name: str
-    platform: str  # "ctfd" | "manual"
-    url: str | None = None  # ctfd
-    token_env: str | None = None  # ctfd: the variable's name, never the token
+    platform: str  # "ctfd" | "manual" | "http"
+    url: str | None = None  # ctfd, http
+    token_env: str | None = None  # ctfd, http: the variable's name, never the token
     flag_format: str | None = None  # a regular expression, or None for flightdeck's default
     submit: str = "confirm"
     team: bool = False
     label: str | None = None  # the label the team declared to the event for its AI use (rules.declared_label), or None
+    preset: str | None = None  # http: which platform's routes (platform.http.PRESETS)
+    game: str | None = None  # http, GZCTF: the game's number, the value of {game} in its routes
 
 
 def slug(name: str) -> str:
@@ -58,11 +61,25 @@ def name_answer(text: str) -> str:
     return name
 
 
-def token_variable(name: str) -> str:
-    """The first name tried for an event's CTFd token variable, from the event's name alone.
+CTFD_PREFIX = "CTFD_TOKEN_"
+
+
+def token_prefix(platform: str, preset: str | None = None) -> str:
+    """What an event's token variable starts with: CTFD_TOKEN_ for CTFd; for a JSON-API
+    platform, the preset's own prefix and TOKEN_ (RCTF_TOKEN_, NOCTF_TOKEN_), a name the http
+    platform takes for its token (preflight.http_token_env) and that names no other secret."""
+    if platform != "http":
+        return CTFD_PREFIX
+    from .platform.http import variable_prefix
+
+    return variable_prefix(preset_answer(preset or "")) + "TOKEN_"
+
+
+def token_variable(name: str, prefix: str = CTFD_PREFIX) -> str:
+    """The first name tried for an event's token variable, from the event's name alone.
     Two names can give the same one ("Example CTF" this year and last, "Example CTF!"), so
     this is not yet the event's variable: token_variable_for chooses that, by the site."""
-    return "CTFD_TOKEN_" + slug(name).upper().replace("-", "_")
+    return prefix + slug(name).upper().replace("-", "_")
 
 
 def site_of(url: str | None) -> str | None:
@@ -123,10 +140,11 @@ class TokenVariable:
 
 
 def token_variable_for(name: str, url: str, *, uses: Mapping[str, Sequence[TokenUse]] | None = None,
-                       source: Callable[[str], str | None] | None = None) -> TokenVariable:
-    """The keys-file variable for this event's CTFd token, bound to the event's site.
+                       source: Callable[[str], str | None] | None = None, prefix: str = CTFD_PREFIX) -> TokenVariable:
+    """The keys-file variable for this event's token, bound to the event's site.
 
-    The first of CTFD_TOKEN_<NAME>, CTFD_TOKEN_<NAME>_2, ... that is this site's or nobody's:
+    The first of CTFD_TOKEN_<NAME>, CTFD_TOKEN_<NAME>_2, ... (`prefix`, token_prefix: an rCTF
+    event's are RCTF_TOKEN_<NAME>, ...) that is this site's or nobody's:
 
     - a variable an event at another site names is that site's token, set or not: it is never
       read for this event (its value would go to this site's address) and never written (this
@@ -146,7 +164,7 @@ def token_variable_for(name: str, url: str, *, uses: Mapping[str, Sequence[Token
         raise StartError("give the event site's address, like https://ctf.example.org")
     uses = token_uses() if uses is None else uses
     source = keys.source if source is None else source
-    base, passed = token_variable(name), []
+    base, passed = token_variable(name, prefix), []
     for number in range(1, 100):
         candidate = base if number == 1 else f"{base}_{number}"
         named_by = uses.get(candidate, ())
@@ -164,10 +182,89 @@ def token_variable_for(name: str, url: str, *, uses: Mapping[str, Sequence[Token
 
 def platform_answer(text: str) -> str:
     choice = text.strip().lower()
-    choice = {"1": "ctfd", "2": "manual", "by hand": "manual", "hand": "manual", "other": "manual"}.get(choice, choice)
+    choice = {"1": "ctfd", "2": "manual", "by hand": "manual", "hand": "manual", "other": "manual",
+              "3": "http", "json": "http", "json api": "http"}.get(choice, choice)
     if choice not in PLATFORMS:
-        raise StartError("answer 1 (ctfd) or 2 (by hand)")
+        raise StartError("answer 1 (ctfd), 2 (by hand) or 3 (rCTF, rCTF v2, noCTF or GZCTF)")
     return choice
+
+
+PRESET_LABELS = {"rctf": "rCTF", "rctf2": "rCTF v2", "noctf": "noCTF", "gzctf": "GZCTF"}  # each platform's name as it writes it
+
+
+def preset_answer(text: str) -> str:
+    """Which JSON-API platform: its number in the menu (1 to 4, in platform.http.PRESETS's
+    order), its preset's name (rctf2) or the platform's own (rCTF v2), in any case."""
+    from .platform.http import PRESETS
+
+    choice = " ".join(text.split()).lower()
+    names = {str(number): preset for number, preset in enumerate(PRESETS, 1)}
+    names.update({PRESET_LABELS[preset].lower(): preset for preset in PRESETS})
+    choice = names.get(choice, choice)
+    if choice not in PRESETS:
+        raise StartError("answer " + ", ".join(f"{number} ({PRESET_LABELS[preset]})" for number, preset in enumerate(PRESETS, 1)))
+    return choice
+
+
+_ROOT_API = ("rctf", "rctf2", "gzctf")  # their routes are under the site's root (/api/...): a page's path is not part of the address
+_GAME_PATH = re.compile(r"/games/([0-9]{1,9})(?:/.*)?")  # a GZCTF game's page, or a page under it: https://site/games/3/challenges
+
+
+def http_url_read(preset: str, text: str) -> tuple[str, str | None, str | None]:
+    """The address of an event on a JSON-API platform, from what the player typed or pasted:
+    (the url its routes are under, the game the address names (GZCTF) or None, what was made
+    of it in words, or None when it was taken as typed).
+
+    rCTF's and GZCTF's routes are under the site's root, so a page's address pasted from the
+    browser (https://site/challs, https://site/games/3/challenges) is cut to the site's, and
+    that is said; GZCTF's /games/N also gives the game. noCTF's address is its API's, which
+    may have a path of its own, so it is taken as typed."""
+    from urllib.parse import urlsplit
+
+    url = url_answer(text)
+    if preset not in _ROOT_API:
+        return url, None, None
+    parts = urlsplit(url)
+    if parts.path in ("", "/") and not parts.query and not parts.fragment:
+        return url, None, None
+    site = f"{parts.scheme}://{parts.netloc}"
+    said = f"{PRESET_LABELS[preset]}'s routes are under the site's root, so the address is {untrusted(site, one_line=True)}"
+    game = _GAME_PATH.fullmatch(parts.path) if preset == "gzctf" else None
+    if game is not None:
+        number = str(int(game.group(1)))
+        if number != "0":
+            return site, number, f"{said}, and the game is {number}, from its page's address"
+    return site, None, said
+
+
+def game_answer(text: str) -> str:
+    """A GZCTF game's number, as its page's address shows it (https://.../games/3)."""
+    typed = text.strip()
+    if not re.fullmatch(r"[0-9]{1,9}", typed) or int(typed) == 0:
+        raise StartError("give the game's number, as its page's address on the site shows it (3 for https://.../games/3)")
+    return str(int(typed))
+
+
+TOKEN_HELP = {  # where each platform's token is: what the token question asks for
+    "ctfd": "your CTFd access token (on the event's site: Settings, then Access Tokens, then Generate)",
+    "rctf": ("your team's login link, whole (the site's profile page, under Team Invite: https://.../login?token=...), "
+             "or the token alone"),
+    "noctf": ("your noCTF session token (sign in on the site; the browser's storage for the site keeps it under "
+              "noctf-session-token; it lasts a week)"),
+    "gzctf": ("the value of the GZCTF_Token cookie (sign in on the site; the browser's developer tools show it under "
+              "Storage or Application, then Cookies; it lasts 7 days from your last visit)"),
+}
+TOKEN_HELP["rctf2"] = TOKEN_HELP["rctf"]
+
+
+def token_help(platform: str, preset: str | None = None) -> str:
+    """Where an event's token is on its site, in words."""
+    return TOKEN_HELP[preset if platform == "http" and preset in TOKEN_HELP else "ctfd"]
+
+
+def token_name(platform: str, preset: str | None = None) -> str:
+    """The event's token in a few words, as in "put NAME=<your rCTF token> in your keys file"."""
+    return f"your {PRESET_LABELS[preset]} token" if platform == "http" and preset in PRESET_LABELS else "your CTFd access token"
 
 
 def submit_answer(text: str) -> str:
@@ -271,10 +368,11 @@ def render(answers: EventAnswers) -> str:
         f"name = {q(answers.name)}",
         f"platform = {q(answers.platform)}",
     ]
-    if answers.platform == "ctfd":
+    if answers.platform in SIGNS_IN:
         lines += [f"url = {q(answers.url or '')}", f"token_env = {q(answers.token_env or '')}"]
-    else:
-        lines.append(f"board = {q(BOARD_DIR)}  # the folder of challenge folders, beside this file")
+    if answers.platform != "ctfd":
+        lines.append(f"board = {q(BOARD_DIR)}  # the folder of challenge folders, beside this file"
+                     + (": the run pulls the challenges into it" if answers.platform == "http" else ""))
     if answers.flag_format:
         lines.append(f"flag_format = {q(answers.flag_format)}")
     lines += [
@@ -283,7 +381,7 @@ def render(answers: EventAnswers) -> str:
         "[rules]",
         "ai_allowed = true            # you said the event's rules allow AI agents on the challenges...",
         "material_to_models = true    # ...and giving a model each challenge's text and files (every lane does)",
-        f"platform_automation = {'true' if answers.platform == 'ctfd' else 'false'}   # may flightdeck pull and submit through the site's API",
+        f"platform_automation = {'true' if answers.platform in SIGNS_IN else 'false'}   # may flightdeck pull and submit through the site's API",
         'live_targets = "confirm"     # a lane asks you before it reaches a challenge\'s instance ("allowed": never asks; "off": never reaches)',
         (f"declared_label = {q(answers.label)}   # what your team declared to the event for its AI use: shown before a run and on its flight card"
          if answers.label else
@@ -291,11 +389,15 @@ def render(answers: EventAnswers) -> str:
         "",
         "[policies]",
     ]
-    if answers.platform == "ctfd":
+    if answers.platform in SIGNS_IN:
         lines.append(f'submit = "{answers.submit}"' + ("           # a flag a lane claims goes to the site at once" if answers.submit == "auto"
                                                          else "        # you approve each flag before it is sent"))
     else:
         lines.append("# submit is by hand: flightdeck shows each flag, you submit it on the site and say if it was accepted")
+    if answers.platform == "http":  # the [http] table `flightdeck http example --preset NAME` writes, with this event's game
+        from .http_cli import preset_table
+
+        lines += ["", preset_table(answers.preset or "", answers.game, keys_file=True).rstrip("\n")]
     return "\n".join(lines) + "\n"
 
 

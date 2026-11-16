@@ -38,7 +38,9 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   API failure every lane would hit, or a model API that keeps failing: two lanes in a row ended on
   a rate limit, a 5xx or an overload within a few minutes, with no reply in between), "queue held" stands where "all clear" would be (or beside
   "▲ N need you"), followed by why: never "all clear", since nothing starts until the player
-  lifts the hold with `/unhold`.
+  lifts the hold with `/unhold`. While the host governor holds new lanes back and challenges
+  wait for it, "lanes wait" stands there instead, followed by why (the reading over its limit):
+  there is nothing to lift, and lanes start by themselves once the machine is back within it.
 - **Board**: every challenge with category, points, solve count, status (new ·, queued …, running ▶,
   solved by us ✓, solved by a teammate ✓ in cyan, blocked ✗, parked ‖) and owner (lane, me,
   teammate, or `L1·<engine>` when the flag that engine found solved it, whichever lane submitted
@@ -46,8 +48,27 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   several, a card to queue or claim it and to open any of its lanes (`1`-`9`). A parked challenge
   can be queued again, from its card or with `/queue`.
 - **Fleet**: one compact row per lane, scrolling, **sorted by attention** (below). Finished lanes
-  collapse into one row. 40+ rows stay usable. The list keeps its scroll position. The
-  attention cell (`!`) shows what the lane most urgently needs from you (an alert or an approval);
+  collapse into one row. 40+ rows stay usable. The list keeps its scroll position.
+  The keys act on the selected lane, and the selection follows the cursor, which never selects
+  the finished row (P96):
+  - A filter the player sets or changes that hides the selected lane selects the lane row the
+    cursor is drawn on (the nearest lane row when the cursor is on the finished row), so the
+    row drawn highlighted is the one `a`, the numbers and Enter act on. Clearing the filter
+    leaves it there. A filter that leaves no lane row keeps the hidden lane selected, and every
+    key refuses it. So does a lane whose own turn takes it out of the filter (what it did no
+    longer matches): the selection never moves to another lane with no key of the player's.
+  - A lane the player answered from the list (approved, declined or killed it, by key, number,
+    command bar or `A`) that then folds into the finished row hands the selection to the first
+    lane shown that needs the player, in attention order, as `ctrl+n` in a lane's view; with
+    none, to the row that was under it (above it, when it was the last row). The answer counts
+    while the selection stays on that lane and until it is settled: a flag on its way to the
+    platform still counts, and a rejected flag or a decline that lets the lane go on does not
+    any more. A player who moved off it and back, or a lane that
+    ended with no answer of the player's (a teammate's solve, a lane that gave up), keeps the
+    finished lane selected, and the cursor points at the finished row. An answer given in a
+    lane's own view moves nothing in the list.
+
+  The attention cell (`!`) shows what the lane most urgently needs from you (an alert or an approval);
   with nothing to answer, `sending` while a flag of the lane is on its way to the platform (its
   answer comes back on its own), else an informational alert, if any. The cost column has room
   for its markers: `$0.42+` when some spend had no price (what is known, as "at least"), and `…`
@@ -62,13 +83,16 @@ corner in any font). The header's segments are solid blocks with a `╱` between
     through a lane's view, `/layout` and a resize.
   - Its first row is a rule that names the lane and its challenge: the lane the keys and the
     command bar act on, so with the board in focus it is the challenge's only lane, and `no
-    lane` when no lane or several work it, or when the filter hides the selected lane. It
-    follows the selection.
+    lane` when no lane or several work it, or when the filter hides the selected lane (it
+    does only when it leaves no lane row: P96). It follows the selection.
   - Under the rule, six rows at most, oldest first, each cut at the edge and never wrapped.
     They are the calm transcript's rows (Focus view, below) with a run of tool calls opened:
     every call is a row (`⏺ the call → the first line of its output`, each with ` …+N lines`
     when it has more), and the model's words, a message or an intervention, a note, an alert
-    (`▲ Loop alert · turn 3`) and an approval (`◆ asked you · turn 12: …`) are a row each. A
+    (`▲ Loop alert · turn 3`) and an approval (`◆ asked you · turn 12: …`) are a row each. The
+    same call made several times in a row, in one turn or over several, is one row: the last
+    of them, with how many times first (`⏺ ×7 $ nc -z 127.0.0.1 9000 → exit 1`), so a lane that
+    loops takes one row and leaves the others for what it did before (P72). A
     lane with no step yet says so. The panel is the same height for every lane, so the list
     does not move with the cursor.
   - Its rows come from the lane list, which scrolls and keeps the selected lane in view. The
@@ -132,15 +156,17 @@ corner in any font). The header's segments are solid blocks with a `╱` between
     word of its name: `/over` lists `/takeover`, `/hold` `/unhold`, `/pilot` `/autopilot`,
     `/direct` `/redirect`. A name that starts with what is typed comes before a command found
     another way; a name or an alias typed whole comes first (`/q` lists `/quit`, then `/queue`).
-  - The aliases are `/q` and `/exit` for `/quit`, `/settings` for `/config` and `/lanes` for
-    `/back`; the menu and the help show them beside the name, as `/quit (/q, /exit)`. No other
-    command has one: `/approve` is typed whole.
+  - The aliases are `/q` and `/exit` for `/quit` and `/lanes` for `/back`; the menu and the
+    help show them beside the name, as `/quit (/q, /exit)`. No other command has one:
+    `/approve` is typed whole, and `/settings` is a command of its own since P90
+    (`/settings lanes 8` is refused with `/config lanes 8` as what to type).
   - After a command's name and a space, the menu lists the words that command takes that
     start with what follows: every lane with its challenge and state for `/open` (found by
     the lane's id, `l1` for L01, or by a word of its challenge's name), the parked and new
     challenges for `/queue` (by id or by a word of the name), the themes for `/theme` (built
     in, then yours, the one in use marked), `simple` and `deck` for `/layout` (the one in use
-    marked), the sort modes for `/sort`, `on` and `off` for `/autopilot`. A word typed whole is
+    marked), the sort modes for `/sort`, `on` and `off` for `/autopilot`, and `output`, `command`,
+    `flag` and `all` for `/copy`, each with what it copies. A word typed whole is
     not listed. While the menu is open it follows the deck: a lane that changes state, a
     challenge that is parked. Other commands list nothing after their name.
   - When what is typed names no command and nothing is listed, the menu stays open with one
@@ -193,7 +219,7 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   | Entry | Drawn as, with details off |
   |---|---|
   | one tool call | `⏺ $ unzip -l rev.zip → Archive:  rev.zip`: the first line of the call and of its output, each followed by ` …+6 lines` when it has more |
-  | a run of tool calls | two rows: `⏺ 12 tool calls`, then `  ⎿ ` and the last call as above, which is what the lane is doing now |
+  | a run of tool calls | two rows: `⏺ 12 tool calls`, then `  ⎿ ` and the last call as above, which is what the lane is doing now. When the calls before it in the run are the same call, the count comes first: `  ⎿ ×7 $ nc -z 127.0.0.1 9000 → exit 1` is the seventh in a row (P72) |
   | the model's words | `⏺ ` and the words, wrapped: the one entry that is never cut |
   | a note from flightdeck (L1 too) | `· L1 intake: unsure (handout: 3 file(s) … …+14 lines`: its first line |
   | an alert | `▲ Loop alert · turn 3`; its reason is on the needs-you card |
@@ -270,6 +296,9 @@ corner in any font). The header's segments are solid blocks with a `╱` between
   The chat box keeps the focus through a drag. The highlight is the theme's colour for a selected
   row (`selected_focus`), and the text on it keeps its own colour.
 
+  `/copy` reads the lane's log and not the calm rows, so a folded row (`×7`) is never what it
+  copies: `/copy all` has every call, as details draw them, and `/copy output` and `/copy
+  command` take the last call that printed something, which need not be the one a folded row shows.
   A copy goes two ways, both every time: to the terminal's clipboard (OSC 52), and to the
   operating system's by its tool, which is `pbcopy` on macOS and on Linux `wl-copy`, else
   `xclip -selection clipboard`, else `xsel --clipboard --input`. Over SSH (`SSH_CONNECTION` or
@@ -369,8 +398,9 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   |---|---|
   | none, on a board the player fills | `/new add a challenge  ? help  q quit` |
   | none, on a platform's board | `? help  q quit` |
+  | hidden by a filter that leaves no lane row | as for none: every key refuses it, and the bar's title says `no lane` (a filter that leaves a lane row selects it: Fleet view) |
   | needs nothing, or has finished | `enter open  / commands  ? help  q quit` |
-  | waits for an approval | `a approve  d decline  enter open  / commands  ? help  q quit` |
+  | waits for an approval | `1 0 answer  enter open  / commands  ? help  q quit`: 1 says yes and 0 says no, in the why line's words for this approval (`1 more budget  0 stop the lane`); `a` and `d` still answer it |
   | has an alert with numbered answers | `1-9 answer`, and `x dismiss` when the alert is about its course, then `enter open  / commands  ? help  q quit` |
 
 - **Focus view.** A part shows only when it has something in it: the files pane once the lane
@@ -379,7 +409,8 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   challenge, model, state, turns, tokens, cost and idle time). The transcript and the
   needs-you card are calm: details start off (Focus view, above), and `ctrl+o` shows every line
   and the full card. Key line: `esc lanes  / commands  ? help  ctrl+o details`, with `1-9
-  answer` first while the lane has numbered answers (59 columns with the answers, so it is
+  answer` first while the lane has numbered answers, `1 0 answer` while it waits for an approval
+  (59 columns with the answers, so it is
   whole at every width the layout has; `?` works on the empty chat box). The chat box names
   the lane a message goes to on its border, as in every layout (Chat box, above), and a lane
   that has ended says `esc goes back to the lanes`.
@@ -412,7 +443,7 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   │ ╰──────────────────────────────────────────────────────────────────────────────────────────────╯ │
   ╰───────────────────────────────────────────────────────────────────────────────────────── plan - ─╯
   ╭─ to L01 · Baby RSA ──────────────────────────────────────────────────────────────────────────────╮
-   1-9 answer  esc lanes  / commands  ? help  ctrl+o details
+   1 0 answer  esc lanes  / commands  ? help  ctrl+o details
   ```
 - **The first lane.** On a board the player fills, the first lane of the run that a `/new`
   starts opens in the focus view, once it exists: only while the player is still in the lane
@@ -471,6 +502,11 @@ the one the console is drawn in, where the cursor starts.
 - **On a short terminal** the title and the keys stay on screen and the list between them
   scrolls to the cursor; under 24 rows the dialog gives up its blank rows and the note under
   the list.
+- **On a narrow terminal** (64 columns or fewer) the layout list says `This terminal is narrow,
+  so the compact layout shows in both.`, and what is said after a layout is chosen ends `this
+  terminal is narrow, so the compact layout shows`. Both hold only while it is narrow (P97): a
+  terminal made wider while the list is open loses the note, and narrowed again gets it back;
+  a status line said while it was narrow leaves that part out once it is wide.
 
 `/config` has the same two in its dialog, under the run's settings, with a third list: `for
 this run`, or `for this run, and saved in your config file`. Its theme list is the names only
@@ -513,6 +549,14 @@ A lane whose live box a teammate holds is not stopped: it keeps working on the h
 box, and then asks for live-box access (a `box` approval). At a budget's 80% warning `a` approves
 more, as it does at 100%; escalate is offered at 80% only.
 
+A lane waiting for a live-box answer gives its slot up (P83): the next queued challenge starts in
+it, and the lane's transcript says which lane took it. Once answered, the lane goes on if a slot
+is free; if none is, its state reads `queued` (`que` in the compact layout) until one frees, and it
+takes that one before any queued challenge. A lane waiting for a flag answer or more budget does
+the same once it has waited a minute (P91), so an answer you give at once keeps its slot. At most
+`max_waiting` lanes (`[lanes]`, 4 by default) are without a slot at once; one more keeps its
+slot, as does a lane with a session still open, and its transcript says why, once.
+
 ## Interventions
 
 | Key (fleet) | Command (both views) | Action |
@@ -523,7 +567,7 @@ more, as it does at 100%; escalate is offered at 80% only.
 | `f` | `/fork [approach]` | Start a sibling lane on the same challenge with a different approach or model |
 | `k` | `/kill [park]` | Kill the lane; the challenge goes back to the queue (fresh) or is parked. A re-queue made in the lane's focus view takes the view to the fresh lane |
 | `e` | `/escalate` | Hand a compact state summary to a stronger model |
-| `t` | `/takeover` | Drop to a shell in the lane's workspace (its container in Docker); exit the shell to hand back. The lane hears what you changed. Other lanes keep running meanwhile. |
+| `t` | `/takeover` | Drop to a shell in the lane's workspace (its container in Docker); exit the shell to hand back. The lane hears what you changed. Taking over closes the lane's sessions (a gdb or a connection it kept running: P82), and the hand-back tells it which. Other lanes keep running meanwhile. A shell that cannot start (no `docker` or `bash` to run), that ends at once with an error status (`docker exec` into a container that is gone) or that a signal ends gives the console back at once and hands the lane back as it was (a paused lane stays paused); the status line says why, and a shell that never ran is not told to the lane (P69) |
 | `a`, `1` | `/approve` | Approve the pending action (submit, more budget, live-box access); on a board that cannot check flags, "accepted" |
 | `A` | `/approve all` | Approve every flag that waits for a plain yes, in one action (Approving several flags at once, below) |
 | `x` | `/dismiss` | Dismiss the lane's most urgent alert about its course (effort, off-hint, wrong way, loop, stall) without intervening: you judge it wrong. It goes, and stays quiet as an answered alert does (Dismissing an alert, below) |
@@ -534,21 +578,32 @@ more, as it does at 100%; escalate is offered at 80% only.
 | `ctrl+o` (focus) | `/details` | In a lane's focus view: details on or off. On: every line of the transcript, and the full needs-you card; off: one row for each entry, a run of tool calls on two, and the card in three rows (more only where it is too narrow for them). Typed in the fleet, `/details` says it is that view's |
 |  | `/diff [file]` | Show the files the lane changed |
 | `ctrl+c` | `/copy [output\|command\|flag\|all]` | `ctrl+c` copies the text selected with the mouse (a drag copies it as you let go; `esc` takes the selection down). `/copy` copies from the lane with no mouse: its last output (alone), that call's command, its flag, or all of its transcript (Focus view, Selecting and copying) |
-|  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` (also `/settings`) | Alone: a dialog with this run's settings (lanes at once, what happens to a flag) and the console's layout and theme, which it can save (Choosing a look); Enter in the lanes field or `ctrl+s` applies, esc cancels. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run; only the layout and the theme can be saved, and only when the dialog is told to. |
+|  | `/settings` | Settings and health, the home screen's screen over the console (P90): at the top, this run's settings (lanes at once, what happens to a flag, the layout and the theme), each with the command that changes it; then your setup as the run's config has it, each setting with where it is set under its value (the config file, the model API, whether the key is set, never the key, the models, where lanes run, the look), and `flightdeck doctor`'s checks (in a run started with `--agent claude` or `codex`, `flightdeck doctor --agent`'s: that CLI and its credential are checked, and the `[api]` key and server are warnings, since those lanes never use them). Settings and checks are two columns (P97): a value, a where line, a check's detail or its fix too long for the terminal wraps under its own column, never under the name or the `ok`, `FAIL` or `warn`. A line under the title counts the lanes that need you, kept up to date while the screen is open; the lanes keep running. `c` opens `/config`'s dialog in its place, `r` runs the checks again, `esc` goes back. The checks run in a child process at a lower priority (nice 10), never on the console's loop, and leaving the screen stops them; what they found is kept for the run, so the screen opened again shows it with its age (`Checked 4 minutes ago: r checks again`) and starts nothing. It takes nothing: a word after it is refused. |
+|  | `/config [lanes N\|unlimited]`, `/config submit auto\|confirm`, `/config file` | Alone: a dialog with this run's settings (lanes at once, what happens to a flag) and the console's layout and theme, which it can save (Choosing a look); Enter in the lanes field or `ctrl+s` applies, esc cancels. `lanes`: how many lanes run at once, from now on (raising it starts queued lanes; lowering it stops none). `submit auto` turns auto approve on: a flag a lane submits goes at once, with auto submit's exceptions; `submit confirm` turns it off. Flags already waiting stay yours. Neither goes past the event's rules. `file` names your config file. Each change lasts for this run; only the layout and the theme can be saved, and only when the dialog is told to. |
 |  | `/layout [simple\|deck]` | The console's layout for the rest of this run: `simple` (one list of lanes, what needs you, the keys that apply now) or `deck` (the board and every column). Alone: the list that tries both and can save one (Choosing a look). The status line says how to keep it (`/layout, then s`), and that the compact layout shows when the terminal is narrow. Any other word is refused: `/layout takes simple or deck`. |
 |  | `/theme [name]` | Alone: the list that tries the themes and can save one (Choosing a look). With a name: the console's colours for the rest of this run, and the status line says how to keep it (`/theme, then s`). A name that is no theme, or a theme file that cannot be used, is a warning with the reason, and the theme in use stays. |
 |  | `/note <text>` | A note for every lane (an organizer's ruling, a replaced handout): each running lane reads it on its next turn, and every lane started later in this run reads it at its start. At most 12 stand at once. |
-|  | `/new [name]` | Hand a challenge over, on a board you fill yourself: a form with the challenge's name and a box for its description and its instance's address; its files and screenshots are attached by a drop on the terminal, `ctrl+o` or `ctrl+v`, and listed on the form (a path written in the description is only text; the address is `https://...` or `nc host port`, on a line of its own); category and points are optional. A line under the box says what is attached. A dropped file is copied into the run's folder as it lands, so one that is gone before `ctrl+s` is still added. `ctrl+v` pastes a screenshot from the clipboard (so does an empty paste, which is what a terminal's own paste key sends in Windows Terminal and Alacritty), and the lanes' model reads an image's text into the description. `ctrl+s` adds it and a lane starts on it; `esc` cancels. Refused on a board that comes from a platform, and in the mock. |
-|  | `/attach [challenge] <files>` | Add files to a challenge on a board you fill yourself: drag them onto the command bar, or give no file and choose them in the file window. A drop that lands is said with each file's name and size, and the `/attach` names the run's own copy of each file (`dropped/` in the run's folder), made as it landed. A paste that reads as a dropped file that is not on this machine is said with the likely reason, and is pasted as text. Its lanes start afresh with them, and the status line names the fresh ones (`attached extra.txt to doll; L01 restarted as L02`; `L01 ended, a fresh lane starts when one is free` while none has started; `L01, L02 restarted as L03, and 1 more starts when a lane is free` when only some have; `no fresh lane started: …` and the reason when none can). An ended lane's result reads `killed: to restart with extra.txt; re-queued fresh`. Typed in the lane's focus view, the view goes to the fresh lane. Without a challenge: the open lane's. |
+|  | `/new [name]` | Hand a challenge over, on a board you fill yourself: a form with the challenge's name and a box for its description and its instance's address; its files and screenshots are attached by a drop on the terminal, `ctrl+o` or `ctrl+v`, and listed on the form; above the box a few words say how a drop works in the terminal flightdeck runs in, and what to press when nothing lands (P77; help has the whole sentence) (a path written in the description is only text; the address is `https://...` or `nc host port`, on a line of its own); category and points are optional. A line under the box says what is attached. A dropped file is copied into the run's folder as it lands, so one that is gone before `ctrl+s` is still added. `ctrl+v` pastes a screenshot from the clipboard (so does an empty paste, which is what a terminal's own paste key sends in Windows Terminal and Alacritty), and the lanes' model reads an image's text into the description. `ctrl+s` adds it and a lane starts on it; `esc` cancels. Refused on a board that comes from a platform, and in the mock. |
+| `ctrl+o` (fleet) | `/attach [challenge] <files>` | Add files to a challenge on a board you fill yourself: drag them onto the command bar, or give no file and choose them in the file window. `ctrl+o` in the fleet is a bare `/attach`: the file window, for the selected lane's challenge (the selected challenge when the board has the focus), in every layout; on a board the platform fills, and in the mock, it says why nothing can be attached, as `/attach` does. A drop that lands is said with each file's name and size, and the `/attach` names the run's own copy of each file (`dropped/` in the run's folder), made as it landed. A paste that reads as a dropped file that is not on this machine is said with the likely reason, and is pasted as text. Its lanes start afresh with them, and the status line names the fresh ones (`attached extra.txt to doll; L01 restarted as L02`; `L01 ended, a fresh lane starts when one is free` while none has started; `L01, L02 restarted as L03, and 1 more starts when a lane is free` when only some have; `no fresh lane started: …` and the reason when none can). An ended lane's result reads `killed: to restart with extra.txt; re-queued fresh`. Typed in the lane's focus view, the view goes to the fresh lane. Without a challenge: the open lane's, or in the fleet the selected lane's. When the run answered a `/new` with images (`reading 1 image...`) and the challenge then cannot be written, the copies of the files dropped for it are removed from `dropped/`, and the warning says so: drop them again with `/new`. |
 |  | `/queue <challenge>` | Queue a parked or new challenge (also from its board card) |
 |  | `/autopilot [on\|off]` | `on` engages autopilot, `off` takes the controls back, alone it says which it is. `on` is refused, with the reason, without a run budget, off the Docker runtime, while the queue is held, and once the budget is spent |
 |  | `/unhold` | Lift the hold on the queue once its cause is fixed: the challenges an API outage parked are queued again, and queued lanes start in the free slots (a key or model id changed in your config needs a new run). Refused when the queue is not held; while it is, the `/` menu offers it first, whatever lane is selected |
 | `/`, `s`, `tab` | `/filter`, `/sort` | Command bar, change sort, move focus between panes |
+| up, down (bar) | | In the command bar and a lane's chat box: what was sent this run, newest first, from either view; down past the newest gives back what was being typed. While the `/` menu is open they move in the menu. Nothing is sent while walking, and the history is never written to a file (Command bar history and editor, below) |
+| `ctrl+g` (bar) | | In the command bar and a lane's chat box: what is typed, in the player's editor (`$VISUAL`, else `$EDITOR`); its text comes back on one line and Enter sends it (Command bar history and editor, below) |
 | `?` | `/help` | Help for where you are: the keys for the lane now, then every key and command, each alert chip, `sending`, `queue held`, the `+` and `…` after dollars, and the board's marks (Help, below). In the command bar and in a lane's chat box, only while it is empty |
 | `q`, `ctrl+q` | `/quit` (also `/q`, `/exit`) | Quit; it asks first while lanes are open or a flag is on its way (Quitting and signals, below) |
 
 `h`, `r` and `e` are refused on a lane that gave up and stays open only for its flag's answer (it
 takes no more turns): fork it (`f`), or answer its flag or wait for the platform's answer.
+
+### The welcome screen
+
+The first console a player opens, and the mock every time, start on a welcome screen (P50). Its
+last row names the keys that lead somewhere different (P93). On an empty board the player fills
+there are two: `enter  add your first challenge` opens `/new`, and `esc  just show me the
+console` does not. On a loaded board and in the mock both would open the console, so the row
+is `enter  open the console` alone; `esc` and `q` still close it there, unnamed.
 
 ### Help
 
@@ -565,11 +620,39 @@ follows the view it was opened from.
    made safe, on one row, never markup.
 2. **Keys in a lane** or **Keys in the lane list**: the view it was opened from first, then the
    other one.
-3. **Keys in both**: selecting and copying, and `ctrl+q`.
-4. The commands, the alerts, the header and cost marks, and the board's marks, as before.
+3. **Keys in both**: selecting and copying, `ctrl+q`, and the command bar's history (up and
+   down) and editor key (`ctrl+g`).
+4. The commands; then **Files, in this terminal (/new and /attach)**: one sentence on how a
+   drop works where flightdeck runs (P77, the same one the `/new` form has); then the alerts,
+   the header and cost marks, and the board's marks, as before.
 
 `?`, `esc` or `q` closes it, and the focus is back where it was, with the chat box's draft as it
 was. A `?` that opened help sends nothing to a lane.
+
+### Command bar history and editor
+
+Both bars (the lane list's and a lane's chat box) share one history for the run (P71): each
+message and command Enter sent, a repeat of the one before kept once, at most 500, in memory
+only. Up puts back the one before what is shown, down the one after; the first up keeps what
+was typed and down past the newest gives it back; up at the oldest stays. A recalled command
+opens no `/` menu, so the arrows stay on the history; typing into a recalled line ends the
+walk. While the menu is open the arrows are the menu's, as before.
+
+`ctrl+g` writes what is typed to a file only the player can read, hands the terminal to
+`$VISUAL` (else `$EDITOR`) as a take-over hands it to a shell, and removes the file when the
+editor exits. On status 0 the file's text is the bar's: its lines with no blanks at their
+ends, empty ones left out, joined by single spaces, and a control character drawn as the
+console draws one from a lane (ESC as `^[`). Nothing is sent until Enter. Each failure is a
+warning on the status line and leaves the bar as it was:
+
+- neither variable set: `ctrl+g needs an editor: set VISUAL or EDITOR to one (neither is set)`;
+- the variable names a program not on `PATH`, or is not a command line: the variable is named,
+  and the other one is not tried in its place;
+- the editor exits with another status: `the editor (vim) exited with status 1: the box keeps what it had`;
+- the editor leaves the file empty (only blanks): `the editor left the file empty: the box keeps what it had`;
+- the file cannot be made (a full or read-only temporary folder) or read back (the editor
+  moved or removed it): the reason is named;
+- a console that cannot hand over the terminal: `this console cannot hand the terminal to an editor`.
 
 ### Approving several flags at once
 
@@ -675,6 +758,9 @@ What the console says outside its own window, for a player who is looking at ano
   so does a flightdeck stopped from outside (SIGTSTP, SIGSTOP) for as long as it is stopped.
 - **Switches.** `title = false` and `bell = false` under `[console]`, each by itself. With
   `title` off nothing about the title is written, the save and the take-back included.
+- **The mock.** `flightdeck mock` writes the title as a run does, and rings the bell only when
+  the config says `bell = true`: with `bell` left out, or no config at all, it rings none
+  (P70). A run rings unless `bell = false`.
 - **tmux.** With tmux's defaults a bell marks the window in the status line and is passed on to
   the terminal outside (`monitor-bell` on, `bell-action any`); a title sets the pane's title and
   reaches the terminal outside only with `set-titles on` (off by default). So over SSH on a

@@ -466,8 +466,8 @@ def test_a_coding_agent_lane_on_a_ctfd_event_shows_the_token_by_its_name(tmp_pat
 @pytest.mark.parametrize(
     "value, expected",
     [
-        (None, f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put FLIGHTDECK_TEST_CTFD_TOKEN=<token> in your keys file or export it"),
-        ("  ", f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put FLIGHTDECK_TEST_CTFD_TOKEN=<token> in your keys file or export it"),
+        (None, f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put FLIGHTDECK_TEST_CTFD_TOKEN=<token> in your keys file ("),
+        ("  ", f"the CTFd token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put FLIGHTDECK_TEST_CTFD_TOKEN=<token> in your keys file ("),
         (f"Token {TOKEN}", "holds characters an HTTP header cannot carry (spaces, line breaks, non-ASCII); check the "
                            f"variable it came from ({TOKEN_VAR}, the variable event.token_env names)"),
     ],
@@ -482,6 +482,26 @@ def test_a_ctfd_event_without_a_usable_token_stops_before_any_request(tmp_path, 
             prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url=fake.base_url), config=config(tmp_path)))
         assert fake.requests == []
     assert expected in str(caught.value) and TOKEN not in str(caught.value)
+    assert not (tmp_path / "board").exists() and not (tmp_path / "runs").exists()
+
+
+def test_a_ctfd_event_still_at_the_examples_address_sends_the_token_nowhere(tmp_path, token, monkeypatch):
+    """A CTFd profile whose event.url is still the example's (ctf.example.org): the token
+    would go to a host that is not the event's. The run refuses it by name before any address
+    is looked up, with the token set and nothing else wrong."""
+    import socket
+
+    from ctf_flightdeck.preflight import placeholder_url
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("a request left for the example's address")
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_network)
+    with pytest.raises(RunError) as refused:
+        prepare_run(RunOptions(board=tmp_path / "board", event=event(tmp_path, url="https://ctf.example.org"),
+                               config=config(tmp_path)))
+    refusal = placeholder_url("https://ctf.example.org")  # preflight's check refuses it, as preflight and start say it
+    assert refusal is not None and str(refused.value).endswith(f"\nrefuse: {refusal}") and TOKEN not in str(refused.value)
     assert not (tmp_path / "board").exists() and not (tmp_path / "runs").exists()
 
 

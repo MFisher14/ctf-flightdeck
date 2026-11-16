@@ -1,0 +1,52 @@
+# rCTF v2 (OtterSec's rewrite), as a table of routes for platform = "http" (docs/BOARDS.md). The
+# same as the rctf preset, but the list is asked of /api/v2/challs, which adds what a v1 list
+# leaves out: whether a challenge has an instance the platform starts for the team
+# (instancerLifetime). Such a challenge is marked on-demand on the board, and with
+# [instances] plugin = "rctf" in the profile, flightdeck starts its instance before a lane
+# works it (docs/BOARDS.md, Instances on demand).
+#
+# Read from the API reference and the response types of github.com/otter-sec/rctf; nobody has
+# played a real event through this table yet. An event on the older rCTF (redpwn's), which has
+# no /api/v2, takes preset = "rctf". `flightdeck http check EVENT.toml` shows what each path
+# matches on the site in front of you, and submits nothing.
+
+[auth]
+kind = "exchange"
+link_param = "token"  # the variable may hold the login link (/login?token=...): its token is taken and decoded
+request = ["POST", "/api/v1/auth/login"]
+body = { teamToken = "{token}" }
+token_path = "$.data.authToken"
+scheme = "Bearer"
+
+[list]
+request = ["GET", "/api/v2/challs"]
+items = "$.data[*]"
+ref = "$.id"
+name = "$.name"
+category = "$.category"
+points = "$.points"
+solves = "$.solves"
+description = "$.description"
+file_urls = "$.files[*].url"
+file_names = "$.files[*].name"
+instance = "$.instancerLifetime"  # a number when the challenge has an instancer; null when it has none
+
+[submit]
+request = ["POST", "/api/v1/challs/{ref}/submit"]
+body = { flag = "{flag}" }
+verdict_path = "$.kind"
+detail_path = "$.message"
+retry_after_path = "$.data.timeLeft"
+retry_after_unit = "ms"
+
+# The verdict is the answer's "kind", whatever the HTTP status. A kind this table does not name
+# is no verdict: the flag comes back to the player.
+[submit.verdicts]
+goodFlag = "correct"
+badFlag = "incorrect"
+badAlreadySolvedChallenge = "already_solved"
+badRateLimit = "rate_limited"
+
+[solved]
+request = ["GET", "/api/v1/users/me"]
+refs = "$.data.solves[*].id"

@@ -30,7 +30,7 @@ from ctf_flightdeck.core.attention import SortMode
 from ctf_flightdeck.core.deck import Deck, QueueEntry
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.driver import TurnReport
-from ctf_flightdeck.core.model import Alert, AlertKind, Challenge, DeckConfig, FileChange, LaneState, Suggestion
+from ctf_flightdeck.core.model import Alert, AlertKind, Challenge, DeckConfig, FileChange, LaneState, Pending, PendingKind, Suggestion
 from ctf_flightdeck.mock import scenarios
 from ctf_flightdeck.mock.world import FakeWorld
 from test_console import (
@@ -322,10 +322,10 @@ def shown_whole(app: FlightdeckApp, selector: str) -> bool:
 
 
 WELCOME_SIZES = [(80, 24), (66, 24), (64, 24), (50, 20), (80, 16), (100, 24), (160, 46)]
-WELCOME_KEYS = {  # (the mock, a board the player fills): what the last row says
-    (True, False): "enter open the console esc just show me the console",
+WELCOME_KEYS = {  # (the mock, a board the player fills): what the last row says, all of it
+    (True, False): "enter open the console",
     (False, True): "enter add your first challenge esc just show me the console",
-    (False, False): "enter open the console esc just show me the console",
+    (False, False): "enter open the console",
 }
 
 
@@ -345,11 +345,31 @@ def test_the_welcome_screen_always_says_which_key_does_what(size, mock, by_hand,
         assert type(app.screen).__name__ == "WelcomeScreen"
         said = prompt_text(app)
         assert WELCOME_KEYS[mock, by_hand] in said, said
+        keys = " ".join(str(app.screen.query_one(".keys").render()).split())
+        assert keys == WELCOME_KEYS[mock, by_hand], keys  # nothing more: esc is named only where it differs from Enter
         assert "Welcome to flightdeck" in said and shown_whole(app, ".keys")
         await press(pilot, "enter")
         assert type(app.screen).__name__ == ("NewChallengePrompt" if by_hand else "FleetScreen")
 
     drive(app, script, size)
+
+
+@pytest.mark.parametrize("key", ["escape", "q"])
+@pytest.mark.parametrize("mock, by_hand", list(WELCOME_KEYS), ids=["mock", "empty by hand", "platform"])
+def test_esc_still_closes_the_welcome_screen_where_its_key_line_does_not_name_it(mock, by_hand, key):
+    """esc and q show the console on every welcome screen, named or not, and never open /new."""
+    if mock:
+        world = FakeWorld(scenarios.get("sstv"))
+        app = FlightdeckApp(world.deck, ticker=world.tick, mock="MOCK · test", refresh_seconds=None, welcome=True)
+    else:
+        _, app = console(by_hand=by_hand, welcome=True)
+
+    async def script(pilot):
+        assert type(app.screen).__name__ == "WelcomeScreen"
+        await press(pilot, key)
+        assert type(app.screen).__name__ == "FleetScreen"
+
+    drive(app, script, (100, 30))
 
 
 def test_a_welcome_screen_too_tall_for_the_terminal_scrolls_under_its_key_line():
@@ -401,6 +421,27 @@ def test_the_new_form_shows_every_field_and_how_to_add_the_challenge(size):
         assert [part for part in FORM_PARTS if not shown_whole(app, part)] == []
 
     drive(app, script, size)
+
+
+@pytest.mark.parametrize("env", [{"TERM_PROGRAM": "vscode"}, {"TERM_PROGRAM": "tmux"}, {"TERM_PROGRAM": "iTerm.app"},
+                                 {"SSH_TTY": "/dev/pts/3"}, {"TERM_PROGRAM": "WezTerm", "XDG_SESSION_TYPE": "x11"}],
+                         ids=["vscode", "tmux", "iterm2", "ssh", "wezterm-x11"])
+def test_the_new_form_fits_at_its_smallest_with_the_files_line_of_any_terminal(env, monkeypatch):
+    """Each terminal's files line (P77) leaves every field of the form on screen at 66x24."""
+    from ctf_flightdeck.addchallenge import form_files_line
+
+    for name in ("SSH_CONNECTION", "SSH_TTY", "TMUX", "TERM_PROGRAM", "XDG_SESSION_TYPE"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    deck, app = console(by_hand=True, layout="simple", welcome=True)
+
+    async def script(pilot):
+        await press(pilot, "enter")
+        assert form_files_line(env).split(";")[0] in " ".join(prompt_text(app).split())
+        assert [part for part in FORM_PARTS if not shown_whole(app, part)] == []
+
+    drive(app, script, (66, 24))
 
 
 @pytest.mark.parametrize("size", [(80, 16), (56, 20)], ids=["80x16", "56x20"])
@@ -919,7 +960,7 @@ def test_an_app_is_built_in_the_deck_layout_unless_told_and_refuses_a_layout_it_
 NO_LANE_BY_HAND = "/new add a challenge  ? help  q quit"
 NO_LANE_PLATFORM = "? help  q quit"
 HEALTHY = "enter open  / commands  ? help  q quit"
-APPROVAL = "a approve  d decline  enter open  / commands  ? help  q quit"
+APPROVAL = "1 0 answer  enter open  / commands  ? help  q quit"
 COURSE_ALERT = "1-9 answer  x dismiss  enter open  / commands  ? help  q quit"
 
 
@@ -941,6 +982,58 @@ def test_the_simple_key_line_shows_the_keys_that_apply_to_the_selected_lane():
         app.refresh_view()
         await pilot.pause()
         assert deck.lanes["L03"].finished and footer_line(app).strip() == HEALTHY  # a finished lane: open its transcript
+
+    drive(app, script, SIZE)
+
+
+def test_a_filter_that_hides_the_selected_lane_gives_the_simple_key_line_the_no_lane_keys():
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        app.fleet.select_lane("L02")
+        await pilot.pause()
+        assert footer_line(app).strip() == APPROVAL
+        app.fleet.set_filter("zzz")  # hides the selected lane and every other: every key refuses it
+        await pilot.pause()
+        assert app.fleet.selected_lane == "L02" and app.fleet.bar_lane() is None
+        assert footer_line(app).strip() == NO_LANE_BY_HAND  # as help's "now" and the bar's `no lane` say
+        await press(pilot, "a")  # and the line is right: the key refuses
+        assert deck.lanes["L02"].pending is not None
+        app.fleet.set_filter("")  # the selection is shown again: its keys are back
+        await pilot.pause()
+        assert footer_line(app).strip() == APPROVAL
+
+    drive(app, script, SIZE)
+
+
+def test_a_waiting_lanes_key_line_names_the_numbers_the_why_line_puts_on_its_answers_and_a_and_d_still_act():
+    """P98: one vocabulary for an answer. The key line of a lane that waits for the player says
+    `1 0 answer`, as its view's does, and the why line under the list gives 1 and 0 in the
+    card's words; a and d answer it as before. The line is no longer than P51 and P65 let it be."""
+    deck, app = three_lanes("simple")
+    deck.report("L01", TurnReport(pending=Pending(PendingKind.BUDGET, "more budget")))
+
+    async def script(pilot):
+        app.fleet.select_lane("L01")
+        await pilot.pause()
+        assert footer_line(app).strip() == APPROVAL
+        why = " ".join(region_text(app, "#why").split())  # each number on its chip
+        assert "1 more budget 0 stop the lane" in why, why
+        assert "approve" not in footer_line(app) and "decline" not in footer_line(app)
+        assert cell_len(APPROVAL) <= fleet.keys_text(fleet.SIMPLE_LONGEST).cell_len
+        await press(pilot, "1")  # the number the line names answers it
+        assert deck.lanes["L01"].pending is None and deck.lanes["L01"].state is LaneState.RUNNING
+        app.fleet.select_lane("L02")
+        await pilot.pause()
+        assert footer_line(app).strip() == APPROVAL
+        await press(pilot, "d")  # and so does the letter the line no longer shows
+        assert deck.lanes["L02"].pending is None and deck.lanes["L02"].actions[-1].text.startswith("declined")
+        deck.report("L02", TurnReport(flag="flag{second}"))
+        await open_focus(pilot, app, "L02")
+        assert footer_line(app).strip() == "1 0 answer  esc lanes  / commands  ? help  ctrl+o details"
+        await press(pilot, "escape")
+        await open_focus(pilot, app, "L03")  # an alert's answers are numbered from 1, with no 0
+        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  ? help  ctrl+o details"
 
     drive(app, script, SIZE)
 
@@ -1039,7 +1132,7 @@ def test_the_simple_key_line_fits_whole_at_every_size_whatever_the_lane(size):
             assert cell_len(line) <= size[0] - 2 and "…" not in line, line
             assert set(pairs) <= SIMPLE_PAIRS and {"? help", "q quit", "/ commands", "enter open"} <= set(pairs), line
             if lane.pending is not None and not lane.finished:
-                assert {"a approve", "d decline"} <= set(pairs), line
+                assert "1 0 answer" in pairs and not {"a approve", "d decline"} & set(pairs), line
             seen.add(line)
         assert {APPROVAL, HEALTHY} <= seen and len(seen) >= 3  # an alert's line too
 
@@ -1310,7 +1403,7 @@ def test_what_doctor_says_the_simple_layout_leaves_out_is_what_the_console_leave
                     assert "cost" in columns(app, "lanes") and ("last" not in columns(app, "lanes")) is fit.no_last_action
                     assert any("last action in the lane list" in part for part in fit.left_out()) is fit.no_last_action
                 if fit.compact:  # the compact line, which has its own short labels: the keys it has not got
-                    has = {pair.split(" ")[0] for pair in keys}
+                    has = {pair.split(" ")[0] for pair in keys} | {fleet.YES_NO_KEY[1]}  # `a yes  d no` answer what 1 and 0 do
                     assert [f"{shown} {label}" for _, shown, label in fleet.SIMPLE_KEYS if shown not in has] == list(fit.fleet_keys), keys
                     assert list(fit.fleet_keys) == ["x dismiss", "enter open"]
                 else:

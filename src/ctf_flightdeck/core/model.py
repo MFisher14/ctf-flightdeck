@@ -70,6 +70,7 @@ class Challenge:
 class LaneState(StrEnum):
     RUNNING = "run"
     WAITING = "wait"  # waiting for the player to approve something
+    QUEUED = "queued"  # answered after it gave up its slot (Lane.benched): waits for a free one, ahead of the queue
     PAUSED = "paused"
     TAKEOVER = "takeover"  # the player has the lane's shell
     SOLVED = "solved"
@@ -291,6 +292,9 @@ class Lane:
     waiting: list[Pending] = field(default_factory=list)  # further approvals, oldest first
     hints: list[str] = field(default_factory=list)  # sent, not yet taken in by a turn
     paused_before_takeover: bool = False  # hand back leaves it paused
+    # it gave its slot up to the queue while it waited for the player (a live-box answer, P83; a
+    # flag or budget answer that took a while, P91): it takes a free one again before it runs, ahead of any queued challenge (LaneState.QUEUED until then)
+    benched: bool = False
     gave_up_later: str = ""  # its driver gave up while a flag waited: the lane ends once no flag waits
     declined: bool = False  # its model declined (a refusal): autopilot never sends its challenge on to another model
 
@@ -341,6 +345,13 @@ class Lane:
         came, or a light model's first look)."""
         return self.unpriced > self.unreported + self.light_unpriced
 
+    def asks_without_price(self) -> bool:
+        """Whether the budget question the lane waits on is whether to carry on with no dollar
+        cap (some spend had no price, so the cap cannot hold), not whether to raise the caps.
+        The card, the key line's words and the deck's own texts all ask this (P98)."""
+        return (self.pending is not None and self.pending.kind is PendingKind.BUDGET
+                and bool(self.dollar_cap) and self.no_price())
+
 
 class EventKind(StrEnum):
     RELEASE = "release"
@@ -357,6 +368,7 @@ class EventKind(StrEnum):
     WARNING = "warning"  # something did not happen as asked, with the reason
     L1 = "l1"  # a no-model solver ran on a challenge: engine, status, flags, seconds, notes
     SPEND = "spend"  # tokens or dollars spent outside a turn (a reply dropped at escalation, a judge): why, model
+    SLOT = "slot"  # a lane gave its slot up while it waits for a live-box answer, waits for one again, or took one (P83)
     ROUTE = "route"  # a light model routed a challenge at a lane's start: its family, a category guess, by whom
 
 
@@ -396,10 +408,16 @@ class DeckConfig:
     models: tuple[str, ...] = ()  # weakest to strongest; escalation moves right
     lanes_ceiling: int | None = None  # the most lanes the event's rules allow at once; None: they set no limit
     submit_ceiling: str = "auto"  # the loosest submit policy the player may switch to in the console (the event's rules)
+    max_waiting: int = 4  # lanes that may give their slot up while they wait for the player, each keeping its workspace (P83, P91); 0: none
+    bench_after: float = 60.0  # seconds a lane waits for a flag or budget answer before it gives its slot up (P91); a live-box wait: at once
 
     def __post_init__(self) -> None:
         if self.max_lanes < 1:
             raise ValueError(f"max_lanes must be at least 1, got {self.max_lanes}")
+        if not isinstance(self.max_waiting, int) or isinstance(self.max_waiting, bool) or self.max_waiting < 0:
+            raise ValueError(f"max_waiting must be a whole number, 0 or more, got {self.max_waiting!r}")
+        if isinstance(self.bench_after, bool) or not isinstance(self.bench_after, (int, float)) or not 0 <= self.bench_after < float("inf"):
+            raise ValueError(f"bench_after must be a number of seconds, 0 or more, got {self.bench_after!r}")
         if self.submit not in SUBMIT_POLICIES:
             raise ValueError(
                 f"submit policy {self.submit!r} is not supported yet; known: {', '.join(SUBMIT_POLICIES)}"

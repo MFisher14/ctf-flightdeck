@@ -68,16 +68,20 @@ def test_a_plugin_with_one_container_per_account_keeps_one_running():
     assert parse_config({"plugin": "ctfd_owl", "max_running": 1}).max_running == 1
     with pytest.raises(ValueError, match="instances.max_running must be 1 with plugin ctfd_owl: it runs one container per account"):
         parse_config({"plugin": "ctfd_owl", "max_running": 3})
+    whale = parse_config({"plugin": "ctfd_whale"})
+    assert whale.single and whale.replaces and whale.max_running == 1 and whale.gap == 60.0 and whale.busy is not None
+    with pytest.raises(ValueError, match="must be 1 with plugin ctfd_whale: it runs one container per account, and a start "
+                                         "removes the one that runs"):
+        parse_config({"plugin": "ctfd_whale", "max_running": 2})
+    assert not owl.replaces and owl.busy is None  # owl's start refuses while anything runs: it takes nothing away
     others = [parse_config(table) for table in ({"plugin": "docker_per_team"}, {"plugin": "chall_manager"}, OWN)]
-    assert [(c.single, c.max_running, c.gap) for c in others] == [(False, 3, 0.0)] * 3
+    assert [(c.single, c.max_running, c.gap, c.replaces, c.busy) for c in others] == [(False, 3, 0.0, False, None)] * 3
 
 
 @pytest.mark.parametrize(("table", "message"), [
     ({}, "needs plugin .* or all four routes; missing: start, stop, renew, status"),
-    ({"plugin": "whale"}, "is not a plugin flightdeck knows \\(known: docker_per_team, ctfd_owl, chall_manager\\)"),
+    ({"plugin": "whale"}, "is not a plugin flightdeck knows \\(known: docker_per_team, ctfd_owl, chall_manager, ctfd_whale, rctf, gzctf\\)"),
     ({"plugin": ["ctfd_owl"]}, "is not a plugin flightdeck knows .*; give the four routes instead"),
-    ({"plugin": "ctfd_whale"}, "instances.plugin ctfd_whale is not a plugin flightdeck knows .*; ctfd-whale has no shape yet: its start "
-                               "removes whatever container the account runs.* Start its instances on the site yourself"),
     ({"plugin": "ctfd_docker"}, "instances.plugin ctfd_docker is no longer a plugin flightdeck knows: its routes were a guess .* "
                                 "CTFd-Docker-Plugin and its forks are docker_per_team; for any other plugin give the four routes"),
     ({**OWN, "address_key": "data.where"}, "instances.address_key must be a JSON key name"),
@@ -161,6 +165,7 @@ def test_a_challenge_with_no_container_is_refused_and_not_called_full():
     (Reply(200, {"hostname": "bad host name", "port": 1}), "names no usable address"),
     (Reply(200, {"hostname": "h.example.test", "port": 70000}), "names no usable address"),
     (Reply(200, {"hostname": "h.example.test"}), "names no usable address"),
+    (Reply(200, {"hostname": "h.example.test", "port": "1" * 5000}), "names no usable address"),  # past int()'s digit limit
     (Reply(200, "<html>log in</html>"), "is not JSON"),
     (Reply(500, {"message": "boom"}), "the platform refused instance start for challenge 1: boom"),
     (Reply(200, {"success": False, "error": "disabled"}), "refused instance start for challenge 1: disabled"),

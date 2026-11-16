@@ -98,6 +98,7 @@ PLAIN = frozenset({
 OPEN_STATES = {
     LaneState.RUNNING: "working now",
     LaneState.WAITING: "waiting for the player's answer",
+    LaneState.QUEUED: "waiting for a free slot to go on",
     LaneState.PAUSED: "paused by the player",
     LaneState.TAKEOVER: "in the player's hands (a take-over)",
 }

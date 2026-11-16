@@ -14,32 +14,66 @@ file this appends to) and FAKE_AGENT_STATE (its state across processes), then ex
 
 What it models. From the docs (code.claude.com headless and cli-reference; the Codex
 non-interactive docs and codex-rs/exec), with what is ASSUMED (not checked against a real
-run) marked:
+run) marked. CHECKED marks what was compared with a real run of Claude Code 2.1.325 on
+2026-11-14 (P86: print mode, stream-json both ways, no tools, a trivial prompt; and the same
+command line logged out, which calls no model).
 
 Claude Code: `claude -p --input-format stream-json --output-format stream-json --verbose ...`
 - Options it does not know are refused (exit 1); stream-json output in print mode needs
-  --verbose; stream-json input needs stream-json output.
+  --verbose; stream-json input needs stream-json output (CHECKED: every flag claude_argv()
+  passes is taken). Permission modes: acceptEdits, auto, bypassPermissions, manual (which
+  init reports as "default"), dontAsk, plan; "default" is still taken (CHECKED).
 - stdin: one JSON user message per line, {"type":"user","message":{"role":"user","content":
-  ...},"parent_tool_use_id":null} (ASSUMED: the docs show the SDK's message type, not a raw
-  line). A line that is not one: exit 1.
-- stdout: system/init first (session_id, model, tools, cwd, permissionMode, apiKeySource);
-  for each model call one `assistant` event per content block (text or tool_use), each with
-  the message's id and usage (ASSUMED: the same usage on each); one `user` event per
-  tool_result; at the end of the turn a `result` event: subtype, is_error, num_turns,
-  result, session_id, total_cost_usd (ASSUMED: counted from the start of the process), usage.
+  ...},"parent_tool_use_id":null} (CHECKED). A line that is not JSON: exit 1 (CHECKED).
+  A control request {"type":"control_request","request_id":ID,"request":{"subtype":
+  "interrupt"}} is answered at once, {"type":"control_response","response":{"subtype":
+  "success","request_id":ID,...}}; during a turn it ends the turn as SIGINT does, while it
+  waits for a message it does nothing more (CHECKED).
+- stdout: a system/init event (session_id, model, tools, cwd, permissionMode, apiKeySource)
+  at the start of every turn, not only the first (CHECKED); for each model call one
+  `assistant` event per content block (text or tool_use), each with the message's id and
+  usage (ASSUMED: the same usage on each). That usage is the call's as it stood when the
+  block was sent: its input and cache counts are the call's own, its output_tokens often
+  only what had come by then (CHECKED: 2 on an event whose call wrote 649; 6 of 6 on a
+  short answer). The fake shows the call's whole usage there unless the call says
+  otherwise ("streamed"). One `user` event per tool_result. At the end of the turn a `result` event:
+  subtype, is_error, num_turns, result, session_id, total_cost_usd (CHECKED: counted from the
+  start of the process), usage (the turn's), modelUsage (per model, from the start of the
+  process: inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens,
+  costUSD; CHECKED), terminal_reason. A rate_limit_event {rate_limit_info {status,
+  rateLimitType, resetsAt, utilization}} can come after a model call (CHECKED, with a
+  subscription login: status allowed_warning).
+- A model call that keeps failing (the headless docs, "Handle API retries"; the Agent SDK's
+  message types): a system/api_retry event per retry (attempt, error_status, error: its
+  category such as rate_limit, overloaded, server_error), then, once the retries run out,
+  an assistant message carrying the category in `error` whose text is "API Error: ..."
+  (ASSUMED: its model is "<synthetic>", with no usage), and a result with is_error true
+  and api_error_status (the HTTP status, or null with no HTTP answer), subtype "success" and
+  terminal_reason "api_error" (ASSUMED: as a logged-out turn's, which was CHECKED).
+- Logged out (no credential it can use): the turn's result says so, with is_error true,
+  subtype "success" and terminal_reason "api_error" (CHECKED: "Not logged in · Please run
+  /login"); with stdin closed it then exits 1.
 - Tools: --tools lists what exists (others: "No such tool available"). With
-  --permission-prompts none, what would ask for permission is refused (ASSUMED: its exact
-  meaning), so a Bash command runs only when allowed (--allowedTools Bash, or
-  bypassPermissions), and an edit needs acceptEdits or an allow rule. A command runs in the
-  working directory with the CLI's own environment.
-- SIGINT during a turn ends the turn: a result event (subtype error_during_execution), then it
-  waits for the next message (ASSUMED). SIGINT while it waits does nothing (ASSUMED). stdin
-  closed: it exits 0 (ASSUMED). SIGTERM: it exits (status 143).
+  --permission-prompts none, what would ask for permission is refused (CHECKED from its
+  --help: "anything that would prompt is denied automatically; the permission mode still
+  decides everything else"), so a Bash command runs only when allowed (--allowedTools Bash,
+  or bypassPermissions), and an edit needs acceptEdits or an allow rule. A command runs in
+  the working directory with the CLI's own environment. (ASSUMED: the shapes of tool_use and
+  tool_result; the P86 run gave the model no tools.)
+- SIGINT during a turn ends the turn: the call being streamed is sent as it stood
+  ("aborted": true), a `user` event says "[Request interrupted by user]", and a result event
+  (subtype error_during_execution, result "") ends it; then it waits for the next message
+  (CHECKED). Neither total_cost_usd nor modelUsage counts that cut call (CHECKED). SIGINT
+  while it waits for a message: it exits 0 (CHECKED). stdin closed: it exits 0 (CHECKED).
+  SIGSTOP and SIGCONT, idle or mid-turn: it goes on where it was (CHECKED). SIGTERM: it exits
+  (status 143).
 - Its own configuration (user settings: hooks, env such as ANTHROPIC_BASE_URL) is
   settings.json in $CLAUDE_CONFIG_DIR, else in $HOME/.claude (ASSUMED: CLAUDE_CONFIG_DIR as
   the docs list it), and its global state (.claude.json: MCP servers among it) is
-  .claude.json in $CLAUDE_CONFIG_DIR, else in $HOME (ASSUMED: as Claude Code's own source
-  reads it). The fake records the folder and the text of both files at start.
+  .claude.json in $CLAUDE_CONFIG_DIR, else in $HOME (CHECKED: a fresh CLAUDE_CONFIG_DIR gets
+  its .claude.json; a subscription login saved by `claude /login` is not found from there,
+  so a lane needs CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY). The fake records the folder
+  and the text of both files at start.
 
 Codex: `codex exec --json ...`
 - Reads its prompt from stdin to the end: an open stdin hangs it. Options go before
@@ -68,15 +102,24 @@ Script (JSON): {"turns": [TURN, ...]}, one TURN per claude user message or per c
 process, in order across processes. When the turns run out, the fake answers nothing more
 (claude reads on; codex waits until it is signalled).
 - claude TURN: {"calls": [CALL, ...], "cost": dollars for the turn (null: no total_cost_usd),
-  "result": text, "subtype": "success", "is_error": false, "linger": seconds it takes, once
-  SIGINT cuts the turn, before it reports it (a slow wrap-up)}. CALL: {"think": seconds,
+  "result": text, "subtype": "success", "is_error": false, "terminal_reason": text,
+  "finishes": true (an interrupt request during the turn is answered but the turn goes on to
+  its end: the turn ended just as the request came, which then finds claude waiting),
+  "linger": seconds it takes, once an interrupt cuts the turn, before it reports it (a slow
+  wrap-up), "api_error": {"status": HTTP status or null, "error": category, "retries": n,
+  "result_status": false (no api_error_status on the result), "message_error": false (no
+  `error` on the message)}: the turn ends on a model call that kept failing, after its
+  calls}. CALL: {"think": seconds,
   "until": path (it thinks until that file exists: the model answers when the test says),
   "raw": [lines], "stderr": line, "spawn": [{"cmd": [...], "session": bool}], "exit": status,
   "ignore": ["INT", "TERM"] (from then on those signals are ignored: a hung CLI),
   "text": text, "tools": [{"bash": cmd} | {"read": path} | {"write": [path, text]} |
   {"tool": name, "input": {...}}], "usage": [input, output, cache_read, cache_creation],
   "cost": dollars of that model call (counted once the call is made, so the result of a
-  turn cut short includes it: ASSUMED, claude adds each API call's cost as it comes)}.
+  turn cut short includes the calls made before it), "streamed": output tokens its
+  assistant events show (the rest only in the result), "streaming": true (the call's answer
+  is coming when an interrupt lands in its think or until: it is sent aborted, with its
+  usage and its text, and counted in neither total)}.
 - codex TURN: {"items": [ITEM, ...], "usage": [input, cached, output] added to the thread,
   "fail": message}. ITEM: {"command": cmd} | {"message": text} | {"reasoning": text} |
   {"file": [path, text]} | {"mcp": [server, tool]} | {"search": query} | {"collab": tool}
@@ -90,6 +133,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import select
 import shlex
 import signal
 import subprocess
@@ -107,7 +151,7 @@ CLAUDE_FLAGS = {
     "-p", "--print", "--verbose", "--bare", "--no-session-persistence", "--include-partial-messages",
     "--strict-mcp-config", "--replay-user-messages", "--continue", "--dangerously-skip-permissions",
 }
-PERMISSION_MODES = {"default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
+PERMISSION_MODES = {"default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"}
 CODEX_VALUES = {"--sandbox", "-s", "--cd", "-C", "--model", "-m", "-c", "--config", "--color", "--output-last-message", "-o", "--profile", "-p", "--image", "-i"}
 CODEX_FLAGS = {"--json", "--skip-git-repo-check", "--ephemeral", "--oss", "--dangerously-bypass-approvals-and-sandbox"}
 SANDBOXES = {"read-only", "workspace-write", "danger-full-access"}
@@ -171,16 +215,25 @@ def next_turn() -> dict | None:
     return turns[index] if index < len(turns) else None
 
 
-def directives(step: dict) -> None:
+def directives(step: dict, check=None) -> None:
     """What a call or an item does besides its events: think (for a time, or until the test says),
-    write raw lines, die, start children, stop answering signals (a hung CLI)."""
+    write raw lines, die, start children, stop answering signals (a hung CLI). `check` (claude)
+    reads what came on stdin meanwhile, and raises Interrupt for an interrupt: while it thinks,
+    and once more when it is done, so a CLI frozen while it thought and woken with an interrupt
+    waiting takes it before it goes on."""
+    check = check or (lambda: None)
     for name in step.get("ignore", []):
         signal.signal(getattr(signal, f"SIG{name}"), signal.SIG_IGN)
         record("ignoring", sig=f"SIG{name}")
     if step.get("think") or step.get("sleep"):
-        time.sleep(float(step.get("think") or step.get("sleep")))
+        end = time.monotonic() + float(step.get("think") or step.get("sleep"))
+        while time.monotonic() < end:
+            check()
+            time.sleep(min(0.01, max(end - time.monotonic(), 0)))
     while "until" in step and not os.path.exists(step["until"]):
+        check()
         time.sleep(0.01)
+    check()
     for line in step.get("raw", []) if isinstance(step.get("raw"), list) else ([step["raw"]] if "raw" in step else []):
         sys.stdout.write(line + "\n")
         sys.stdout.flush()
@@ -276,57 +329,140 @@ def claude(args: list[str]) -> None:
     record("start", cli="claude", argv=args, cwd=os.getcwd(), env=dict(os.environ), pgid=os.getpgrp(),
            files=sorted(os.listdir(".")), config_dir=config_dir, settings=settings, claude_json=global_state)
     session = str(uuid.uuid4())
-    state = {"in_turn": False, "cost": 0.0, "init": False}
+    state = {"in_turn": False, "cost": 0.0, "wrapping_up": False, "models": {}}
+    stdin = ClaudeStdin(state)
 
     def on_sigint(signum, frame):
         record("signal", sig="SIGINT", in_turn=state["in_turn"])
         if state["in_turn"]:
             raise Interrupt()
+        if not state["wrapping_up"]:  # waiting for a message: claude exits
+            record("exit", code=0, why="SIGINT while it waited")
+            sys.stdout.flush()
+            os._exit(0)
 
     signal.signal(signal.SIGINT, on_sigint)
     while True:
-        line = sys.stdin.readline()
-        if not line:
+        line = stdin.next_message()
+        if line is None:
             record("exit", code=0, why="stdin closed")
             sys.exit(0)
-        record("stdin", line=line.rstrip("\n"))
+        emit({
+            "type": "system", "subtype": "init", "cwd": os.getcwd(), "session_id": session,
+            "tools": sorted(tools), "mcp_servers": [], "model": model, "permissionMode": "default" if mode == "manual" else mode,
+            "slash_commands": [], "apiKeySource": "ANTHROPIC_API_KEY" if os.environ.get("ANTHROPIC_API_KEY") else "none",
+            "claude_code_version": "2.1.325", "output_style": "default", "uuid": str(uuid.uuid4()),
+        })
+        turn = next_turn()
+        if turn is None:
+            continue  # nothing scripted: no answer
+        claude_turn(turn, state, stdin, session, model, tools, allowed, mode)
+
+
+class ClaudeStdin:
+    """claude's stdin: user messages, read one per turn, and control requests, answered as
+    they are read (during a turn too: `check`)."""
+
+    def __init__(self, state: dict) -> None:
+        self.state = state
+        self.buffer = b""
+        self.messages: list[str] = []
+        self.closed = False
+        self.interrupt = False
+
+    def read(self, timeout: float | None) -> None:
+        if self.closed:
+            if timeout:
+                time.sleep(timeout)
+            return
+        ready, _, _ = select.select([0], [], [], timeout)
+        if not ready:
+            return
+        chunk = os.read(0, 65536)
+        if not chunk:
+            self.closed = True
+            return
+        self.buffer += chunk
+        while b"\n" in self.buffer:
+            raw, self.buffer = self.buffer.split(b"\n", 1)
+            self.line(raw.decode("utf-8", "replace"))
+
+    def line(self, line: str) -> None:
         try:
             message = json.loads(line)
         except ValueError:
-            fail("Error: invalid stream-json input: not JSON", 1)
+            record("stdin", line=line)
+            fail("Error parsing streaming input line (type=unknown): SyntaxError", 1)
+        if isinstance(message, dict) and message.get("type") == "control_request":
+            request = message.get("request") if isinstance(message.get("request"), dict) else {}
+            record("control", subtype=request.get("subtype"), in_turn=self.state["in_turn"])
+            emit({"type": "control_response", "response": {"subtype": "success", "request_id": message.get("request_id"),
+                                                           "response": {"still_queued": []}}})
+            if request.get("subtype") == "interrupt" and self.state["in_turn"] and not self.state.get("finishes"):
+                self.interrupt = True
+            return
+        record("stdin", line=line)
         body = message.get("message") if isinstance(message, dict) else None
         if not (
             message.get("type") == "user" and isinstance(body, dict) and body.get("role") == "user"
             and isinstance(body.get("content"), (str, list))
         ):
             fail("Error: invalid stream-json input: expected a user message", 1)
-        if not state["init"]:
-            state["init"] = True
-            emit({
-                "type": "system", "subtype": "init", "cwd": os.getcwd(), "session_id": session,
-                "tools": sorted(tools), "mcp_servers": [], "model": model, "permissionMode": mode,
-                "slash_commands": [], "apiKeySource": "ANTHROPIC_API_KEY" if os.environ.get("ANTHROPIC_API_KEY") else "none",
-                "claude_code_version": "2.1.300", "output_style": "default", "uuid": str(uuid.uuid4()),
-            })
-        turn = next_turn()
-        if turn is None:
-            continue  # nothing scripted: no answer
-        claude_turn(turn, state, session, model, tools, allowed, mode)
+        self.messages.append(line)
+
+    def next_message(self) -> str | None:
+        while not self.messages and not self.closed:
+            self.read(None)
+        return self.messages.pop(0) if self.messages else None
+
+    def check(self) -> None:
+        """During a turn: what came on stdin; an interrupt ends the turn."""
+        self.read(0)
+        if self.interrupt:
+            self.interrupt = False
+            raise Interrupt()
 
 
-def claude_turn(turn: dict, state: dict, session: str, model: str, tools: set[str], allowed: set[str], mode: str) -> None:
+def claude_turn(turn: dict, state: dict, stdin: ClaudeStdin, session: str, model: str, tools: set[str], allowed: set[str],
+                mode: str) -> None:
     state["in_turn"] = True
+    state["finishes"] = bool(turn.get("finishes"))
     calls = 0
     said = ""
     total = {"input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 0}
+    turn_models: dict[str, dict] = {}
+
+    def assistant(mid: str, block: dict | None, usage: dict, **extra: object) -> None:
+        emit({
+            "type": "assistant",
+            "message": {"id": mid, "type": "message", "role": "assistant", "model": model, "content": [block] if block else [],
+                        "stop_reason": None, "stop_sequence": None, "usage": usage},
+            "parent_tool_use_id": None, "session_id": session, "uuid": str(uuid.uuid4()), **extra,
+        })
+
+    def usage_of(call: dict) -> tuple[dict, dict]:
+        """(the call's usage, as its assistant events show it: output only as far as it had come)."""
+        fresh, out, read, created = (list(call.get("usage", [0, 0, 0, 0])) + [0, 0, 0, 0])[:4]
+        final = {"input_tokens": fresh, "cache_creation_input_tokens": created, "cache_read_input_tokens": read, "output_tokens": out}
+        return final, {**final, "output_tokens": min(out, int(call.get("streamed", out)))}
+
     try:
         try:
             for call in turn.get("calls", []):
-                directives(call)
-                fresh, out, read, created = (list(call.get("usage", [0, 0, 0, 0])) + [0, 0, 0, 0])[:4]
-                usage = {"input_tokens": fresh, "cache_creation_input_tokens": created, "cache_read_input_tokens": read, "output_tokens": out}
-                for key, value in usage.items():
+                try:
+                    directives(call, stdin.check)
+                except Interrupt:
+                    if call.get("streaming"):  # cut while its answer came: sent as it stood, counted nowhere
+                        _, shown = usage_of(call)
+                        text = call.get("text", "")[:20]
+                        assistant("msg_" + uuid.uuid4().hex[:24], {"type": "text", "text": text} if text else None, shown,
+                                  aborted=True)
+                    raise
+                final, shown = usage_of(call)
+                for key, value in final.items():
                     total[key] += value
+                count_model(state["models"], model, final, call.get("cost", 0.0))
+                count_model(turn_models, model, final, call.get("cost", 0.0))
                 state["cost"] += call.get("cost", 0.0)
                 mid = "msg_" + uuid.uuid4().hex[:24]
                 blocks: list[dict] = []
@@ -335,14 +471,10 @@ def claude_turn(turn: dict, state: dict, session: str, model: str, tools: set[st
                     blocks.append({"type": "text", "text": call["text"]})
                 uses = [tool_use(spec) for spec in call.get("tools", [])]
                 for block in blocks + uses:
-                    emit({
-                        "type": "assistant",
-                        "message": {"id": mid, "type": "message", "role": "assistant", "model": model, "content": [block],
-                                    "stop_reason": None, "stop_sequence": None, "usage": usage},
-                        "parent_tool_use_id": None, "session_id": session, "uuid": str(uuid.uuid4()),
-                    })
+                    assistant(mid, block, shown)
                 calls += 1
                 for use in uses:
+                    stdin.check()
                     text, error = run_claude_tool(use, tools, allowed, mode)
                     emit({
                         "type": "user",
@@ -350,27 +482,76 @@ def claude_turn(turn: dict, state: dict, session: str, model: str, tools: set[st
                         "parent_tool_use_id": None, "session_id": session, "uuid": str(uuid.uuid4()),
                     })
             cost = turn.get("cost", 0.0)
+            failure = turn.get("api_error")
+            if failure is not None:
+                said = api_failure(failure, session)
             event = {
-                "type": "result", "subtype": turn.get("subtype", "success"), "is_error": bool(turn.get("is_error", False)),
+                "type": "result", "subtype": turn.get("subtype", "success"),
+                "is_error": bool(turn.get("is_error", failure is not None)),
                 "duration_ms": 1000, "duration_api_ms": 800, "num_turns": calls, "result": turn.get("result", said),
                 "session_id": session, "usage": total, "permission_denials": [], "uuid": str(uuid.uuid4()),
+                # a turn that ends on an API failure names it, as a logged-out one does (CHECKED there)
+                "terminal_reason": turn.get("terminal_reason", "api_error" if failure is not None else "completed"),
             }
+            if failure is not None and failure.get("result_status", True):
+                event["api_error_status"] = failure.get("status")
             if cost is not None:
                 state["cost"] += cost
                 event["total_cost_usd"] = round(state["cost"], 6)
+                event["modelUsage"] = state["models"]
+                event["model_usage_since_last_result"] = turn_models
             emit(event)
         except Interrupt:
             state["in_turn"] = False  # another SIGINT while it wraps up does nothing
+            state["wrapping_up"] = True
             if turn.get("linger"):
                 time.sleep(float(turn["linger"]))
             emit({
+                "type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "[Request interrupted by user]"}]},
+                "parent_tool_use_id": None, "session_id": session, "uuid": str(uuid.uuid4()),
+            })
+            emit({
                 "type": "result", "subtype": "error_during_execution", "is_error": True, "duration_ms": 1000,
-                "duration_api_ms": 800, "num_turns": calls, "result": "[Request interrupted by user]",
+                "duration_api_ms": 800, "num_turns": calls + 1, "result": "", "terminal_reason": "aborted_streaming",
                 "session_id": session, "total_cost_usd": round(state["cost"], 6), "usage": total,
+                "modelUsage": state["models"], "model_usage_since_last_result": turn_models,
                 "permission_denials": [], "uuid": str(uuid.uuid4()),
             })
     finally:
         state["in_turn"] = False
+        state["wrapping_up"] = False
+
+
+def count_model(models: dict, model: str, usage: dict, cost: float) -> None:
+    """claude's modelUsage: per model, what its calls used and cost."""
+    entry = models.setdefault(model, {"inputTokens": 0, "outputTokens": 0, "cacheReadInputTokens": 0,
+                                      "cacheCreationInputTokens": 0, "costUSD": 0.0})
+    entry["inputTokens"] += usage["input_tokens"]
+    entry["outputTokens"] += usage["output_tokens"]
+    entry["cacheReadInputTokens"] += usage["cache_read_input_tokens"]
+    entry["cacheCreationInputTokens"] += usage["cache_creation_input_tokens"]
+    entry["costUSD"] = round(entry["costUSD"] + cost, 6)
+
+
+def api_failure(failure: dict, session: str) -> str:
+    """A model call that kept failing until claude's retries ran out: one system/api_retry
+    event per retry, then the assistant message claude makes of the failure (its error
+    category in `error`; model "<synthetic>" and no usage: ASSUMED), whose text is the
+    turn's result. Returns that text."""
+    status, category = failure.get("status"), failure.get("error", "unknown")
+    for attempt in range(1, int(failure.get("retries", 2)) + 1):
+        emit({"type": "system", "subtype": "api_retry", "attempt": attempt, "max_retries": 10, "retry_delay_ms": 1,
+              "error_status": status, "error": category, "session_id": session, "uuid": str(uuid.uuid4())})
+    text = failure.get("text", f"API Error: {status} {category}" if status is not None else "API Error: Connection error.")
+    message = {"id": "msg_" + uuid.uuid4().hex[:24], "type": "message", "role": "assistant", "model": "<synthetic>",
+               "content": [{"type": "text", "text": text}], "stop_reason": "stop_sequence", "stop_sequence": "",
+               "usage": {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}
+    event = {"type": "assistant", "message": message, "parent_tool_use_id": None, "session_id": session,
+             "uuid": str(uuid.uuid4())}
+    if failure.get("message_error", True):
+        event["error"] = category
+    emit(event)
+    return text
 
 
 def tool_use(spec: dict) -> dict:

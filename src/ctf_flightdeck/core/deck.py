@@ -7,10 +7,21 @@ logged as an Event with a structured payload, so the M1 run log can be written f
 the event stream alone.
 
 Rules the deck enforces:
-- at most `max_lanes` lanes are active (running, waiting, paused or taken over); the
+- at most `max_lanes` lanes hold a slot (running, waiting, paused or taken over); the
   rest wait in the queue, which drains as lanes finish, except while it is held
   (hold_queue: a failure every lane would hit) until the player lifts the hold
   (release_hold);
+- a lane that waits for the player gives its slot up (Lane.benched): at once for a live-box
+  request (P83), and for a flag or budget answer once the wait has lasted
+  DeckConfig.bench_after seconds (P91: recheck_waits, which the run calls every few
+  seconds), so a quick answer keeps its slot. It does no work until the player answers, so
+  a queued lane may start in it. At most DeckConfig.max_waiting lanes are without a slot at
+  once (each keeps its workspace); one more keeps its slot, as does a lane whose driver says
+  something of it runs on while it waits (LaneDriver.running: a session). Either is said
+  once per wait. Once answered (or resumed, or handed back, with nothing left to answer) it
+  takes a free slot again, or waits for one (LaneState.QUEUED), ahead of every queued
+  challenge and whatever the hold or the start gate say: it is no new lane, and its
+  workspace is up already;
 - before a queued lane starts, the start gate is asked (start_gate: the run's host governor,
   governor.py): while it names a limit no new lane starts, the queue stays as it is and the
   lanes at work carry on, none stopped or paused. It is no hold: nothing is asked of the
@@ -144,6 +155,25 @@ from .model import (
     lanes_text,
 )
 
+_WAITS_FOR = {  # what a lane that gives its slot up waits for, as its transcript and the run log say it
+    PendingKind.LIVE_BOX: "your live-box answer",
+    PendingKind.SUBMIT: "your answer to its flag",
+    PendingKind.CONFIRM: "your word on the flag you submit by hand",
+    PendingKind.BUDGET: "your answer on more budget",
+}
+# A budget question about a model with no price is whether to carry on without the dollar cap
+# (Lane.asks_without_price), and says so in the words the card asks it in (P98); at the token
+# cap too, approving also raises that cap, as the card's answer says (views.pending_answers).
+_WAITS_FOR_NO_PRICE = "your answer on carrying on with no dollar cap"
+_WAITS_FOR_NO_PRICE_AT_CAP = "your answer on carrying on with no dollar cap and 50% more tokens"
+
+
+def _waits_for(lane: Lane, pending: Pending) -> str:
+    """What the lane waits for, in words: its card's question, not only its kind's."""
+    if pending is lane.pending and lane.asks_without_price():
+        at_cap = bool(lane.token_cap) and lane.tokens >= lane.token_cap
+        return _WAITS_FOR_NO_PRICE_AT_CAP if at_cap else _WAITS_FOR_NO_PRICE
+    return _WAITS_FOR[pending.kind]
 BUDGET_WARN = 0.8  # fraction of a cap that raises the budget alert
 BUDGET_RAISE = 1.5  # approving more budget multiplies the caps by this
 ROTATE_MARGIN = 8.0  # seconds: a rotating flag is not sent this close to its window's end (at most half the window)
@@ -254,6 +284,9 @@ class Deck:
         # asked before a queued lane starts: why none should now ("" to start), or None for no gate
         self.start_gate: Callable[[], str] | None = None
         self.gated = ""  # why the start gate holds new lanes back now, "" while it does not
+        self._returning: list[str] = []  # lanes waiting for a slot to go on (QUEUED), first come first served
+        self._wait_began: dict[str, float] = {}  # lane id -> when its present wait for the player began (bench_after)
+        self._slot_kept: dict[str, str] = {}  # lane id -> why it keeps its slot in its present wait: said once
         self._ended_by_hold: list[str] = []  # lanes that what the hold is about ended: release_hold queues their challenges again
         self.closing = False  # the run is closing (close()): its lanes stop without ending
         self.autopilot = None  # the run's autopilot (autopilot.Autopilot sets it), if it has one: its `guarding` is read here
@@ -277,6 +310,14 @@ class Deck:
 
     def active_lanes(self) -> list[Lane]:
         return [lane for lane in self.lanes.values() if not lane.finished]
+
+    def slotted_lanes(self) -> list[Lane]:
+        """The active lanes that hold one of the `max_lanes` slots: all but those that gave
+        theirs up while they wait for the player (Lane.benched) and have not taken one again."""
+        return [lane for lane in self.active_lanes() if not lane.benched]
+
+    def _free_slot(self) -> bool:
+        return len(self.slotted_lanes()) < self.config.max_lanes
 
     def lanes_on(self, challenge_id: str) -> list[Lane]:
         """Active lanes working a challenge."""
@@ -349,7 +390,7 @@ class Deck:
         self._emit(EventKind.WARNING, f"the player set lanes at once to {lanes_text(most)} (it was {lanes_text(before)})",
                    data={"config": "max_lanes", "max_lanes": most, "was": before})
         self._fill()
-        running = len(self.active_lanes())
+        running = len(self.slotted_lanes())
         over = f"; {running} run now and go on, and no new lane starts until fewer than {most} run" if running > most else ""
         return Outcome(True, f"Lanes at once: {lanes_text(most)} for the rest of this run{over}")
 
@@ -487,9 +528,16 @@ class Deck:
         before = len(self.lanes)
         self._fill()
         started = len(self.lanes) - before  # a lane whose start failed is gone again
+        many = len(challenges)
+        line = (f"{label}: {many} challenge{'' if many == 1 else 's'} · {started} lane{'' if started == 1 else 's'} started"
+                f" · {len(self.queue)} queued")
+        # The start gate's warning, when it holds lanes back now, came just before this line, which the
+        # status line shows in its place: so this line says it too, or a player sees one lane of 4 and no why
+        if self.queue and self.gated:
+            line += f" · no new lane starts for now: {self.gated}"
         self._emit(
             EventKind.RELEASE,
-            f"{label}: {len(challenges)} challenges · {started} lanes started · {len(self.queue)} queued",
+            line,
             data={
                 "label": label, "challenges": [ch.id for ch in challenges], "started": started, "queued": len(self.queue),
                 "event": self.config.event,  # with the names and points below, a run log names its own board
@@ -951,6 +999,7 @@ class Deck:
         if lane.state is LaneState.PAUSED:
             return Outcome(False, f"{lane.id} is already paused")
         lane.state = LaneState.PAUSED
+        self._wait_began.pop(lane.id, None)  # resumed into its wait, the wait is timed afresh
         self.driver.pause(lane)
         self._note(lane, f"paused by {self._who}", self._by)
         return Outcome(True, f"Paused {lane.id}")
@@ -958,11 +1007,17 @@ class Deck:
     def _resume(self, lane: Lane) -> Outcome:
         if lane.state is not LaneState.PAUSED:
             return Outcome(False, f"{lane.id} is not paused")
-        lane.state = LaneState.WAITING if lane.pending else LaneState.RUNNING
-        if lane.state is LaneState.RUNNING:
+        if lane.pending:
+            lane.state = LaneState.WAITING
+        elif self._back_to_work(lane):
             self.driver.resume(lane)
         self._note(lane, "resumed by the player", Actor.PLAYER)
-        return Outcome(True, f"Resumed {lane.id}" + (" (it waits for your approval)" if lane.pending else ""))
+        if lane.state is LaneState.WAITING:  # back in its wait: a live-box one gives its slot up now
+            self._maybe_bench(lane)
+        waits = " (it waits for your approval)" if lane.pending else ""
+        if lane.state is LaneState.QUEUED:
+            waits = f" (it waits for a free slot: {self._busy()})"
+        return Outcome(True, f"Resumed {lane.id}{waits}")
 
     def _hint(self, lane: Lane, text: str) -> Outcome:
         if not text:
@@ -1037,7 +1092,7 @@ class Deck:
             if self.held:  # no lane starts until the player lifts the hold, whatever slots are free
                 self._note(lane, f"fork queued first ({model}): the queue is held", self._by)
                 return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue, which is held: {self.held}")
-            if self.gated and len(self.active_lanes()) < self.config.max_lanes:  # a free slot the start gate keeps empty
+            if self.gated and self._free_slot():  # a free slot the start gate keeps empty
                 self._note(lane, f"fork queued first ({model}): no new lane starts for now", self._by)
                 return Outcome(True, f"Fork of {lane.id} ({model}) is first in the queue; no new lane starts for now: {self.gated}")
             self._note(lane, f"fork queued first ({model}): all {self.config.max_lanes} lanes busy", self._by)
@@ -1097,6 +1152,7 @@ class Deck:
     def _take_over(self, lane: Lane) -> Outcome:
         lane.paused_before_takeover = lane.state is LaneState.PAUSED
         lane.state = LaneState.TAKEOVER
+        self._wait_began.pop(lane.id, None)  # handed back into its wait, the wait is timed afresh
         self.driver.pause(lane)
         self._note(lane, "taken over by the player", Actor.PLAYER)
         return Outcome(True, f"You have {lane.id}'s shell")
@@ -1106,13 +1162,18 @@ class Deck:
             return Outcome(False, f"{lane.id} is not taken over")
         if lane.paused_before_takeover:  # the player paused it before: it stays paused until Resume
             lane.state = LaneState.PAUSED
-        else:
-            lane.state = LaneState.WAITING if lane.pending else LaneState.RUNNING
-        lane.paused_before_takeover = False
-        if lane.state is LaneState.RUNNING:
+        elif lane.pending:
+            lane.state = LaneState.WAITING
+        elif self._back_to_work(lane):
             self.driver.resume(lane)
+        lane.paused_before_takeover = False
         self._note(lane, "handed back by the player" + (f": {note}" if note else ""), Actor.PLAYER)
-        return Outcome(True, f"Handed {lane.id} back" + ("; it stays paused" if lane.state is LaneState.PAUSED else ""))
+        if lane.state is LaneState.WAITING:  # back in its wait: a live-box one gives its slot up now
+            self._maybe_bench(lane)
+        then = "; it stays paused" if lane.state is LaneState.PAUSED else ""
+        if lane.state is LaneState.QUEUED:
+            then = f"; it waits for a free slot ({self._busy()})"
+        return Outcome(True, f"Handed {lane.id} back{then}")
 
     def _approve(self, lane: Lane) -> Outcome:
         pending = lane.pending
@@ -1121,7 +1182,7 @@ class Deck:
                 self._raise_caps(lane)
                 self._clear(lane, AlertKind.BUDGET)
                 self._note(lane, f"approved more budget: {self._cap_text(lane)}", Actor.PLAYER)
-                return Outcome(True, f"{lane.id}'s cap is now {self._cap_text(lane)}")
+                return Outcome(True, f"{lane.id}'s cap is now {self._caps_used(lane)}")
             return Outcome(False, f"{lane.id} is not waiting for an approval")
         self._note(lane, f"approved: {pending.detail}" + (" (by autopilot)" if self._by is Actor.AUTOPILOT else ""), self._by)
         ch = self.challenges[lane.challenge_id]
@@ -1146,15 +1207,23 @@ class Deck:
                 return Outcome(True, f"{pending.flag} is correct: {ch.name} solved by {lane.id}")
             return Outcome(True, f"{pending.flag} was rejected; {lane.id} carries on")
         if pending.kind is PendingKind.BUDGET:
-            if lane.no_price() and lane.dollar_cap:
+            unpriced = bool(lane.no_price() and lane.dollar_cap)
+            if unpriced:
                 lane.dollar_cap = None  # no price: the player chose to go on without a dollar cap
             used = lane.budget_used()
-            if used is not None and used >= 1.0:
+            raised = used is not None and used >= 1.0
+            if raised:
                 self._raise_caps(lane)
             self._clear(lane, AlertKind.BUDGET)
             self._resolve(lane)
             self.driver.approved(lane, pending)
-            return Outcome(True, f"{lane.id}'s cap is now {self._cap_text(lane)}")
+            if unpriced:
+                if not lane.token_cap:
+                    return Outcome(True, f"{lane.id} carries on with no cap")
+                # the token cap was reached too (its question came first, or after): approving raised it
+                now = "is raised to" if raised else "is"
+                return Outcome(True, f"{lane.id} carries on with no dollar cap; its token cap {now} {self._caps_used(lane)}")
+            return Outcome(True, f"{lane.id}'s cap is now {self._caps_used(lane)}")
         self._resolve(lane)
         self.driver.approved(lane, pending)
         return Outcome(True, f"{lane.id} may use the live box")
@@ -1422,8 +1491,20 @@ class Deck:
 
     def _fill(self) -> None:
         """Start queued lanes while there are free slots (none while the queue is held, or the
-        run is closing), each after the start gate was asked, unless no lane is active."""
-        while self.queue and not self.held and not self.closing and len(self.active_lanes()) < self.config.max_lanes:
+        run is closing), each after the start gate was asked, unless no lane is active. A lane
+        that waits for a slot to go on (QUEUED: it gave its own up for a live-box answer) takes
+        a free one first, held queue, start gate or not: it is no new lane."""
+        while self._returning and not self.closing and self._free_slot():
+            lane = self.lanes.get(self._returning.pop(0))
+            if lane is None or lane.state is not LaneState.QUEUED:
+                continue  # it ended, or was paused or taken over meanwhile: it asks again when it may run
+            lane.benched = False
+            lane.state = LaneState.RUNNING
+            self._note(lane, "took a free slot: back at work")
+            self._emit(EventKind.SLOT, f"{lane.id} took a free slot and goes on", lane.id, lane.challenge_id,
+                       data={"slot": "taken"})
+            self.driver.resume(lane)
+        while self.queue and not self.held and not self.closing and self._free_slot():
             # a challenge that waits for something outside the deck (its instance on the platform)
             # is passed over, not waited behind: the next one in the queue starts
             at = next((i for i, queued in enumerate(self.queue) if queued.challenge not in self.waits), None)
@@ -1578,11 +1659,131 @@ class Deck:
     def _became_current(self, lane: Lane) -> None:
         pending = lane.pending
         assert pending is not None
-        if lane.state is LaneState.RUNNING:
+        if lane.state in (LaneState.RUNNING, LaneState.QUEUED):
+            # a lane that waited for a slot to go on waits for the player now (still without
+            # one): it takes no free slot until this is answered, and then asks for one again
+            if lane.state is LaneState.QUEUED:
+                self._returning = [lane_id for lane_id in self._returning if lane_id != lane.id]
             lane.state = LaneState.WAITING
+            self._wait_began[lane.id] = self.now
         self._sync_flag_alert(lane)
         lane.actions.append(Action(self.now, lane.turns, pending.detail, "", Actor.DECK, ActionKind.APPROVAL))
         self._emit(EventKind.PENDING, f"{lane.id} waits for approval: {pending.detail}", lane.id, lane.challenge_id, data={"kind": pending.kind.value, "detail": pending.detail, "flag": pending.flag})
+        self._maybe_bench(lane)
+
+    def recheck_waits(self) -> None:
+        """Give up the slots of the lanes whose wait for the player has lasted long enough
+        (bench_after), or that kept theirs and now may give it up (the cap has room, nothing
+        of theirs runs on). The run calls this every few seconds: the deck has no clock of
+        its own to wake it."""
+        self._on_thread("recheck_waits")
+        if self.closing:
+            return
+        for lane in self.active_lanes():
+            if lane.state is not LaneState.WAITING:
+                self._wait_began.pop(lane.id, None)
+            if lane.pending is None:
+                self._slot_kept.pop(lane.id, None)
+            else:
+                self._maybe_bench(lane)
+
+    def _maybe_bench(self, lane: Lane) -> None:
+        """The lane waits for the player: it gives its slot up when it may (_bench). A
+        live-box request gives it up at once, in any state (P83); a flag or budget answer once
+        the lane has waited bench_after seconds (P91), so a quick answer (the player at the
+        keys, autopilot's yes to more budget) keeps the lane's slot and its place. A paused or
+        taken-over lane keeps its slot whatever it waits for (the player's shell may run in its
+        workspace); resumed or handed back into its wait, it is asked again, and a flag or
+        budget wait is timed from then."""
+        pending = lane.pending
+        if pending is None or lane.benched or lane.finished or self.closing:
+            return
+        if lane.state in (LaneState.PAUSED, LaneState.TAKEOVER):
+            self._wait_began.pop(lane.id, None)
+            return
+        if pending.kind is not PendingKind.LIVE_BOX:
+            if lane.state is not LaneState.WAITING:
+                return
+            began = self._wait_began.setdefault(lane.id, self.now)
+            if self.now - began < self.config.bench_after:
+                return
+        why = self._keeps_slot(lane)
+        if not why:
+            self._slot_kept.pop(lane.id, None)
+            self._bench(lane)
+        elif self._slot_kept.get(lane.id) != why:  # said once per wait, and again only for another reason
+            self._slot_kept[lane.id] = why
+            waits_for = _waits_for(lane, pending)
+            self._note(lane, f"keeps its slot while it waits for {waits_for}: {why}")
+            self._emit(EventKind.SLOT, f"{lane.id} keeps its slot while it waits for {waits_for}: {why}",
+                       lane.id, lane.challenge_id, data={"slot": "kept", "for": pending.kind.value, "why": why})
+
+    def _keeps_slot(self, lane: Lane) -> str:
+        """Why the waiting lane must keep its slot ("" when it may give it up): as many lanes
+        as max_waiting are without one already, each with its workspace up; or its driver
+        says something of it runs on while it waits (a session's process), which the slot is
+        there to count."""
+        most = self.config.max_waiting
+        without = sum(1 for other in self.active_lanes() if other.benched)
+        if without >= most:
+            if most == 0:
+                return "lanes keep their slots while they wait for you (max_waiting = 0)"
+            return (f"{without} lane{'s' if without != 1 else ''} already wait{'' if without != 1 else 's'} for you "
+                    f"without one, each with its workspace up (max_waiting = {most})")
+        running = getattr(self.driver, "running", None)  # optional: a driver without it runs nothing while a lane waits
+        what = running(lane) if running is not None else ""
+        if not isinstance(what, str):
+            raise TypeError(f'a driver\'s running() must answer with a string ("" for nothing), not {type(what).__name__}')
+        return what
+
+    def _bench(self, lane: Lane) -> None:
+        """The lane waits for the player, which may be a while (they are away, or the box is
+        a teammate's): it gives its slot up, and a queued lane may start in it. Its workspace
+        stays as it is."""
+        pending = lane.pending
+        assert pending is not None
+        waits_for = _waits_for(lane, pending)
+        lane.benched = True
+        before = set(self.lanes)
+        self._fill()
+        started = [lane_id for lane_id in self.lanes if lane_id not in before]
+        # said whether or not a lane started in it (the queue may be empty, held or gated): the
+        # run log has every move of a slot, so a later "waiting" or "taken" has its "given"
+        if started:
+            self._note(lane, f"gave its slot to {', '.join(started)} while it waits for {waits_for}")
+            said = f"its slot went to {', '.join(started)}"
+        else:  # nothing to tell the player on the lane: its transcript has the approval it waits on
+            said = "its slot is free, and no queued lane started in it"
+        self._emit(EventKind.SLOT, f"{lane.id} waits for {waits_for}: {said}",
+                   lane.id, lane.challenge_id, data={"slot": "given", "for": pending.kind.value, "started": started})
+
+    def _back_to_work(self, lane: Lane) -> bool:
+        """The lane has nothing left to wait for: it runs again (True), unless it gave its slot
+        up (_bench) and none is free; then it waits for one (QUEUED, False), first in line
+        before any queued challenge (_fill)."""
+        self._wait_began.pop(lane.id, None)
+        self._slot_kept.pop(lane.id, None)
+        if lane.benched and lane.gave_up_later:  # open only for its flags' answers, it takes no turn: it needs no slot
+            lane.state = LaneState.RUNNING
+            return True
+        if lane.benched:
+            ahead = any(other.state is LaneState.QUEUED for other in self.active_lanes() if other is not lane)
+            if ahead or not self._free_slot():
+                if lane.state is not LaneState.QUEUED:
+                    lane.state = LaneState.QUEUED
+                    self._returning = [lane_id for lane_id in self._returning if lane_id != lane.id] + [lane.id]
+                    self._note(lane, f"waits for a free slot ({self._busy()}); it takes the next one, before the queue")
+                    self._emit(EventKind.SLOT, f"{lane.id} waits for a free slot to go on: {self._busy()}",
+                               lane.id, lane.challenge_id, data={"slot": "waiting"})
+                return False
+            lane.benched = False  # a slot is free and no lane is ahead: it takes it now (the run log says so; its transcript has the answer)
+            self._emit(EventKind.SLOT, f"{lane.id} took a free slot and goes on", lane.id, lane.challenge_id,
+                       data={"slot": "taken"})
+        lane.state = LaneState.RUNNING
+        return True
+
+    def _busy(self) -> str:
+        return f"all {lanes_text(self.config.max_lanes)} lanes are busy"
 
     def _resolve(self, lane: Lane) -> None:
         """The current approval is answered: the next one comes up, or the lane runs again."""
@@ -1592,7 +1793,7 @@ class Deck:
             return
         self._sync_flag_alert(lane)
         if lane.state is LaneState.WAITING:
-            lane.state = LaneState.RUNNING
+            self._back_to_work(lane)  # a lane that gave its slot up may have to wait for one (QUEUED)
 
     def _has_submit(self, lane: Lane) -> bool:
         """A flag of the lane waits: for the player, or for the platform's answer."""
@@ -2320,6 +2521,17 @@ class Deck:
             spent = fmt.dollars(lane.dollars) if lane.dollars is not None else f"{fmt.dollars(lane.known_dollars)}+"  # what is known
             parts.append(f"${spent} of ${fmt.dollars(lane.dollar_cap)}")
         return ", ".join(parts) or "no cap"
+
+    def _caps_used(self, lane: Lane) -> str:
+        """The caps, each with what is used of it: `15k tokens (11k used)`. Said when a cap
+        was just raised or dropped, where `11k of 15k` read as a cap of 11k."""
+        parts = []
+        if lane.token_cap:
+            parts.append(f"{fmt.tokens(lane.token_cap)} tokens ({fmt.tokens(lane.tokens)} used)")
+        if lane.dollar_cap:
+            spent = fmt.dollars(lane.dollars) if lane.dollars is not None else f"{fmt.dollars(lane.known_dollars)}+"
+            parts.append(f"${fmt.dollars(lane.dollar_cap)} (${spent} used)")
+        return ", ".join(parts) or "none"
 
     def _stronger(self, lane: Lane) -> tuple[str | None, str]:
         ladder = self.config.models

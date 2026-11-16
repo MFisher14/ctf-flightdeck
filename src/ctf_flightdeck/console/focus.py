@@ -83,6 +83,9 @@ COMPACT_KEY_LABELS = (("esc", "fleet"), ("1-9 0", "answer"), ("/", "cmd"), ("ctr
 # These are also the keys help opens on from a lane, in every layout (FocusScreen.help_now).
 SIMPLE_KEY_LABELS = (("esc", "lanes"), ("/", "commands"), ("?", "help"), ("ctrl+o", "details"))
 SIMPLE_ANSWER_LABEL = ("1-9", "answer")
+# While the lane waits for the player its answers are 1 (yes) and 0 (no), in the card's words
+# (P98); as wide as SIMPLE_ANSWER_LABEL, so the line's longest stays what P65 fixed.
+SIMPLE_YES_NO_LABEL = ("1 0", "answer")
 KEY_MARGIN = 2  # the key line has a margin of one cell each side
 # What the status line says when the details switch is turned (ctrl+o, /details).
 DETAILS_ON = "details on: every line and every alert (ctrl+o hides them)"
@@ -197,7 +200,7 @@ class FocusScreen(Screen, inherit_bindings=False):
                 with VerticalScroll(id="diff-scroll"):
                     yield Static(id="diff")
         yield Static(id="status")
-        yield CommandBar(BAR, id="chat", title=self._chat_title)
+        yield CommandBar(BAR, id="chat", title=self._chat_title, history=self.fd.bar_history)
         yield Static(_key_line(), id="keys")
 
     def on_mount(self) -> None:
@@ -247,9 +250,12 @@ class FocusScreen(Screen, inherit_bindings=False):
         return self._simple_labels() if self.simple else KEY_LABELS
 
     def _simple_labels(self) -> tuple[tuple[str, str], ...]:
-        """The simple layout's key line for this lane now: the answers first while it has any."""
+        """The simple layout's key line for this lane now: the answers first while it has any
+        (1 and 0 while it waits for the player, else the numbers of its alert's)."""
         lane = self.fd.deck.lanes.get(self.lane_id)
-        return ((SIMPLE_ANSWER_LABEL,) if lane is not None and views.quick_answers(lane) else ()) + SIMPLE_KEY_LABELS
+        if lane is None or not views.quick_answers(lane):
+            return SIMPLE_KEY_LABELS
+        return (SIMPLE_YES_NO_LABEL if lane.pending is not None else SIMPLE_ANSWER_LABEL,) + SIMPLE_KEY_LABELS
 
     def help_now(self) -> tuple[Lane | None, tuple[str, ...]]:
         """What help opens on from this view (P65): the lane, and the keys the simple layout's

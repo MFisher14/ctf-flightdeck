@@ -25,7 +25,7 @@ shell prompt and the command typed at it.
 
 ## The simple layout
 
-![The simple layout: a short header with the event, the team tag, three lanes that need you and the run's dollars, where only flightdeck and the need-you count have a coloured block; one list of six lanes with their alert chip, challenge, state, cost and last action; under the list, the found flag with 1 to submit it and 0 not to; a key line of approve, decline, open, commands, help and quit](screenshots/simple.png)
+![The simple layout: a short header with the event, the team tag, three lanes that need you and the run's dollars, where only flightdeck and the need-you count have a coloured block; one list of six lanes with their alert chip, challenge, state, cost and last action; under the list, the found flag with 1 to submit it and 0 not to; a key line of 1 0 answer, open, commands, help and quit](screenshots/simple.png)
 
 What the console opens in: one list of lanes, sorted by what needs you. The header says only what
 is not the usual, and only what asks you to look has a coloured block in it; the line under the
@@ -46,6 +46,12 @@ it: the strip on top while another lane needs you, the card while this one does,
 once the lane has changed a file. Its transcript is calm, a row for each thing the lane did and
 two for a run of tool calls, and so is its card: what the lane asks, and the numbered answers.
 `ctrl+o` shows every line and the full card, as the deck layout's lane does below.
+
+![A lane in the simple layout that runs the same command again and again: its transcript says 6 tool calls, and the last row starts with ×4, python3 angr_solve.py ratchet_run and its timeout; the loop alert, and the needs-you card with 1 to send a hint and 2 to kill it and queue it again fresh](screenshots/folded-step.png)
+
+A lane going round in circles shows it at a glance: the last row of a run of tool calls starts
+with how many times in a row the lane made that call (`×4`). Calls fold only when their text is
+the same; `ctrl+o` still shows every one. (From the `wave` scenario.)
 
 ## The fleet (the deck layout)
 

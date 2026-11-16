@@ -8,6 +8,8 @@ app, and setup that needs a password (sudo, a package manager) belongs to the pl
 terminal. Neither form writes anything: each ends the app with its answers, checked.
 
     ("resume", folder) | ("new", NewEvent) | ("setup", Setup) | ("image", then) | ("practice",) | ("mock",) | ("pack",) | None
+
+Settings and health (health.py) is a screen here too, and ends nothing: esc comes back.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from textual.widgets.option_list import Option
 
 from .. import setup as setups
 from .. import start, themes
+from ..platform.http import PRESETS
 from ..text import untrusted
 from . import theme
 
@@ -66,6 +69,7 @@ class Ready:
 
 
 NEW_CTF = "its name, site, flag format, token and VPN file; then it launches"
+HEALTH = "what your config sets, and whether this machine is ready to play (flightdeck doctor's checks)"
 
 
 def items(*, have_config: bool, events=(), pack_installed: bool = False) -> list[Item]:
@@ -89,6 +93,7 @@ def items(*, have_config: bool, events=(), pack_installed: bool = False) -> list
     out.append(Item(("mock",), "Demo", "the console on fake data: nothing spent"))
     if not pack_installed:
         out.append(Item(("pack",), "Install the solver pack", "some 800 no-model solvers that run first on every challenge"))
+    out.append(Item(("health",), "Settings and health", HEALTH))
     return out
 
 
@@ -103,7 +108,7 @@ def ready_items(ready: Ready) -> list[Item]:
     if ready.build:
         out.insert(0, Item(("image", ready.first), "Build the lane image",
                            "what a Docker lane's shell has inside: built once (about 830 MB), then you are back here"))
-    out.append(Item(("menu",), "Home", "everything else: the demo, the solver pack"))
+    out.append(Item(("menu",), "Home", "everything else: the demo, the solver pack, settings and health"))
     return out
 
 
@@ -149,6 +154,10 @@ class Menu(Screen):
             self.app.push_screen(NewEventForm())
         elif item.choice[0] == "setup":
             self.app.push_screen(SetupForm(then=item.choice[1]))
+        elif item.choice == ("health",):
+            from .health import HealthScreen
+
+            self.app.push_screen(HealthScreen())
         elif item.choice == ("menu",):  # from what setup offers, to everything else (over it: q there quits the app all the same)
             self.app.push_screen(Menu(self.app.menu, self.app.status))
         else:
@@ -232,8 +241,8 @@ class SetupForm(Screen):
     def _docker_found(self, reason: str | None) -> None:
         """Offer the runtime Docker's answer decides, unless the player chose one meanwhile:
         any choice of theirs stands, docker too. "Not decided" is no choice from here on."""
-        if not self.is_mounted:
-            return
+        if not self.is_attached:  # the form has closed. Not is_mounted: an answer that comes while
+            return  # the form's on_mount is still being handled (no Docker on PATH answers at once) would be dropped
         select = self.query_one("#runtime", Select)
         chosen = str(select.value)  # "" when the player has chosen none
         found = "Docker is running here" if reason is None else f"Docker cannot run lanes here ({reason})"
@@ -388,16 +397,24 @@ class NewEventForm(Screen):
             yield Input(placeholder='e.g. Example CTF 2026', id="name")
             yield ask("How does flightdeck get the challenges?")
             yield Select([(Text("CTFd: the site runs CTFd; flightdeck pulls the board and submits flags"), "ctfd"),
+                          (Text("rCTF, rCTF v2, noCTF or GZCTF: the same, through the site's JSON API"), "http"),
                           (Text("By hand: any other site; you hand challenges over in the console (/new)"), "manual")],
                          value="ctfd", allow_blank=False, id="platform")
-            yield ask("The event site's address (CTFd only):")
+            yield ask("Which of them the site runs (rCTF, noCTF or GZCTF only; when you cannot tell rCTF from v2, rCTF plays both):")
+            yield Select([(Text(start.PRESET_LABELS[preset]), preset) for preset in PRESETS], value=PRESETS[0], allow_blank=False,
+                         id="preset")
+            yield ask("The event site's address (not by hand; noCTF: its API's, from the browser's network tab; GZCTF: the game's page will do):")
             yield Input(placeholder="https://ctf.example.org", id="url")
-            yield ask("Your CTFd access token (CTFd only; the site's Settings, Access Tokens). It is hidden and goes to your keys file:")
+            yield Static(Text(""), id="urlread")  # what was kept of it: rCTF's and GZCTF's address is cut to the site's
+            yield ask("The game's number (GZCTF only, unless the address above is the game's page: https://.../games/3):")
+            yield Input(placeholder="3", id="game")
+            yield Static(Text(start.token_help("ctfd").capitalize() + ". It is hidden and goes to your keys file:", style=theme.MUTED),
+                         classes="q", id="tokenq")
             yield Input(password=True, id="token")
             yield ask("Flag format: what comes before the { in a flag, or an example flag from the rules (optional):")
             yield Input(placeholder="PP for PP{...}", id="flag")
             yield Static(Text(""), id="flagread")  # what was made of it, as it is typed: an example flag is read as its prefix
-            yield ask("When a lane finds a flag (CTFd only):")
+            yield ask("When a lane finds a flag (not by hand):")
             yield Select([(Text("confirm: it waits for you, one key sends it"), "confirm"),
                           (Text("auto: it is sent at once (auto approve)"), "auto")], value="confirm", allow_blank=False, id="submit")
             yield ask("VPN file for live targets (optional: drag the .conf or .ovpn in):")
@@ -423,6 +440,33 @@ class NewEventForm(Screen):
     def _value(self, field: str) -> str:
         return self.query_one(f"#{field}", Input).value.strip()
 
+    @on(Select.Changed, "#platform")
+    @on(Select.Changed, "#preset")
+    def _token_said(self, _event: Select.Changed) -> None:
+        """Say where this platform's token is, above its field: CTFd's, rCTF's, noCTF's and
+        GZCTF's are each somewhere else on the site."""
+        platform = str(self.query_one("#platform", Select).value)
+        preset = str(self.query_one("#preset", Select).value)
+        help = start.token_help(platform, preset) if platform in start.SIGNS_IN else "the token (none: by hand, flightdeck never signs in)"
+        self.query_one("#tokenq", Static).update(Text(help[0].upper() + help[1:] + ". It is hidden and goes to your keys file:",
+                                                      style=theme.MUTED))
+
+    @on(Input.Changed, "#url")
+    @on(Select.Changed, "#platform")
+    @on(Select.Changed, "#preset")
+    def _url_read(self, _event: Input.Changed | Select.Changed) -> None:
+        """Say what was kept of the address, under the field, while it is typed: rCTF's and
+        GZCTF's routes are under the site's root, so a page's address is cut to the site's (and
+        a GZCTF game's page gives the game), as `flightdeck start` says it."""
+        said = ""
+        if str(self.query_one("#platform", Select).value) == "http" and self._value("url"):
+            try:
+                preset = start.preset_answer(str(self.query_one("#preset", Select).value))
+                said = start.http_url_read(preset, self._value("url"))[2] or ""
+            except (start.StartError, ValueError):
+                said = ""  # said on ctrl+s, with what to fix: half an address is not yet wrong
+        self.query_one("#urlread", Static).update(Text(said, style=theme.MUTED))
+
     @on(Input.Changed, "#flag")
     def _flag_read(self, event: Input.Changed) -> None:
         """Say what the flag format was understood as, under the field, while it is typed."""
@@ -443,9 +487,28 @@ class NewEventForm(Screen):
 
         name = start.name_answer(self._value("name"))
         platform = str(self.query_one("#platform", Select).value)
-        url = start.url_answer(self._value("url")) if platform == "ctfd" else None
+        preset = game = None
+        if platform == "http":
+            preset = start.preset_answer(str(self.query_one("#preset", Select).value))
+            url, game, _ = start.http_url_read(preset, self._value("url"))
+            if self._value("game") and preset != "gzctf":
+                raise start.StartError(f"Game: only GZCTF's routes name a game, and {start.PRESET_LABELS[preset]}'s do not: "
+                                       "leave it empty")
+            if preset == "gzctf":
+                typed = start.game_answer(self._value("game")) if self._value("game") else None
+                if typed is not None and game is not None and typed != game:
+                    raise start.StartError(f"Game: {typed}, and the address names game {game}: give one of them")
+                game = typed or game
+                if game is None:
+                    raise start.StartError("Game: give the game's number, as its page's address shows it (3 for "
+                                           "https://.../games/3), or that page's address as the site's")
+        else:
+            if self._value("game"):  # as `flightdeck start --game` is refused off http: not kept without a word
+                raise start.StartError("Game: only GZCTF's routes name a game, and it is a json api platform (the second "
+                                       "answer above): leave it empty")
+            url = start.url_answer(self._value("url")) if platform == "ctfd" else None
         flag = start.flag_format_answer(self._value("flag"))
-        submit = str(self.query_one("#submit", Select).value) if platform == "ctfd" else "confirm"
+        submit = str(self.query_one("#submit", Select).value) if platform in start.SIGNS_IN else "confirm"
         ai = str(self.query_one("#ai", Select).value)
         if ai != "yes":
             raise start.StartError("answer the last question: flightdeck's lanes are AI agents that are given each challenge's "
@@ -470,12 +533,12 @@ class NewEventForm(Screen):
         if unusable is not None:
             raise start.StartError(f"Folder: {unusable}")
         token, token_env, notes = "", None, ()
-        if platform == "ctfd":
+        if platform in start.SIGNS_IN:
             token = self.query_one("#token", Input).value.strip()
             if token and keys.value_problem(token) is not None:
                 raise start.StartError(f"Token: it {keys.value_problem(token)}")
-            try:
-                chosen = start.token_variable_for(name, url)  # this site's variable: never one that is another site's
+            try:  # this site's variable: never one that is another site's
+                chosen = start.token_variable_for(name, url, prefix=start.token_prefix(platform, preset))
             except keys.KeysError as exc:
                 raise start.StartError(f"Token: {exc}") from None
             token_env = chosen.name
@@ -483,7 +546,7 @@ class NewEventForm(Screen):
             if notes and not token and chosen.source is None:
                 raise start.StartError(f"Token: {'; '.join(notes)}. Paste this event's token: it is kept as {token_env}")
         answers = start.EventAnswers(name=name, platform=platform, url=url, flag_format=flag, submit=submit, token_env=token_env,
-                                     label=label)
+                                     label=label, preset=preset, game=game)
         return NewEvent(answers, folder, token, vpn_file, notes)
 
     def action_launch(self) -> None:
@@ -508,7 +571,7 @@ class HomeApp(App):
     #menu { height: auto; max-height: 24; margin-top: 1; border: none; background: transparent; padding: 0; }
     #menu > .option-list--option-highlighted { background: $fd-selected; }
     #status, #keys, #formkeys, #notes { margin-top: 1; }
-    NewEventForm, SetupForm { align: center top; padding: 1 2; }
+    NewEventForm, SetupForm, HealthScreen { align: center top; padding: 1 2; }
     #formtitle, #problem, #formkeys { width: 110; max-width: 100%; padding: 0 3; height: auto; }
     #form { width: 110; max-width: 100%; height: 1fr; border: round $fd-border; padding: 0 3 1 3; }
     #form .q { margin-top: 1; }

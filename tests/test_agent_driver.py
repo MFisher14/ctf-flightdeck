@@ -65,7 +65,7 @@ class Lab:
                  prices: dict[str, Price] | None = None, handouts: dict[str, Path] | None = None,
                  max_retries: int = 0, backoff: float = 0.0, l1=None, urls=None, instance: str = "auto",
                  submit: str = "confirm", compact_at: int | None = 50_000, flag_format: str = FLAG,
-                 submitter=None, secrets: dict[str, str] | None = None) -> None:
+                 submitter=None, secrets: dict[str, str] | None = None, **deck) -> None:
         self.tmp = tmp_path
         self.server = server
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -82,7 +82,7 @@ class Lab:
             compact_at=compact_at,
             secrets=secrets,
         )
-        config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=max_lanes, submit=submit)
+        config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=max_lanes, submit=submit, **deck)
         self.deck = Deck(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"), submitter=submitter)
 
     def release(self, *ids: str) -> None:
@@ -1358,7 +1358,7 @@ def test_a_lanes_brief_names_the_debugger_and_decompiler_its_container_turned_ou
         return tool_call_reply("submit_flag", {"flag": "t{note}"})
 
     server = FakeModelServer(responder=responder)
-    said = prompts.shell_tools(("gdb", "gdb-multiarch", "r2", "pdg"))
+    said = prompts.shell_tools(("gdb", "gdb-multiarch", "r2", "pdg"), sessions=True)  # the lane has the session tools
 
     async def main():
         with server:
@@ -1374,6 +1374,43 @@ def test_a_lanes_brief_names_the_debugger_and_decompiler_its_container_turned_ou
             assert len(briefs) == 3 and said and all(said in brief.splitlines() for brief in briefs), briefs[0]
             assert briefs[0] == briefs[1]  # the same text every turn: the cached prefix holds
             assert server.requests[2]["json"]["model"] == "big" and briefs[2].count(said) == 1
+            await lab.finish()
+
+    run(main())
+
+
+def test_flightdecks_own_lane_is_told_of_its_session_tools_in_its_brief(tmp_path):
+    """P87: the session tools are offered to flightdeck's own lanes, and the brief says in one
+    line what they are for; a workspace without open_session (a stand-in) has no sessions, so
+    its lane is not told of them."""
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{note}"})])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            await until(lambda: lab.lane().pending is not None, "the candidate flag")
+            lines = server.requests[0]["json"]["messages"][1]["content"].splitlines()
+            assert prompts.SESSIONS in lines and lines.index(prompts.FENCE_CLOSE) < lines.index(prompts.SESSIONS)
+            assert "session_start" in [t["function"]["name"] for t in server.requests[0]["json"]["tools"]]
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_lane_whose_workspace_has_no_sessions_is_not_told_of_them(tmp_path):
+    class NoSessions(HostWorkspace):
+        open_session = None  # a stand-in that cannot start one
+
+    server = FakeModelServer([tool_call_reply("submit_flag", {"flag": "t{note}"})])
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.driver.workspaces = lambda lane, ch: NoSessions(tmp_path / "runs" / lane.id / "work", lab.handouts[ch.id])
+            lab.release()
+            await until(lambda: lab.lane().pending is not None, "the candidate flag")
+            assert "session_start" not in server.requests[0]["json"]["messages"][1]["content"]
             await lab.finish()
 
     run(main())
@@ -1854,6 +1891,182 @@ def test_each_take_over_shell_gets_a_home_of_its_own_outside_the_workspace_gone_
             assert left.is_dir()
             await lab.finish()
             assert not os.path.lexists(left)  # it went with the workspace
+
+    run(main())
+
+
+def test_a_take_over_shell_that_never_ran_loses_its_home_and_the_lane_hears_nothing(tmp_path, monkeypatch):
+    """P69: abandon() (the shell's program could not start) and a begin() that fails after the
+    home was made both remove it at once, not only when the workspace closes."""
+    from ctf_flightdeck.agent import driver as driver_module
+    from ctf_flightdeck.agent.workspace import WorkspaceError
+
+    server = FakeModelServer(responder=lambda record: tool_call_reply("submit_flag", {"flag": "t{note}"}))
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the lane waiting on a candidate")
+            notes = list(lab.driver.runs[lane.id].notes)
+            session = take_over(lab, lane)
+            home = (await asyncio.wait_for(session.begin(), 10)).home
+            assert home.is_dir()
+            session.abandon()
+            assert not os.path.lexists(home) and lab.driver.errors == []
+            assert lab.driver.runs[lane.id].notes == notes  # no "the player took over your shell"
+            assert lab.deck.apply(iv.HandBack(lane.id, "no shell")).ok
+
+            made = []
+            real = driver_module.remove_shell_home
+
+            def snapshot_fails(root):
+                raise WorkspaceError(f"cannot snapshot workspace {root}")
+
+            monkeypatch.setattr(driver_module, "take_snapshot", snapshot_fails)
+            monkeypatch.setattr(driver_module, "remove_shell_home", lambda spec: made.append(spec.home) or real(spec))
+            session = take_over(lab, lane)
+            with pytest.raises(WorkspaceError, match="cannot snapshot workspace"):
+                await asyncio.wait_for(session.begin(), 10)
+            monkeypatch.undo()
+            assert len(made) == 1 and not os.path.lexists(made[0])
+            assert lab.deck.apply(iv.HandBack(lane.id, "no shell")).ok
+            await lab.finish()
+
+    run(main())
+
+
+def _session_pid(server) -> int:
+    """The pid the lane's session (`echo $$; cat`) wrote, from the tool result the model was sent."""
+    [result] = [m for m in server.requests[1]["json"]["messages"] if m["role"] == "tool"]
+    assert result["content"].startswith("session s1: running"), result["content"]
+    return int(result["content"].splitlines()[1])
+
+
+def _gone_soon(pid: int) -> bool:
+    end = time.monotonic() + 5
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _dead(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def _a_lane_with_a_session(record):
+    """A lane that starts a session (a synthetic one: bash and cat), then waits on a candidate."""
+    if record["n"] == 1:
+        return tool_call_reply("session_start", {"command": "echo $$; cat", "wait_seconds": 5})
+    return tool_call_reply("submit_flag", {"flag": "t{note}"})
+
+
+def test_a_take_over_closes_the_lanes_sessions_and_the_hand_back_says_so(tmp_path):
+    counter = {"n": 0}
+
+    def responder(record):
+        counter["n"] += 1
+        return _a_lane_with_a_session(counter)
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the lane waiting on a candidate")
+            pid = _session_pid(server)
+            assert not _dead(pid)
+            session = take_over(lab, lane)
+            await asyncio.wait_for(session.begin(), 10)
+            assert _gone_soon(pid)  # the debugger does not run on beside the player's shell
+            session.finish()
+            run_ = lab.driver.runs[lane.id]
+            assert any("Taking over closed your sessions (s1): start again what you still need." in note for note in run_.notes)
+            assert run_.toolbox.sessions.gone["s1"] == "the player took over the lane, which closes every session"
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_take_over_whose_shell_never_ran_still_tells_the_lane_its_sessions_were_closed(tmp_path, monkeypatch):
+    """The console could not hand the terminal over (abandon), or begin() failed after it had
+    closed the sessions: nothing was done in the workspace, but the sessions are gone, and
+    the lane hears that once."""
+    counter = {"n": 0}
+
+    def responder(record):
+        counter["n"] += 1
+        return _a_lane_with_a_session(counter)
+
+    server = FakeModelServer(responder=responder)
+    told = "The player tried to take over your shell, which closed your sessions (s1): start again what you still need."
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the lane waiting on a candidate")
+            run_ = lab.driver.runs[lane.id]
+            notes = list(run_.notes)
+            session = take_over(lab, lane)
+            await asyncio.wait_for(session.begin(), 10)
+            session.abandon()
+            session.abandon()  # the console may say it twice: the lane hears it once
+            assert run_.notes == [*notes, told]
+            assert lab.deck.apply(iv.HandBack(lane.id, "no shell")).ok
+
+            await run_.toolbox.sessions.start("cat")  # a second session, which the next begin() closes
+
+            def no_shell():
+                raise OSError("no shell here")
+
+            monkeypatch.setattr(run_.workspace, "interactive_shell", no_shell)
+            session = take_over(lab, lane)
+            with pytest.raises(OSError, match="no shell here"):
+                await asyncio.wait_for(session.begin(), 10)
+            monkeypatch.undo()
+            assert run_.notes[-1] == told.replace("(s1)", "(s2)")
+            assert lab.deck.apply(iv.HandBack(lane.id, "no shell")).ok
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_lanes_end_closes_its_sessions(tmp_path):
+    counter = {"n": 0}
+
+    def responder(record):
+        counter["n"] += 1
+        return _a_lane_with_a_session(counter)
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the lane waiting on a candidate")
+            pid = _session_pid(server)
+            assert not _dead(pid)
+            assert lab.deck.apply(iv.Kill(lane.id)).ok
+            await until(lambda: lab.driver.runs[lane.id].closed, "the lane closed")
+            await asyncio.shield(lab.driver.runs[lane.id].closing)
+            assert lab.driver.runs[lane.id].toolbox.sessions.gone["s1"] == "the lane ended"
+            assert _gone_soon(pid)
+            await lab.finish()
 
     run(main())
 
@@ -2487,6 +2700,42 @@ def test_under_confirm_a_lane_asks_before_it_may_reach_the_live_instance(tmp_pat
         run(main())
 
 
+def test_a_lane_asking_for_the_live_instance_gives_its_slot_up_and_waits_for_one_after_the_answer(tmp_path):
+    """P83: under max_lanes 1, the lane that asks lets the next challenge's lane start; once
+    answered it makes no model call until that lane's slot is free again."""
+    busy = threading.Event()  # the other lane's model call is held until the test lets it go
+
+    def responder(record):
+        if "About other." in str(record["json"]["messages"]):
+            busy.set()
+            server.leaving.wait(30)
+            return text_reply("still thinking")
+        return tool_call_reply("submit_flag", {"flag": "t{note}"})
+
+    server = FakeModelServer(responder=responder)
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path), "other": handout(tmp_path, "other")}
+            lab = Lab(tmp_path, server, handouts=handouts, urls={"note": ("http://127.0.0.1:9",)}, instance="confirm",
+                      max_lanes=1)
+            lab.release("note", "other")
+            note = lab.lane("note")
+            await until(lambda: note.pending is not None, "the lane asking for the instance")
+            other = lab.lane("other")  # it started in the slot the waiting lane gave up
+            await until(busy.is_set, "the other lane's model call")
+            assert lab.deck.apply(iv.Approve(note.id)).ok
+            assert note.state is LaneState.QUEUED
+            await asyncio.sleep(0.3)
+            assert not [r for r in server.chats() if "About note." in str(r["json"]["messages"])]  # no slot: no call
+            assert lab.deck.apply(iv.Kill(other.id, requeue=False)).ok
+            assert note.state is LaneState.RUNNING
+            await until(lambda: note.pending is not None and note.pending.kind is PendingKind.SUBMIT, "the lane's flag")
+            await lab.finish()
+
+    run(main())
+
+
 def test_under_off_a_lane_is_never_asked_and_its_http_tool_stays_off(tmp_path):
     origin = "http://127.0.0.1:9"
     responder, holder = instance_reply(origin)
@@ -2569,6 +2818,35 @@ def test_a_flag_that_is_a_value_the_run_holds_is_raised_as_the_lane_gave_it(tmp_
             await until(lambda: lane.pending is not None, "the candidate flag")
             assert lane.pending.flag == secret  # never [HELD]: that is not what the lane found
             assert lane.actions[0].text == "submit [HELD]"
+            await lab.finish()
+
+    run(main())
+
+
+# ---------------------------------------------------------------------- what runs on while a lane waits (P91)
+
+
+def test_a_lane_with_an_open_session_keeps_its_slot_while_its_flag_waits_and_gives_it_up_once_closed(tmp_path):
+    server = FakeModelServer([
+        tool_calls_reply([("session_start", {"command": "sleep 60", "wait_seconds": 0}),
+                          ("submit_flag", {"flag": "t{maybe}"})]),
+    ])
+    handouts = {"note": handout(tmp_path), "other": handout(tmp_path, "other")}
+
+    async def main():
+        with server:
+            lab = Lab(tmp_path, server, max_lanes=1, handouts=handouts, bench_after=0)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            assert lab.driver.running(lane) == "its session s1 still runs"
+            lab.deck.recheck_waits()
+            assert not lane.benched and len(lab.deck.lanes) == 1
+            assert lane.actions[-1].text.endswith(": its session s1 still runs")
+            await lab.driver.runs[lane.id].toolbox.close_sessions("test")
+            assert lab.driver.running(lane) == ""
+            lab.deck.recheck_waits()
+            assert lane.benched and len(lab.deck.lanes) == 2  # the queued challenge started in its slot
             await lab.finish()
 
     run(main())

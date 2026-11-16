@@ -10,6 +10,9 @@ test's own under tmp_path, and nothing needs a model or a network.
 
 from __future__ import annotations
 
+import pytest
+from textual import events
+
 from ctf_flightdeck.console import theme
 from ctf_flightdeck.console.app import FlightdeckApp
 from ctf_flightdeck.console.commands import COMMANDS
@@ -18,7 +21,7 @@ from ctf_flightdeck.console.focus import FocusScreen
 from ctf_flightdeck.core import interventions as iv
 from ctf_flightdeck.core.driver import TurnReport
 from ctf_flightdeck.core.model import Challenge, ChallengeStatus, LaneState
-from test_console import assert_warning, bar, color_of, open_focus, press, prompt_text, status_line
+from test_console import assert_warning, bar, color_of, open_focus, press, prompt_text, region_text, status_line
 from test_layout import SIZE, console, drive, menu_text, release, three_lanes
 
 
@@ -42,12 +45,12 @@ def test_the_menu_shows_a_commands_aliases_beside_its_name_and_help_lists_them()
         assert rows(app) == ["/quit (/q, /exit) quit flightdeck (asks first while lanes are open)", "/queue <challenge> queue a parked or new challenge"]
         assert bar(app).menu.highlighted == 0
         await press(pilot, "backspace", *"set")
-        assert listed(app) == ["/config "] and rows(app)[0].startswith("/config [lanes N|unlimited | submit auto|confirm | file] (/settings) this run's")
+        assert listed(app) == ["/settings "] and rows(app)[0].startswith("/settings your setup and its health")
         await press(pilot, "escape", "escape", "question_mark")
         said = prompt_text(app)
         assert "quit flightdeck (asks first while lanes are open) (also /q, /exit)" in said
-        assert "auto approve (submit auto) (also /settings)" in said and "back to the fleet (also /lanes)" in said
-        assert said.count("(also /") == 3  # the three commands that have one
+        assert "back to the fleet (also /lanes)" in said and "/settings" in said
+        assert said.count("(also /") == 2  # the two commands that have one
 
     drive(app, script, (160, 200))
 
@@ -61,9 +64,6 @@ def test_an_alias_typed_whole_runs_its_command():
     deck, app = three_lanes("simple", on_exit=on_exit)  # a run's console: quitting asks first while lanes are open
 
     async def script(pilot):
-        await press(pilot, "slash", *"settings", "enter")
-        assert type(app.screen).__name__ == "ConfigPrompt"
-        await press(pilot, "escape")
         await press(pilot, "slash", "q", "enter")  # /q is a command, whole: enter runs it, though /queue is listed too
         assert type(app.screen).__name__ == "QuitPrompt" and stopped == []  # it asks, as /quit does
         await press(pilot, "escape")
@@ -76,6 +76,63 @@ def test_an_alias_typed_whole_runs_its_command():
 
 
 # ---------------------------------------------------------------------- the loose list, the strict enter
+
+
+@pytest.mark.parametrize("layout", ["simple", "deck"])
+def test_keys_typed_straight_after_the_slash_go_into_the_bar_and_never_act_on_the_lane(layout):
+    """A terminal hands over keys typed fast (or held) all at once: each is queued before the
+    one before it was acted on. The `/` opens the bar, and what follows it is the command's
+    name, never the fleet's keys: the a of /approve is no approval, the q of /queue no quit."""
+    deck, app = three_lanes(layout)
+
+    async def script(pilot):
+        assert app.screen.selected_lane == "L02" and deck.lanes["L02"].pending is not None  # its flag waits for a yes
+        for key in ("slash", "a", "d", "q"):  # with no wait between them, as a terminal sends them
+            app.post_message(events.Key(key, "/" if key == "slash" else key))
+        for _ in range(4):
+            await pilot.pause()
+        assert bar(app).field.value == "/adq" and bar(app).field.has_focus
+        assert deck.lanes["L02"].pending is not None and app.is_running  # nothing was approved, declined or quit
+        await press(pilot, "slash")
+        assert bar(app).field.value == "/adq/"  # in the bar, a / is text
+
+    drive(app, script, SIZE)
+
+
+@pytest.mark.parametrize("key, command", [("h", "/hint L02 "), ("r", "/redirect L02 ")])
+def test_keys_typed_straight_after_h_or_r_go_into_the_bar_they_open(key, command):
+    """h and r open the bar on the lane as / does, so what is typed straight after them is the
+    message, never the fleet's keys (the e of a hint is no escalation, its o no open)."""
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        for typed in (key, "e", "o", "h", "r"):  # with no wait between them, as a terminal sends them
+            app.post_message(events.Key(typed, typed))
+        for _ in range(4):
+            await pilot.pause()
+        assert isinstance(app.screen, FleetScreen) and bar(app).field.has_focus
+        value = bar(app).field.value
+        assert value.startswith(command) and value.endswith("eohr"), value  # h and r in the bar are text
+
+    drive(app, script, SIZE)
+
+
+@pytest.mark.parametrize("layout, label, command", [("deck", "h hint", "/hint L02 "), ("deck", "r redirect", "/redirect L02 "),
+                                                     ("simple", "/ commands", "/")])
+def test_a_click_on_the_key_line_opens_the_bar_while_the_bar_has_the_focus(layout, label, command):
+    """A click is no key the bar could take as text: h, r and / on the key line open the bar
+    on the lane even when the focus is in the bar already (the player tabbed to it)."""
+    deck, app = three_lanes(layout)
+
+    async def script(pilot):
+        bar(app).field.focus()
+        await pilot.pause()
+        assert bar(app).field.has_focus and bar(app).field.value == ""
+        await pilot.click("#keys", offset=(region_text(app, "#keys").index(label), 0))
+        await pilot.pause()
+        assert bar(app).field.value.startswith(command) and bar(app).field.has_focus
+
+    drive(app, script, SIZE)
 
 
 def test_enter_on_a_name_found_loosely_fills_the_bar_and_runs_nothing():
@@ -113,6 +170,26 @@ def test_what_names_no_command_is_said_in_one_muted_row_and_enter_reports_it():
         await press(pilot, "enter")
         assert_warning(app, "Unknown command /zz: type / to see the list")
         assert menu.field.value == "" and not menu.menu_open
+        assert {lane.id: (lane.state, lane.pending) for lane in deck.lanes.values()} == before
+
+    drive(app, script, SIZE)
+
+
+def test_a_slash_alone_sent_after_esc_closed_its_list_says_what_to_do_and_changes_nothing():
+    """`/`, esc (the list closes, the `/` stays), enter: it once said "Unknown command /: type /
+    to see the list", which was what the player had just done."""
+    deck, app = three_lanes("simple")
+    before = {lane.id: (lane.state, lane.pending) for lane in deck.lanes.values()}
+
+    async def script(pilot):
+        await press(pilot, "slash")
+        menu = bar(app)
+        assert menu.menu_open
+        await press(pilot, "escape")
+        assert not menu.menu_open and menu.field.value == "/"
+        await press(pilot, "enter")
+        assert_warning(app, "/ alone is no command: type / and a command's name, the list shows them")
+        assert "Unknown command" not in status_line(app)
         assert {lane.id: (lane.state, lane.pending) for lane in deck.lanes.values()} == before
 
     drive(app, script, SIZE)

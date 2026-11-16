@@ -1,6 +1,7 @@
 """The player's keys file: API keys and tokens kept in one place outside the repository.
 
-`~/.config/ctf-flightdeck/keys.env` (or the file $FLIGHTDECK_KEYS names) holds lines like
+`~/.config/ctf-flightdeck/keys.env` (or under $XDG_CONFIG_HOME: confighome.py; or the file
+$FLIGHTDECK_KEYS names) holds lines like
 
     OPENROUTER_API_KEY=sk-or-...
     ANTHROPIC_API_KEY=sk-ant-...
@@ -42,14 +43,29 @@ class KeysError(Exception):
 
 
 def keys_path() -> Path:
-    """$FLIGHTDECK_KEYS, else ~/.config/ctf-flightdeck/keys.env (from this process's environment)."""
+    """$FLIGHTDECK_KEYS, else keys.env in flightdeck's config folder: $XDG_CONFIG_HOME/ctf-flightdeck,
+    else ~/.config/ctf-flightdeck (confighome.find), from this process's environment."""
+    from . import confighome
+
     named = os.environ.get(KEYS_ENV)
     try:
         if named:
             return Path(named).expanduser()
-        return Path.home() / ".config" / "ctf-flightdeck" / "keys.env"
+        return confighome.find(confighome.KEYS_FILE).path
     except RuntimeError:  # ~user that does not exist, or no home directory
         raise KeysError(f"cannot find the keys file: ${KEYS_ENV} or the home directory cannot be resolved") from None
+
+
+def keys_file_named() -> str:
+    """"your keys file (PATH)", for a message that tells the player to put a variable there:
+    a player who has never seen the file learns where it is. The home folder is shown as ~."""
+    try:
+        path = keys_path()
+    except KeysError:
+        return "your keys file"
+    with suppress(RuntimeError, ValueError):
+        return f"your keys file (~/{path.relative_to(Path.home())})"
+    return f"your keys file ({path})"
 
 
 def load_keys(path: Path | None = None) -> dict[str, str]:

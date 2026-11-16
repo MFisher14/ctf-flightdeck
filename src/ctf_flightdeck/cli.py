@@ -41,6 +41,30 @@ class _ByPanel(typer.core.TyperGroup):
 
         return sorted(self.commands, key=panel)  # a stable sort: registration order within a panel
 
+    def resolve_command(self, ctx, args):
+        """As Typer's, and keeps the command's own arguments (ctx.meta[COMMAND_ARGS]) for the
+        root callback, which runs before the command parses them (_names_a_config)."""
+        found = super().resolve_command(ctx, args)
+        ctx.meta[COMMAND_ARGS] = list(found[2])
+        return found
+
+
+COMMAND_ARGS = "flightdeck.command_args"
+# Every option that names a config file, in each command that has one: --path in init and
+# config, --config in the rest (tests/test_confighome.py walks the commands to keep this true).
+CONFIG_OPTIONS = ("--config", "--path")
+
+
+def _names_a_config(args: list[str]) -> bool:
+    """Whether the command's arguments give --config FILE or --path FILE (or --config=FILE):
+    then the config read is the one named, and none is looked for in the config folder."""
+    for arg in args:
+        if arg == "--":  # what follows is an argument, never an option
+            return False
+        if arg in CONFIG_OPTIONS or arg.startswith(tuple(f"{option}=" for option in CONFIG_OPTIONS)):
+            return True
+    return False
+
 
 app = typer.Typer(
     name="flightdeck",
@@ -66,11 +90,28 @@ def root(
     ] = False,
 ) -> None:
     # no docstring: what `flightdeck --help` says of flightdeck is the app's own help (WHAT, NEW_HERE)
+    if ctx.invoked_subcommand != "doctor":  # doctor says it as a check of its own
+        _say_config_home(config_named=_names_a_config(ctx.meta.get(COMMAND_ARGS, [])) or None)
     if ctx.invoked_subcommand is None:
         if _at_terminal() and _at_terminal_out():
             _home()
         else:  # nobody to ask (a script, a pipe): say what to run
             typer.echo(_next_steps(), nl=False)
+
+
+def _say_config_home(*, config_named: bool | None = None) -> None:
+    """Once per command, on stderr: a file of flightdeck's left at ~/.config/ctf-flightdeck
+    when $XDG_CONFIG_HOME puts the config folder elsewhere, and whether it is read (P94).
+    `config_named`: the command was given a config file of its own (as confighome.notes;
+    None: only $FLIGHTDECK_CONFIG names one), so nothing is said of the config folder's."""
+    from . import confighome
+
+    try:
+        lines = confighome.notes(config_named=config_named)
+    except (OSError, RuntimeError):  # no home folder: no old place to have left a file in
+        return
+    for line in lines:
+        typer.echo(f"flightdeck: {line}", err=True)
 
 
 MAX_RESUME = 6  # events offered on the opening menu, most recently played first
@@ -216,6 +257,7 @@ def _start_new(new) -> None:
         raise typer.Exit(2)
 
     answers = new.answers
+    token_name = starts.token_name(answers.platform, answers.preset)  # "your CTFd access token", "your rCTF token"
     try:
         starts.write(new.folder, answers)
     except starts.StartError as exc:
@@ -228,20 +270,20 @@ def _start_new(new) -> None:
         if new.token:
             keys.save(answers.token_env, new.token)
     except keys.KeysError as exc:
-        fail(f"{exc}. The event is set up, but its token is not kept: put {answers.token_env}=<your CTFd access token> in "
+        fail(f"{exc}. The event is set up, but its token is not kept: put {answers.token_env}=<{token_name}> in "
              f"{keys.keys_path()} (chmod 600), then `flightdeck` resumes this event")
     try:
         if new.vpn is not None:
             vpn_cli.ensure_tool(vpn.keep(new.folder, new.vpn))
     except vpn.VPNError as exc:
         fail(f"{exc}. The event is set up without its VPN file: `flightdeck vpn add {new.folder} FILE` keeps one")
-    if answers.platform == "ctfd" and not new.token:
+    if answers.platform in starts.SIGNS_IN and not new.token:
         try:
             there = keys.source(answers.token_env) is not None
         except keys.KeysError as exc:
             fail(str(exc))
         if not there:
-            fail(f"no token yet: put {answers.token_env}=<your CTFd access token> in {keys.keys_path()} (chmod 600), "
+            fail(f"no token yet: put {answers.token_env}=<{token_name}> in {keys.keys_path()} (chmod 600), "
                  f"then `flightdeck` resumes this event")
     play(board=new.folder)
 
@@ -351,7 +393,7 @@ def mock(
         layout=look.layout,
         mouse=look.mouse,
         terminal_title=look.title,
-        terminal_bell=look.bell,
+        terminal_bell=look.rings_bell(mock=True),  # only with bell = true written: P70
         config_path=str(config_file) if config_file is not None else "",
         themes_folder=config_file.parent / "themes" if config_file is not None else None,
     ).run()

@@ -52,6 +52,20 @@ SORT_HELP = {
 }
 
 
+# What /copy takes, with the menu's words for each; alone it is the first (views.lane_copy).
+COPY_HELP = {
+    "output": "the last output (also /copy alone)",
+    "command": "that call's command, to paste in a shell",
+    "flag": "the flag that waits for you, else the newest",
+    "all": "the whole transcript, every line",
+}
+COPY_WHAT = tuple(COPY_HELP)
+
+
+def _copies(state: State) -> tuple[Word, ...]:
+    return tuple(Word(what, help) for what, help in COPY_HELP.items())
+
+
 def _layouts(state: State) -> tuple[Word, ...]:
     return tuple(Word(name, LAYOUT_HELP[name] + (" (in use)" if name == state.layout else "")) for name in LAYOUTS)
 
@@ -86,11 +100,13 @@ COMMANDS = (
     Command("pause", "", "pause or resume the lane"),
     Command("takeover", "", "a shell in the lane's workspace; exit it to hand the lane back"),
     Command("diff", "[file]", "show the files the lane changed"),
-    Command("copy", "[output|command|flag|all]", "copy from the lane with no mouse: its last output, that call's command, its flag, or all"),
+    Command("copy", "[output|command|flag|all]", "copy from the lane with no mouse: its last output, that call's command, its flag, or all",
+            words=_copies),
     Command("open", "<lane>", "open a lane in the focus view", words=lambda state: state.lanes),
     Command("note", "<text>", "a note for every lane: running ones read it on their next turn, later ones at their start", lane=False),
-    Command("config", "[lanes N|unlimited | submit auto|confirm | file]", "this run's settings: lanes at once, auto approve (submit auto)", lane=False,
-            aliases=("settings",)),
+    Command("settings", "", "your setup and its health: the config, the key, the models, and doctor's checks; "
+                           "c there changes this run's", lane=False),
+    Command("config", "[lanes N|unlimited | submit auto|confirm | file]", "this run's settings: lanes at once, auto approve (submit auto)", lane=False),
     Command("theme", "[name]", "the console's colours; alone: try the themes you have, and save one", lane=False,
             words=lambda state: state.themes),
     Command("layout", "[simple|deck]", "simple: the lanes and what needs you; deck: the board and every column; alone: try both, and save one",
@@ -240,6 +256,10 @@ def parse(text: str) -> Parsed:
         return Parsed(None, None, text)
     head, _, rest = text[1:].partition(" ")
     command = find(head)  # whole, or not at all: the menu's loose matching stops here
+    if not head:  # `/` alone, sent once its list was closed: "unknown command /, type /" would send the player round
+        if not rest.strip():
+            raise CommandError("/ alone is no command: type / and a command's name, the list shows them")
+        raise CommandError(f"No space after the /: /{rest.split()[0]}")  # `/ hint ...`, `/ L02`
     if command is None:
         raise CommandError(f"Unknown command /{head}: type / to see the list")
     rest = rest.strip()
@@ -254,6 +274,8 @@ def parse(text: str) -> Parsed:
         # a stray word must not fall back to the selected lane: /approve 2 is not L02
         where = f"; name a lane like /{command.name} L02" if command.lane else ""
         where += " (or /approve all)" if command.name == "approve" else ""
+        if command.name == "settings":  # it was /config's alias until P90: say where the run's settings went
+            where = f": /config {arg} changes this run's" if arg.split()[0].lower() in ("lanes", "submit", "file") else ""
         raise CommandError(f"/{command.name} takes no argument{where}")
     if arg and command.name == "open":
         raise CommandError("/open takes a lane, like /open L02")

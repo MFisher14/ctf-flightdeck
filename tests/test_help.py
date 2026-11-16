@@ -53,8 +53,8 @@ from test_layout import LAYOUTS, SIZE, console, release, three_lanes
 
 PHONE = (60, 40)  # the compact layout
 TALL = (160, 190)  # every row of help on screen at once: nothing to scroll to
-LANE_NOW = {"L01": ["esc", "/", "?", "ctrl+o"], "L02": ["1-9", "esc", "/", "?", "ctrl+o"], "L03": ["1-9", "esc", "/", "?", "ctrl+o"]}
-LIST_NOW = {"L01": ["enter", "/", "?", "q"], "L02": ["a", "d", "enter", "/", "?", "q"], "L03": ["1-9", "x", "enter", "/", "?", "q"]}
+LANE_NOW = {"L01": ["esc", "/", "?", "ctrl+o"], "L02": ["1 0", "esc", "/", "?", "ctrl+o"], "L03": ["1-9", "esc", "/", "?", "ctrl+o"]}
+LIST_NOW = {"L01": ["enter", "/", "?", "q"], "L02": ["1 0", "enter", "/", "?", "q"], "L03": ["1-9", "x", "enter", "/", "?", "q"]}
 NAMES = {"L01": "Alpha", "L02": "Beta", "L03": "Gamma"}
 
 
@@ -82,8 +82,10 @@ def now(app: FlightdeckApp) -> tuple[str, list[str]]:
 
 
 def line_keys(app: FlightdeckApp) -> list[str]:
-    """The keys on the key line as drawn: the first word of each `key label` pair."""
-    return [pair.split(" ")[0] for pair in footer_line(app).strip().split("  ")]
+    """The keys on the key line as drawn: the first word of each `key label` pair, or for the
+    answers all that is before the label (`1 0 answer`: its key is `1 0`)."""
+    return [pair.removesuffix(" answer") if pair.endswith(" answer") else pair.split(" ")[0]
+            for pair in footer_line(app).strip().split("  ")]
 
 
 def hints(deck, lane_id: str) -> list[str]:
@@ -257,7 +259,7 @@ def test_a_filter_that_hides_the_selected_lane_gives_help_no_lane_as_the_keys_ha
 
     async def script(pilot):
         app.fleet.select_lane("L02")
-        app.fleet.set_filter("gamma")  # hides the selected lane: every key refuses it
+        app.fleet.set_filter("zzz")  # hides the selected lane and every other (one shown would be selected: P96)
         await pilot.pause()
         assert app.fleet.selected_lane == "L02" and app.fleet.bar_lane() is None
         await press(pilot, "question_mark")
@@ -318,18 +320,20 @@ def test_help_has_every_row_from_either_view_and_starts_with_the_view_it_was_ope
 
 def test_each_view_lists_its_own_keys_and_no_row_says_in_a_lane_of_a_list_key():
     listed, lane = dict(KEY_HELP + BATCH_KEY_HELP), dict(LANE_KEY_HELP)
-    assert {"ctrl+n", "ctrl+o", "pgup pgdn", "typing"} <= set(lane) and not {"ctrl+n", "ctrl+o"} & set(listed)
+    assert {"ctrl+n", "ctrl+o", "pgup pgdn", "typing"} <= set(lane) and "ctrl+n" not in listed
+    # ctrl+o is a key of each view, with its own meaning in each: the file window in the list, details in a lane
+    assert listed["ctrl+o"].startswith("Attach files: your system's file window") and lane["ctrl+o"].startswith("Details on or off")
     assert {"p", "h", "r", "f", "k", "e", "t", "a", "d", "A", "x", "s", "q", "space"} <= set(listed) and not {"p", "k", "q", "A", "space"} & set(lane)
     assert lane["?"] == "This help, while the chat box is empty; with text in the box it is a question mark"
     assert listed["?"] == "This help, for where you are; in the command bar, only while it is empty"
     assert lane["esc"] == "Back to the lane list" and listed["esc"] == "Leave the command bar, close the peek, or clear the filter"
-    assert {"mouse drag", "ctrl+c", "ctrl+q"} == set(dict(BOTH_KEY_HELP))
+    assert {"mouse drag", "ctrl+c", "ctrl+q", "↑ ↓", "ctrl+g"} == set(dict(BOTH_KEY_HELP))
     assert HELP_KEY_WIDTH == len("enter on board")  # the widest key: one column of keys down the dialog
 
 
 def test_every_key_a_simple_key_line_can_show_has_a_sentence_and_help_refuses_a_view_it_does_not_know():
     in_list = {shown_ for _, shown_, _ in (fleet.NEW_KEY, *fleet.SIMPLE_KEYS)}
-    in_lane = {key for key, _ in (focus.SIMPLE_ANSWER_LABEL, *focus.SIMPLE_KEY_LABELS)}
+    in_lane = {key for key, _ in (focus.SIMPLE_ANSWER_LABEL, focus.SIMPLE_YES_NO_LABEL, *focus.SIMPLE_KEY_LABELS)}
     assert set(NOW_HELP) == set(screens.HELP_VIEWS) == {"list", "lane"}
     assert set(NOW_HELP["list"]) == in_list and set(NOW_HELP["lane"]) == in_lane  # none missing, none left over
     assert all(text and text[0].isupper() for sentences in NOW_HELP.values() for text in sentences.values())
@@ -400,3 +404,21 @@ def test_the_spec_the_guide_and_the_changelog_say_of_help_what_the_console_draws
     for page in (spec, guide, changelog):
         assert "/help all keys" not in flat(page)
     assert "`?` on the empty chat box opens help for that lane" in flat(guide)
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_ctrl_o_in_the_lane_list_of_a_console_that_attaches_no_file_says_why_and_opens_no_file_window(layout, monkeypatch):
+    """ctrl+o in the lane list is a bare /attach: where nothing can be attached (no attacher: a
+    board the platform fills, the mock) it says so, as /attach does, and the file window stays shut."""
+    from ctf_flightdeck import filepick
+
+    asked = []
+    monkeypatch.setattr(filepick, "choose", lambda **kw: asked.append(kw) or [])
+    deck, app = three_lanes(layout)
+
+    async def script(pilot):
+        await press(pilot, "ctrl+o")
+        assert app.screen is app.fleet and app._status[:2] == ("/attach adds files to a challenge on a board you fill yourself", "warning")
+        assert asked == []
+
+    drive(app, script)

@@ -3,6 +3,161 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Released: 0.6.0, lane sessions and more platforms (2026-11-16)
+
+Thirty proposals, in the order of their numbers in [DECISIONS.md](DECISIONS.md) (P69 to P98),
+and the review fixes made before the release; the lines for players are under 0.6.0 in
+[CHANGELOG.md](../CHANGELOG.md).
+
+- **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
+  container that is gone, a cancel: the console comes back at once, the lane is handed back as
+  it was, and the status line says why. Until now Textual's suspend was never left when the
+  shell's start raised, and the console drew nothing.
+- **Three small gaps in the console** (P70). The mock rings the bell only with `bell = true`
+  (a run rings as P61 has it), `/copy ` lists what it copies, and the simple key line shows the
+  keys for no lane while the filter hides the selected lane.
+- **Up and down recall what was sent; `ctrl+g` opens the bar in your editor** (P71). One
+  history for the run, shared by the lane list's bar and a lane's chat box, in memory only;
+  the `/` menu keeps the arrows while it is open. `ctrl+g` hands the terminal to `$VISUAL` or
+  `$EDITOR` and puts the text back in the bar on one line, sending nothing; with neither set it
+  says so. Not built: `ctrl+r` search, a history kept across runs, a bar of several lines.
+- **The same call in a row is one row with a count** (P72). A lane's calm view and the peek
+  fold the same tool call made several times in a row into one row, `×7` first, so a lane
+  that loops shows it at a glance; details and `/copy` still have every call.
+- **A lane notices a server that drops its oldest messages** (P73,
+  [#10](https://github.com/MFisher14/ctf-flightdeck/issues/10)). A run on Ollama 0.34.2 showed
+  that past its window it leaves out a chat's oldest messages with no error and holds the
+  prompt count under the window, so a lane with no `[api] context` never refreshed. The
+  driver now sees a context that grew while the count did not, says so on the lane, refreshes
+  it at once, and refreshes later contexts on that model at the count where the drop was seen.
+- **A noCTF preset for the http platform** (P74). `preset = "noctf"` plays an event on noCTF,
+  DownUnderCTF's platform, with the session token the site keeps, and `flightdeck http example
+  --preset noctf` prints a profile for it
+  ([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)). No change to the engine
+  was needed: every route fits the `[http]` table as it was. Like the rctf preset, it has met a
+  fake on 127.0.0.1 only, never a real noCTF.
+- **GZCTF as a preset** (P75). `preset = "gzctf"` with the game's number and the player's
+  `GZCTF_Token` cookie: the board, attachments and counted tries, a flag judged after it is
+  taken, the team's solves, and `[http.refuse]`, which keeps every flag back from a site that
+  wants it encrypted; `flightdeck http example --preset gzctf`. Written from GZCTF's public
+  source and tested against a fake on 127.0.0.1 only, never a real GZCTF; a site that encrypts
+  its flags gets none from flightdeck, and the player submits them on the site.
+- **A pack names the flightdeck it needs** (P76). `flightdeck = ">=0.6"` in a `pack.toml`; a
+  flightdeck that does not meet it refuses the pack, at install and wherever its engines are
+  found, with both versions and what to do.
+- **How a drop works in your terminal** (P77). The `/new` form and help say it in one
+  sentence chosen from `SSH_CONNECTION`/`SSH_TTY`, `TMUX` and `TERM_PROGRAM`: over SSH,
+  inside tmux, VS Code's terminal, iTerm2 and WezTerm on X11 have their own; every other
+  terminal gets the general one. Each sentence is from that terminal's own source or
+  documentation; none was tried in the terminal itself.
+- **Coding-agent lanes hold the queue on an outage; a redirect that did not take escalates**
+  (P78, [#33](https://github.com/MFisher14/ctf-flightdeck/issues/33)). The `claude` and `codex`
+  lanes hold the queue on a model API outage as flightdeck's own lanes do, so autopilot
+  disengages with `--agent` too; and a hint or wrong-way alert that comes back after
+  autopilot's redirect escalates the lane one rung (at the top it is killed and parked), where
+  it used to wait for you. This was the first item left of M5.
+- **Settings and health on the home screen** (P79). The config's main settings, each with
+  where it is set, and doctor's checks with their fixes, run in a child process that leaving
+  the screen stops. A key is `set` or `not set`. Not built: changing a setting there, and the
+  checks shown one by one.
+- **ctfd-whale instances** (P80). `plugin = "ctfd_whale"` in `[instances]`: a start is never
+  sent while the account runs a container, since whale's start removes it; another
+  challenge's container reads as the cap; each of the router's five address forms is read,
+  and a TLS endpoint reaches a lane as `tls://host:port` ([BOARDS.md](BOARDS.md#which-plugin)).
+  Tested against a fake of the plugin's source only.
+- **Instances beyond CTFd, rCTF v2's first** (P81). `[instances] plugin = "rctf"` with
+  `preset = "rctf2"`: the instancer is asked by the challenge's string id with the `[http]`
+  table's own sign-in; an instance may have several addresses, and one still starting is
+  waited for; a start behind a CAPTCHA is left to the player
+  ([BOARDS.md](BOARDS.md#instances-on-demand)). Built from rCTF v2's API reference and tested
+  against a fake of it only. A `tcp-ssl` address reaches a lane as `tls://host:port`, the form
+  P80 made for ctfd-whale. Not built: klodd's instances (it wants a CAPTCHA for every start);
+  GZCTF's came with P88.
+- **Sessions** (P82). flightdeck's own lanes keep a program running across turns (gdb, an
+  interpreter, `nc` to the instance) with `session_start`, `session_send` and `session_close`:
+  at most three per lane, closed after ten minutes unused, and all closed at a take-over and at
+  the lane's end ([ARCHITECTURE.md](ARCHITECTURE.md#sessions)).
+- **A lane waiting for a live-box answer gives its slot up** (P83, from issue #33): the next
+  queued challenge starts in it, and once answered the lane takes the next free slot before
+  anything queued. It was the last item left of M5 that was not about coding-agent lanes or a
+  real event.
+- **Tests wait for what must happen, also on a busy machine** (P84). A console test's
+  `pilot.pause()` waits until the screen has settled, not until the process looks idle, and
+  the tests that waited for a time now wait for the condition they meant. No change to
+  flightdeck itself; CONTRIBUTING says what a pause waits for.
+- **Three leftovers from the review** (P85). `flightdeck init --force` replaces a config whole
+  (`config_edit.replace_file`), never writes over it in place; a `/new` with images that fails
+  after it was answered removes the copies of its drop and says so; `ctrl+o` in the lane list
+  opens the file window for the selected lane's challenge, as a bare `/attach` does.
+- **Claude lanes checked against a real Claude Code** (P86,
+  [#3](https://github.com/MFisher14/ctf-flightdeck/issues/3), in part). A run of Claude Code
+  2.1.325 with no tools: a claude lane now ends a turn with an interrupt request, not SIGINT
+  (which ended a claude waiting for a message), counts the output tokens its events miss, and
+  charges a call an interrupt cut short. Still open: claude's tool calls, a whole `practice
+  --agent claude` run, and all of codex.
+- **Sessions in the brief, and on a terminal** (P87, after P82). flightdeck's own lanes are
+  told of their session tools in one line of the brief (coding-agent lanes, which lack them,
+  are not), and `session_start` takes `terminal: true`: the command runs on a pty under a small
+  relay, with no controlling terminal, `TERM=dumb` and no echo, and its escapes are stripped
+  before the model or the console see them ([ARCHITECTURE.md](ARCHITECTURE.md#sessions)).
+- **GZCTF's containers** (P88). `[instances] plugin = "gzctf"` with `preset = "gzctf"`: the
+  container of a challenge whose type is a container one is started, extended and stopped
+  with the `[http]` table's cookie and game, its address read from the challenge's own detail;
+  10 seconds between two changes, as GZCTF wants; a container behind GZCTF's own WebSocket
+  proxy is said to be one no lane can reach ([BOARDS.md](BOARDS.md#which-plugin)). Built from
+  GZCTF's public source and tested against a fake of it only, never a real GZCTF. Not built: a
+  guard against a site that removes the team's oldest container at its limit (the setting is
+  not shown to players).
+- **`http check` asks the instancer, and "errored" is a failed instance** (P89). With
+  `[instances]`, `flightdeck http check` sends one status `GET` for the first on-demand
+  challenge (never a start) and prints what the site said; rCTF v2's `errored` is its own
+  state (`failed_states`, `InstanceFailed`): no start is sent while the site says it, and the
+  status is asked again later. Not confirmed: what rCTF does with a start of an errored one.
+- **`/settings` in a run is Settings and health** (P90). The home screen's screen opens over
+  the console, with the run's own settings on top (`c` opens `/config`'s dialog) and a line
+  that counts the lanes that need you. Its checks run in the child at a lower priority, and
+  what they found is kept for the run until `r`. `/config` is unchanged; `/settings` is no
+  longer its alias.
+- **The other waits for the player give their slot up too** (P91, after P83). A lane waiting
+  for a flag answer or more budget gives its slot to the queue once it has waited a minute; at
+  most `max_waiting` lanes (`[lanes]`, 4) are without a slot at once, and a lane whose sessions
+  run on keeps its own.
+- **No dollar cap for a custom server on this machine** (P92). Setup treats a custom
+  OpenAI-compatible server at `127.0.0.1`, `localhost` or `::1` as it treats Ollama and MLX:
+  no dollar cap, the token cap kept, and one line in the setup notes for a local proxy to a
+  paid API.
+- **The welcome screen names one key where there is one way on** (P93). On a loaded board
+  and in the mock, Enter and esc both opened the console under two names; the key line now
+  says `enter  open the console` alone, and esc and q still close it. An empty board keeps
+  both, since there Enter opens `/new`.
+- **The config folder follows `$XDG_CONFIG_HOME`** (P94). The config, the keys file
+  and the themes are in `$XDG_CONFIG_HOME/ctf-flightdeck` when that is set, as notes and packs
+  already follow their XDG variables; `~/.config/ctf-flightdeck` stays the default. A file left
+  at the old place is still found, and every command says once where (doctor in its own line).
+- **`flightdeck start` sets up an event on rCTF, rCTF v2, noCTF or GZCTF** (P95). The platform
+  menu's third answer asks which of the four, the address (a page's path is cut where the
+  routes are under the site's root; a GZCTF game's page gives the game) and the token, kept
+  under a site-bound `RCTF_TOKEN_<NAME>`-style variable. The event file carries the `[http]`
+  table `flightdeck http example --preset NAME` prints. The home screen's form asks the same.
+  Not built: a table of your own routes from start, and asking the site which platform it runs.
+- **The lane list's selection follows what you see** (P96). A filter that hides the
+  selected lane selects the row the cursor is on, so the keys act on the highlighted row; a
+  lane you approve, decline or kill from the list that folds into `N finished` hands the
+  selection to the next lane that needs you, else to the row under it.
+- **Settings and health in two columns; the narrow note goes when the terminal widens** (P97).
+  A long path, a where line or a check's detail wraps under its own column at 80 columns. The
+  layout list's "this terminal is narrow" note, and that part of the status line, go once the
+  terminal is made wide.
+- **One vocabulary for an answer** (P98). A lane that waits for you shows `1 0 answer` on the
+  simple layout's key line, in the list and in its view, matching the numbers and words of the
+  why line and the card (`1 more budget  0 stop the lane`); `a` and `d` still act. A budget
+  wait about a model with no price says so when the lane gives its slot up.
+
+Not verified yet: noCTF, GZCTF, rCTF v2, ctfd-whale and GZCTF's containers have met fakes only,
+never a real site; gdb and radare2 have not been run in a session; the console was driven in a
+pseudo-terminal with a terminal emulator, not looked at in each terminal program or in tmux; and the claude lane's whole `practice --agent claude`
+run is not done.
+
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
 Eighteen proposals, in the order of their numbers in [DECISIONS.md](DECISIONS.md) (P51 to P68),
@@ -233,13 +388,9 @@ back at any time (D20; the details are P19 to P28 in [DECISIONS.md](DECISIONS.md
 
 Left of M5:
 
-- **An outage with coding-agent lanes.** flightdeck's own lanes hold the queue when the model API
-  fails for every lane, and autopilot disengages on that hold; the `claude` and `codex` lanes do
-  not hold the queue yet.
 - **A refusal inside a coding-agent CLI.** flightdeck reroutes no refused request, and switches
   Anthropic's server-side refusal fallback off for its own lanes; what a CLI does with a refusal
   on its own API is not flightdeck's to see.
-- **A lane that waits for a live-box answer** keeps its slot until you are back.
 - **A real event.** Autopilot is tested against the fake CTFd and the fake model, not yet flown.
 
 ## Released: 0.2.0, a model per small job (2026-11-12)
@@ -291,8 +442,10 @@ Planned in a milestone and not built:
 
 - **ACP agents.** The coding-agent lanes are the `claude` and `codex` CLIs only.
 - **A real capture of the `claude` and `codex` streams.** The driver is tested against a fake CLI
-  built from their docs, and so is a coding-agent lane's fenced network (below): it has not been
-  run with the real CLIs.
+  built from their docs, and so is a coding-agent lane's fenced network (below). Claude Code's
+  stream was compared with a real run on 2026-11-14 (P86: 2.1.325, a prompt with no tools), and
+  the differences fixed; still open: claude's tool calls, a whole `practice --agent claude` run,
+  the fenced network with a real CLI, and all of codex.
 - **Timeline replay in `play`.** Releasing a board wave by wave from its `timeline.json` is built
   and tested, but `play` releases the whole board at the start. Scoring a past run against the
   board's answers works (`flightdeck score`).
@@ -305,13 +458,9 @@ the guardrail Autopilot needs: nothing reached but a challenge's own instance.
 
 ## Later (not scheduled)
 
-- **ctfd-whale instances.** Not built (P57). Read from its source, not run: a start first
-  removes whatever container the account runs, so a careless second start resets a lane's own
-  target; asking about a challenge other than the running one is refused, not answered "none";
-  and the address comes as an `nc` line, a link's HTML, a pwntools snippet or `[ssl] host port`,
-  some of them TLS endpoints that are no web server, for which a lane's instance has no form
-  yet. It wants its own reader, a fake of each form, and a run against a local CTFd with the
-  plugin before anyone relies on it.
+- **ctfd-whale against a real CTFd.** Built against a fake of its source (P80); a run
+  against a local CTFd with the plugin (Redis, a Docker socket and an frp or trp router
+  beside it) is still to do before anyone relies on it.
 - **Phone control.** Today: run flightdeck in tmux and attach over SSH (the console has a compact
   layout from 64 columns down). Option: serve the same console in a browser (textual-serve);
   touches D4 and must be locked down. Best: push a notification when a lane needs you, with approve and decline from the

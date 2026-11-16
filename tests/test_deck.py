@@ -115,12 +115,13 @@ def good_flag(cid: str) -> str:
     return f"t{{{cid}}}"
 
 
-def make_deck(n=5, max_lanes=2, team=False, submit="confirm", token_cap=None, dollar_cap=None, models=MODELS, fail=None):
+def make_deck(n=5, max_lanes=2, team=False, submit="confirm", token_cap=None, dollar_cap=None, models=MODELS, fail=None,
+              **more):
     """A deck with challenges c0..c{n-1} (100 points, 10 solves) released and queued in that order."""
     clock, driver = Clock(), RecordingDriver()
     driver.fail.update(fail or {})
     config = DeckConfig(
-        event="test", team=team, max_lanes=max_lanes, flag_format=FLAG_FORMAT, submit=submit, models=models
+        event="test", team=team, max_lanes=max_lanes, flag_format=FLAG_FORMAT, submit=submit, models=models, **more
     )
     deck = Deck(config, driver, clock, verify=RecordingVerifier())
     challenges = [Challenge(f"c{i}", f"Chall {i}", "misc", 100, solves=10) for i in range(n)]
@@ -400,7 +401,412 @@ def test_an_intervention_whose_new_lane_cannot_start_says_so(what):
     assert out.ok is (what == "kill and re-queue")  # the kill itself happened; the fork and the queue did not
 
 
-# ---------------------------------------------------------------------- reports
+# ---------------------------------------------------------------------- a live-box wait gives its slot up (P83)
+
+
+def ask_box(deck, lane):
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "connect to the box")))
+
+
+def test_a_lane_waiting_for_a_live_box_answer_gives_its_slot_to_the_next_queued_lane():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    assert lane.state is LaneState.WAITING and lane.benched
+    assert driver.started() == ["c0", "c1"]
+    assert queued_ids(deck) == ["c2"]  # one slot was freed, not two
+    assert [x.id for x in deck.slotted_lanes()] == ["L02"]
+    assert "gave its slot to L02" in lane.actions[-1].text
+    (given,) = events(deck, EventKind.SLOT)
+    assert (given.lane, given.data) == ("L01", {"slot": "given", "for": "live box", "started": ["L02"]})
+
+
+def test_other_approvals_keep_their_slot_at_first():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.BUDGET, "more budget")))
+    deck.recheck_waits()
+    assert lane.state is LaneState.WAITING and not lane.benched
+    assert driver.started() == ["c0"]
+
+
+def test_an_answered_lane_with_no_free_slot_waits_for_one_and_takes_it_before_the_queue():
+    deck, driver, _ = make_deck(n=4, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    other = lane_on(deck, "c1")
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok
+    assert lane.state is LaneState.QUEUED and lane.pending is None and lane.benched
+    assert driver.named("approved") == [(lane.id, PendingKind.LIVE_BOX)]  # the answer reaches the lane at once
+    assert driver.named("resume") == []
+    assert "waits for a free slot" in lane.actions[-1].text
+    assert solve(deck, other).ok  # its slot frees: the answered lane takes it, not c2
+    assert lane.state is LaneState.RUNNING and not lane.benched
+    assert driver.named("resume") == [(lane.id,)]
+    assert driver.started() == ["c0", "c1"] and queued_ids(deck) == ["c2", "c3"]
+    assert lane.actions[-1].text == "took a free slot: back at work"
+    assert [e.data["slot"] for e in events(deck, EventKind.SLOT)] == ["given", "waiting", "taken"]
+
+
+def test_an_answered_lane_takes_its_slot_back_at_once_when_one_is_free():
+    deck, driver, _ = make_deck(n=2, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    assert solve(deck, lane_on(deck, "c1")).ok  # nothing left in the queue: the slot stays free
+    assert deck.apply(iv.Decline(lane.id)).ok
+    assert lane.state is LaneState.RUNNING and not lane.benched
+    assert driver.named("declined") == [(lane.id, PendingKind.LIVE_BOX, None)]
+    taken = events(deck, EventKind.SLOT)
+    assert [(e.lane, e.data["slot"]) for e in taken] == [("L01", "given"), ("L01", "taken")]
+
+
+def test_a_lane_gives_its_slot_up_in_the_run_log_when_no_queued_lane_starts_in_it():
+    deck, driver, _ = make_deck(n=2, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    deck.hold_queue("the model API refuses the key")  # c1 is queued but may not start
+    ask_box(deck, lane)
+    assert lane.benched and driver.started() == ["c0"]
+    (given,) = events(deck, EventKind.SLOT)
+    assert (given.lane, given.data) == ("L01", {"slot": "given", "for": "live box", "started": []})
+    assert "no queued lane started in it" in given.text
+    assert deck.apply(iv.Approve(lane.id)).ok  # the slot is free still: it takes it back at once
+    assert lane.state is LaneState.RUNNING
+    assert [e.data["slot"] for e in events(deck, EventKind.SLOT)] == ["given", "taken"]
+
+
+def test_lanes_waiting_for_a_slot_take_free_ones_in_the_order_they_were_answered():
+    deck, driver, _ = make_deck(n=6, max_lanes=2)
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+    ask_box(deck, second)
+    ask_box(deck, first)
+    assert driver.started() == ["c0", "c1", "c2", "c3"]
+    deck.apply(iv.Approve(second.id))
+    deck.apply(iv.Approve(first.id))
+    assert first.state is second.state is LaneState.QUEUED
+    assert solve(deck, lane_on(deck, "c2")).ok
+    assert second.state is LaneState.RUNNING and first.state is LaneState.QUEUED
+    assert solve(deck, lane_on(deck, "c3")).ok
+    assert first.state is LaneState.RUNNING
+    assert queued_ids(deck) == ["c4", "c5"]
+
+
+def test_a_lane_waiting_for_a_slot_takes_one_while_the_queue_is_held():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    deck.apply(iv.Approve(lane.id))
+    deck.hold_queue("the model API refuses the key")
+    assert deck.apply(iv.Kill(lane_on(deck, "c1").id)).ok
+    assert lane.state is LaneState.RUNNING  # no new lane: the one that was at work goes on
+    assert driver.started() == ["c0", "c1"]
+
+
+def test_resuming_or_handing_back_an_answered_lane_waits_for_a_slot():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    deck.apply(iv.Pause(lane.id))
+    deck.apply(iv.Approve(lane.id))
+    assert lane.state is LaneState.PAUSED
+    out = deck.apply(iv.Resume(lane.id))
+    assert out.ok and "waits for a free slot" in out.message
+    assert lane.state is LaneState.QUEUED and driver.named("resume") == []
+    assert deck.apply(iv.TakeOver(lane.id)).ok
+    out = deck.apply(iv.HandBack(lane.id))
+    assert out.ok and "waits for a free slot" in out.message
+    assert lane.state is LaneState.QUEUED and driver.named("resume") == []
+
+
+def test_a_paused_lane_waiting_for_a_slot_loses_its_place_until_resumed():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    deck.apply(iv.Approve(lane.id))
+    deck.apply(iv.Pause(lane.id))
+    assert solve(deck, lane_on(deck, "c1")).ok
+    assert lane.state is LaneState.PAUSED  # it was paused: the slot went to the queue
+    assert driver.started() == ["c0", "c1", "c2"]
+
+
+def test_a_lane_waiting_for_a_slot_that_is_asked_again_waits_for_the_player_not_the_slot():
+    deck, sent = platform_deck(max_lanes=1)
+    driver = deck.driver
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))  # on its way to the platform
+    assert sent and deck.sending(lane.id)
+    ask_box(deck, lane)
+    assert deck.apply(iv.Approve(lane.id)).ok  # no slot is free: it waits for one
+    assert lane.state is LaneState.QUEUED
+    deck.platform_verdict(lane.id, "t{maybe}", None, "the platform timed out")  # the flag comes back to the player
+    assert lane.pending is not None and lane.pending.kind is PendingKind.CONFIRM
+    assert lane.state is LaneState.WAITING and lane.benched
+    deck.report(lane_on(deck, "c1").id, TurnReport(gave_up="no lead"))  # a slot frees
+    assert lane.state is LaneState.WAITING and driver.named("resume") == []  # not back at work with its question open
+    assert deck.apply(iv.Decline(lane.id)).ok  # answered: it takes the free slot
+    assert lane.state is LaneState.RUNNING and not lane.benched
+
+
+def test_lowering_max_lanes_counts_only_the_lanes_holding_a_slot():
+    deck, _, _ = make_deck(n=4, max_lanes=2)
+    ask_box(deck, lane_on(deck, "c0"))
+    assert len(deck.active_lanes()) == 3 and len(deck.slotted_lanes()) == 2
+    out = deck.set_max_lanes(2)
+    assert out.ok and "run now" not in out.message
+
+
+# ---------------------------------------------------------------------- the other waits give their slot up too (P91)
+
+
+def ask_flag(deck, lane):
+    deck.report(lane.id, TurnReport(flag="t{maybe}"))
+
+
+def ask_budget(deck, lane):
+    deck.report(lane.id, TurnReport(pending=Pending(PendingKind.BUDGET, "more budget")))
+
+
+@pytest.mark.parametrize(("ask", "kind", "words"), [
+    (ask_flag, "submit", "your answer to its flag"),
+    (ask_budget, "budget", "your answer on more budget"),
+])
+def test_a_flag_or_budget_wait_gives_its_slot_up_once_it_has_lasted_bench_after(ask, kind, words):
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask(deck, lane)
+    clock.t += 59
+    deck.recheck_waits()
+    assert not lane.benched and driver.started() == ["c0"]  # a quick answer would have kept its slot
+    clock.t += 1
+    deck.recheck_waits()
+    assert lane.state is LaneState.WAITING and lane.benched
+    assert driver.started() == ["c0", "c1"] and queued_ids(deck) == ["c2"]
+    assert lane.actions[-1].text == f"gave its slot to L02 while it waits for {words}"
+    (given,) = events(deck, EventKind.SLOT)
+    assert (given.lane, given.data) == ("L01", {"slot": "given", "for": kind, "started": ["L02"]})
+    deck.recheck_waits()  # given once
+    assert len(events(deck, EventKind.SLOT)) == 1
+
+
+def test_a_budget_wait_about_no_price_says_what_its_card_asks_when_it_gives_its_slot_up_or_keeps_it():
+    """P98: a budget question on spend with no price asks whether to carry on with no dollar
+    cap, and the transcript and the run log say that, not "more budget"."""
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60, token_cap=10_000, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(tokens=100, dollars=None))
+    assert lane.pending.kind is PendingKind.BUDGET and lane.asks_without_price()
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.benched
+    words = "your answer on carrying on with no dollar cap"
+    assert lane.actions[-1].text == f"gave its slot to L02 while it waits for {words}"
+    (given,) = events(deck, EventKind.SLOT)
+    assert given.text == f"L01 waits for {words}: its slot went to L02" and given.data["for"] == "budget"
+
+    kept, _, kclock = make_deck(n=2, max_lanes=1, bench_after=60, max_waiting=0, token_cap=10_000, dollar_cap=2.0)
+    held = lane_on(kept, "c0")
+    kept.report(held.id, TurnReport(tokens=100, dollars=None))
+    kclock.t += 60
+    kept.recheck_waits()
+    assert not held.benched and held.actions[-1].text.startswith(f"keeps its slot while it waits for {words}: ")
+
+
+def test_a_no_price_wait_at_the_token_cap_says_the_token_cap_is_raised_too_when_it_gives_its_slot_up():
+    """The card of a no-price question at the token cap reads "carry on with no dollar cap and
+    50% more tokens" (approving raises that cap too); the transcript says the same words."""
+    from ctf_flightdeck.console.views import pending_answers
+
+    deck, _, clock = make_deck(n=2, max_lanes=1, bench_after=60, token_cap=10_000, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=10_000, dollars=0.1))  # the token cap is reached
+    deck.report(lane.id, TurnReport(turn=False, tokens=100, dollars=None, why=TURN_END))  # then no price
+    assert lane.asks_without_price() and pending_answers(lane)[0] == "carry on with no dollar cap and 50% more tokens"
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.benched
+    words = "your answer on carrying on with no dollar cap and 50% more tokens"
+    assert lane.actions[-1].text == f"gave its slot to L02 while it waits for {words}"
+
+
+def test_only_a_budget_question_on_a_dollar_capped_lane_with_unpriced_spend_is_about_no_price():
+    deck, _, _ = make_deck(n=3, max_lanes=3, token_cap=10_000, dollar_cap=2.0)
+    raised, flagged, uncapped = lane_on(deck, "c0"), lane_on(deck, "c1"), lane_on(deck, "c2")
+    deck.report(raised.id, TurnReport(pending=Pending(PendingKind.BUDGET, "more budget")))
+    assert raised.pending.kind is PendingKind.BUDGET and not raised.asks_without_price()  # all its spend had a price
+    deck.report(flagged.id, TurnReport(tokens=100, dollars=None))
+    assert flagged.asks_without_price()
+    deck.apply(iv.Approve(flagged.id))
+    assert flagged.pending is None and not flagged.asks_without_price()  # nothing asked any more
+    uncapped.dollar_cap = None
+    deck.report(uncapped.id, TurnReport(tokens=100, dollars=None, pending=Pending(PendingKind.BUDGET, "more budget")))
+    assert uncapped.no_price() and not uncapped.asks_without_price()  # no dollar cap to go without
+
+
+def test_an_answered_flag_wait_takes_a_slot_again_before_the_queue():
+    deck, driver, clock = make_deck(n=4, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_flag(deck, lane)
+    clock.t += 60
+    deck.recheck_waits()
+    assert deck.apply(iv.Approve(lane.id)).ok  # wrong: the lane carries on, once it has a slot
+    assert lane.state is LaneState.QUEUED and lane.benched
+    assert solve(deck, lane_on(deck, "c1")).ok
+    assert lane.state is LaneState.RUNNING and not lane.benched
+    assert driver.named("resume") == [(lane.id,)] and queued_ids(deck) == ["c2", "c3"]
+
+
+def test_a_quick_answer_keeps_the_slot_and_the_next_wait_is_timed_from_its_own_start():
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_flag(deck, lane)
+    clock.t += 30
+    assert deck.apply(iv.Decline(lane.id)).ok
+    clock.t += 100
+    deck.recheck_waits()
+    assert lane.state is LaneState.RUNNING and not lane.benched
+    deck.report(lane.id, TurnReport(flag="t{other}"))
+    clock.t += 30
+    deck.recheck_waits()
+    assert not lane.benched and driver.started() == ["c0"]
+    clock.t += 30
+    deck.recheck_waits()
+    assert lane.benched and driver.started() == ["c0", "c1"]
+
+
+def test_a_lane_that_gave_up_and_gave_its_slot_up_ends_on_the_answer_without_queueing_for_a_slot():
+    deck, driver, clock = make_deck(n=4, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}", gave_up="nothing more to try"))
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.benched and driver.started() == ["c0", "c1"]
+    assert deck.apply(iv.Decline(lane.id)).ok
+    assert lane.finished
+    assert not any("waits for a free slot" in a.text for a in lane.actions)
+    assert [e.data["slot"] for e in events(deck, EventKind.SLOT)] == ["given"]
+    assert driver.started() == ["c0", "c1"]  # its slot is L02's: nothing more started
+
+
+def test_a_paused_lane_with_a_flag_waiting_keeps_its_slot():
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_flag(deck, lane)
+    deck.apply(iv.Pause(lane.id))
+    clock.t += 600
+    deck.recheck_waits()
+    assert lane.state is LaneState.PAUSED and not lane.benched and driver.started() == ["c0"]
+    deck.apply(iv.Resume(lane.id))  # waiting again: its wait is timed from now
+    deck.recheck_waits()
+    assert not lane.benched
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.benched and driver.started() == ["c0", "c1"]
+
+
+def test_a_taken_over_lane_with_a_live_box_wait_keeps_its_slot_until_handed_back():
+    deck, driver, _ = make_deck(n=5, max_lanes=2, max_waiting=1)
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+    ask_box(deck, first)
+    ask_box(deck, second)
+    assert first.benched and not second.benched  # the cap: second keeps its slot
+    assert deck.apply(iv.TakeOver(second.id)).ok
+    deck.apply(iv.Approve(first.id))
+    assert solve(deck, lane_on(deck, "c2")).ok  # first takes the slot back: the cap has room again
+    assert first.state is LaneState.RUNNING
+    deck.recheck_waits()
+    assert second.state is LaneState.TAKEOVER and not second.benched  # the player's shell counts
+    assert driver.started() == ["c0", "c1", "c2"]
+    assert deck.apply(iv.HandBack(second.id)).ok  # back in its wait: it gives its slot up at once
+    assert second.state is LaneState.WAITING and second.benched
+    assert driver.started() == ["c0", "c1", "c2", "c3"]
+
+
+def test_a_paused_lane_with_a_live_box_wait_keeps_its_slot_until_resumed():
+    deck, driver, _ = make_deck(n=3, max_lanes=1)
+    lane = lane_on(deck, "c0")
+    deck.apply(iv.Pause(lane.id))
+    ask_box(deck, lane)  # its turn ended with the request after the pause
+    deck.recheck_waits()
+    assert lane.state is LaneState.PAUSED and not lane.benched and driver.started() == ["c0"]
+    assert deck.apply(iv.Resume(lane.id)).ok
+    assert lane.state is LaneState.WAITING and lane.benched and driver.started() == ["c0", "c1"]
+
+
+def test_a_flag_wait_paused_and_resumed_before_any_recheck_is_timed_afresh():
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_flag(deck, lane)
+    clock.t += 59
+    deck.apply(iv.Pause(lane.id))
+    clock.t += 10
+    deck.apply(iv.Resume(lane.id))
+    deck.recheck_waits()
+    assert not lane.benched  # 10 s into its new wait, not 69 s into the old one
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.benched and driver.started() == ["c0", "c1"]
+
+
+def test_no_more_than_max_waiting_lanes_go_without_a_slot_and_one_more_keeps_its_own():
+    deck, driver, clock = make_deck(n=5, max_lanes=2, max_waiting=1)
+    first, second = lane_on(deck, "c0"), lane_on(deck, "c1")
+    ask_box(deck, first)
+    assert first.benched and driver.started() == ["c0", "c1", "c2"]
+    ask_box(deck, second)
+    assert not second.benched and driver.started() == ["c0", "c1", "c2"]
+    why = "1 lane already waits for you without one, each with its workspace up (max_waiting = 1)"
+    assert second.actions[-1].text == f"keeps its slot while it waits for your live-box answer: {why}"
+    kept = events(deck, EventKind.SLOT)[-1]
+    assert (kept.lane, kept.data) == ("L02", {"slot": "kept", "for": "live box", "why": why})
+    deck.recheck_waits()
+    assert len(events(deck, EventKind.SLOT)) == 2  # said once per wait
+    deck.apply(iv.Approve(first.id))  # answered, but still without a slot: it still counts
+    assert first.state is LaneState.QUEUED
+    deck.recheck_waits()
+    assert not second.benched
+    assert solve(deck, lane_on(deck, "c2")).ok  # first takes the slot back: the cap has room again
+    assert first.state is LaneState.RUNNING and not first.benched
+    deck.recheck_waits()
+    assert second.benched and driver.started() == ["c0", "c1", "c2", "c3"]
+
+
+def test_max_waiting_zero_keeps_every_slot_even_for_a_live_box_wait():
+    deck, driver, clock = make_deck(n=3, max_lanes=1, max_waiting=0, bench_after=0)
+    lane = lane_on(deck, "c0")
+    ask_box(deck, lane)
+    assert not lane.benched and driver.started() == ["c0"]
+    assert "(max_waiting = 0)" in lane.actions[-1].text
+
+
+def test_a_lane_whose_driver_says_something_runs_on_keeps_its_slot_until_it_stops():
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60)
+    runs = {"L01": "its session s1 still runs"}
+    driver.running = lambda lane: runs.get(lane.id, "")
+    lane = lane_on(deck, "c0")
+    ask_flag(deck, lane)
+    clock.t += 60
+    deck.recheck_waits()
+    assert not lane.benched and driver.started() == ["c0"]
+    assert lane.actions[-1].text == "keeps its slot while it waits for your answer to its flag: its session s1 still runs"
+    runs.clear()  # the session closed (unused for ten minutes, say)
+    deck.recheck_waits()
+    assert lane.benched and driver.started() == ["c0", "c1"]
+
+
+def test_a_driver_that_answers_running_with_no_string_is_an_error():
+    deck, driver, clock = make_deck(n=3, max_lanes=1)
+    driver.running = lambda lane: None
+    with pytest.raises(TypeError, match="running"):
+        ask_box(deck, lane_on(deck, "c0"))
+
+
+@pytest.mark.parametrize(("field", "value"), [("max_waiting", -1), ("max_waiting", True), ("max_waiting", 1.5),
+                                              ("bench_after", -1), ("bench_after", float("inf")), ("bench_after", "60")])
+def test_the_deck_config_refuses_a_bad_wait_setting(field, value):
+    with pytest.raises(ValueError, match=field):
+        DeckConfig(event="test", **{field: value})
+
 
 
 def test_the_deck_attaches_itself_to_its_driver():
@@ -530,7 +936,7 @@ def test_dropping_the_only_cap_leaves_the_lane_uncapped():
     lane = lane_on(deck, "c0")
     deck.report(lane.id, TurnReport(tokens=100, dollars=None))
     out = deck.apply(iv.Approve(lane.id))
-    assert out.ok and out.message.endswith("no cap")
+    assert out.ok and out.message == "L01 carries on with no cap"
     assert (lane.token_cap, lane.dollar_cap, lane.budget_used()) == (None, None, None)
 
 
@@ -712,6 +1118,18 @@ def test_a_cli_turn_with_no_price_ends_the_lanes_known_total_and_asks_once_under
     assert events(deck, EventKind.SPEND)[-1].data["dollars"] is None
 
 
+def test_approving_more_budget_says_the_new_cap_first_and_what_is_used_after_it():
+    """"L01's cap is now 120 of 400k tokens" read as a cap of 120. The cap comes first, what is
+    used in brackets, and a dollar cap let go for want of a price is said to be gone."""
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0, token_cap=400_000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(turn=False, tokens=120, dollars=None, turn_end=True, why=TURN_END))  # tokens, no price
+    assert lane.pending is not None and lane.pending.kind is PendingKind.BUDGET
+    said = deck.apply(iv.Approve(lane.id)).message
+    assert said == "L01 carries on with no dollar cap; its token cap is 400k tokens (120 used)"
+    assert lane.dollar_cap is None
+
+
 UNREPORTED = "what the CLI never reported for a turn it was stopped in"
 
 
@@ -768,6 +1186,24 @@ def test_a_light_models_spend_with_no_known_cost_never_asks_and_the_dollar_cap_h
     assert driver.named("approved") == [(lane.id, PendingKind.BUDGET)]
 
 
+def test_a_token_cap_question_taken_over_by_a_cost_with_no_price_says_the_token_cap_is_raised_too():
+    """At its token cap the lane asks to raise the cap; before the answer it spends something with
+    no price. Approving then drops the dollar cap and raises the token cap: the answer's words
+    and the reply say both, not only "carry on with no dollar cap"."""
+    from ctf_flightdeck.console.views import pending_answers
+
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0, token_cap=10_000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=10_000, dollars=0.1))
+    assert lane.pending is not None and lane.pending.detail.startswith("raise the cap by 50%")
+    deck.report(lane.id, TurnReport(turn=False, tokens=100, dollars=None, why=TURN_END))  # no price
+    assert lane.pending.kind is PendingKind.BUDGET
+    assert pending_answers(lane) == ("carry on with no dollar cap and 50% more tokens", "stop the lane")
+    said = deck.apply(iv.Approve(lane.id)).message
+    assert said == "L01 carries on with no dollar cap; its token cap is raised to 15k tokens (10k used)"
+    assert lane.dollar_cap is None and lane.token_cap == 15_000
+
+
 def test_a_cost_with_no_price_after_a_light_models_spend_with_none_still_asks_about_the_cap():
     deck, _, _ = make_deck(n=1, dollar_cap=2.0)
     lane = lane_on(deck, "c0")
@@ -801,6 +1237,29 @@ def test_a_cost_with_no_price_asks_about_the_cap_naming_the_model_that_spent_it_
         "No price for small, so the $2.00 cap cannot be enforced; it waits for approval to carry on without it."
     )
     assert lane.pending.kind is PendingKind.BUDGET and lane.pending.detail == "carry on with no dollar cap (no price for small)"
+
+
+@pytest.mark.parametrize("token_cap, said", [
+    (400_000, "L01 carries on with no dollar cap; its token cap is 400k tokens (120 used)"),
+    (None, "L01 carries on with no cap"),
+])
+def test_approving_a_cost_with_no_price_says_the_dollar_cap_is_gone_not_that_the_cap_is_what_was_used(token_cap, said):
+    """It once said `L01's cap is now 120 of 400k tokens`: a cap of 120, read as it stands."""
+    deck, _, _ = make_deck(n=1, dollar_cap=2.0, token_cap=token_cap)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=120, dollars=None))
+    assert lane.pending.kind is PendingKind.BUDGET
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok and out.message == said and lane.dollar_cap is None and lane.pending is None
+
+
+def test_approving_more_budget_says_the_new_cap_and_what_is_used_of_it():
+    deck, _, _ = make_deck(n=1, token_cap=10_000)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(action="ls", tokens=12_000, dollars=0.0))
+    assert lane.pending.kind is PendingKind.BUDGET
+    out = deck.apply(iv.Approve(lane.id))
+    assert out.ok and out.message == "L01's cap is now 15k tokens (12k used)"
 
 
 def test_a_turn_with_no_action_text_still_emits_its_turn_event_and_a_non_turn_never_does():

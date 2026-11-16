@@ -1,0 +1,60 @@
+# noCTF, as a table of routes for platform = "http" (docs/BOARDS.md). A profile that says
+# preset = "noctf" under [http] gets every key below; a key it writes itself wins.
+#
+# Read from noCTF's own source (github.com/noctf-project/noctf: the route contracts in
+# core/api/src/contract, the handlers in apps/server/src/routes). It has been tried against a
+# stand-in that answers in that shape and against nothing else: nobody has played a real noCTF
+# event through this table yet. `flightdeck http check EVENT.toml` shows what each path matches
+# on the site in front of you, and submits nothing.
+#
+# event.url is the address of noCTF's API, which is not always the address of its web page: the
+# page is built to talk to an API at an address of its own (the browser's network tab shows it,
+# as the host the requests to /challenges go to). Its routes are at the root of that address.
+#
+# The token is the session token the web page keeps after you sign in (the browser's storage for
+# the site, under noctf-session-token). The API takes it as a bearer token; a session lasts a week.
+
+[auth]
+kind = "bearer"
+
+[list]
+request = ["GET", "/challenges"]
+items = "$.data.challenges[*]"
+ref = "$.id"
+name = "$.title"
+category = "$.tags.categories"  # a challenge in two categories reads "crypto,rev", as noCTF writes it
+points = "$.value"              # null until the scoreboard has a value for it: then no points are shown
+solves = "$.solve_count"
+
+# The list has no description and no files: each new challenge is asked for once more.
+# A file's url is a path under the API's address (files/local/..., signed: no token is sent
+# with it) or a whole URL, where the event keeps its files on another host.
+[detail]
+request = ["GET", "/challenges/{ref}"]
+description = "$.data.description"
+file_urls = "$.data.metadata.files[*].url"
+file_names = "$.data.metadata.files[*].filename"
+
+[submit]
+request = ["POST", "/challenges/{ref}/solves"]
+body = { data = "{flag}" }
+verdict_path = "$.data.status"
+detail_path = "$.message"
+
+# noCTF answers a flag with data.status. "queued" (a challenge the organisers judge by hand) and
+# "invalid" have no rule here, so they are no verdict and the flag comes back to the player.
+[submit.verdicts]
+correct = "correct"
+incorrect = "incorrect"
+
+# An error has no data.status, only {"error", "message"}: its HTTP status decides. 429 is noCTF's
+# limit on submits (8 a minute for a team, 2 in 30 seconds for one challenge), with a Retry-After
+# header in seconds. 409 has no rule: noCTF sends it for a challenge solved already and for one
+# whose last flag is still queued for the organisers, so it is no verdict either; the solved list,
+# read each minute, says which challenges the team has solved.
+[submit.status]
+429 = "rate_limited"
+
+[solved]
+request = ["GET", "/team/scoreboard"]
+refs = "$.data.solves[*].challenge_id"

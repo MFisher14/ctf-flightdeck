@@ -372,7 +372,7 @@ def test_the_host_take_over_shell_opens_in_the_lane_dir_with_the_allowlisted_env
     spec = lane.interactive_shell()
     assert (spec.argv, spec.cwd) == (["bash", "--noprofile", "--norc", "-i"], lane.root)
     assert FAKE_KEY not in json.dumps(spec.env) and "planted" not in json.dumps(spec.env)
-    assert set(spec.env) <= ALLOWED | {"HISTFILE"}
+    assert set(spec.env) <= ALLOWED | {"HISTFILE", "BASH_SILENCE_DEPRECATION_WARNING"}  # the second: our own, "1"
     assert spec.env["HISTFILE"] == str(lane.root / ".flightdeck" / "takeover_history")
     home = spec.home
     assert spec.env["HOME"] == str(home) and spec.env["TMPDIR"] == str(home / "tmp")  # outside the workspace, its own
@@ -448,6 +448,7 @@ def test_the_host_take_over_shell_runs_nothing_the_lane_planted_and_keeps_its_hi
     spec = lane.interactive_shell()
     code, out = in_terminal(spec, [b"echo took-$((6*7))\r", b"bash -c 'echo child-$((6*7))'\r", b"exit\r"])
     assert code == 0 and b"took-42" in out and b"child-42" in out, out
+    assert b"default interactive shell is now zsh" not in out  # macOS's bash says so at every start: not to the player
     assert sorted(p.name for p in marks.iterdir()) == []
     assert history.read_text().splitlines() == ["echo took-$((6*7))", "bash -c 'echo child-$((6*7))'", "exit"]
     assert remove_shell_home(spec) == "" and not os.path.lexists(spec.home)
@@ -720,12 +721,25 @@ def test_cancelling_the_stoppable_docker_check_kills_docker_at_once_and_waits_fo
 
 
 def test_the_stoppable_docker_check_gives_up_on_a_daemon_that_does_not_answer_and_kills_docker(monkeypatch, tmp_path):
-    folder = stand_in_docker(tmp_path, monkeypatch, NEVER_ANSWERS)
+    # the process started is the one that must die. Its id is taken from the start itself, not
+    # from the file the stand-in writes: on a loaded machine half a second can run out before
+    # the stand-in's shell has written it (it was killed first, and no file was left to read)
+    stand_in_docker(tmp_path, monkeypatch, NEVER_ANSWERS)
     monkeypatch.setattr(workspace_module, "DOCKER_VERSION_TIMEOUT", 0.5)
+    started: list[int] = []
+    real_start = asyncio.create_subprocess_exec
+
+    async def noted(*args, **kw):
+        proc = await real_start(*args, **kw)
+        started.append(proc.pid)
+        return proc
+
+    monkeypatch.setattr(workspace_module.asyncio, "create_subprocess_exec", noted)
     began = time.monotonic()
     assert run(docker_unavailable_stoppable()) == "docker daemon not answering (docker version took over 20 s)"
     assert time.monotonic() - began < 5
-    assert_dies(int((folder / "pid").read_text()), within=1.0)
+    assert len(started) == 1
+    assert_dies(started[0], within=1.0)
 
 
 def test_a_docker_lane_without_docker_fails_loudly_and_writes_nothing(monkeypatch, tmp_path, handout):
@@ -792,7 +806,10 @@ case "$1" in
   run) echo fake-container-id ;;
   rm) exit 0 ;;
   exec)
-    if [ "$2" = "-i" ]; then echo $$ > "$(dirname "$0")/exec.pid"; exec sleep 300; fi
+    if [ "$2" = "-i" ]; then
+      if [ -f "$(dirname "$0")/session.exit" ]; then exit 0; fi  # a session's client that ends at once
+      echo $$ > "$(dirname "$0")/exec.pid"; exec sleep 300
+    fi
     printf '%s\n' "$2 $3 $4 ... $last" >> "$(dirname "$0")/exec.log"  # the container, the program, and the last word
     case "$last" in
       "command -v "*) echo "/usr/bin/${last#command -v }" ;;
@@ -840,6 +857,60 @@ def test_a_docker_exec_client_that_hangs_is_killed_by_the_backstop(fake_docker, 
     assert result == RunResult(None, b"", timed_out=True)
     assert took < 5
     assert_dies(int((fake_docker / "exec.pid").read_text()), within=2)
+
+
+def test_stopping_a_docker_session_whose_client_has_ended_signals_no_group(fake_docker, tmp_path, handout, monkeypatch):
+    """A client that ended and was reaped: its number may be another process group's by the
+    time the session is stopped (10 minutes later, at the idle limit), so nothing is signalled."""
+    (fake_docker / "session.exit").write_text("")
+    ws = DockerWorkspace(tmp_path / "lane", handout, image=FAKE_IMAGE, name="flightdeck-test-fake-docker")
+    signalled: list[int] = []
+
+    async def scenario():
+        await ws.prepare()
+        try:
+            process = await ws.open_session("cat")
+            await process.proc.wait()
+            monkeypatch.setattr(workspace_module, "_kill_group", signalled.append)
+            await process.stop(None)
+            return process.proc.pid
+        finally:
+            await ws.close()
+
+    pid = run(scenario())
+    assert pid not in signalled
+
+
+def test_stopping_a_host_session_signals_its_group_only_while_the_group_is_its_own(tmp_path, handout, monkeypatch):
+    ws = HostWorkspace(tmp_path / "lane", handout)
+    signalled: list[int] = []
+    real_kill = workspace_module._kill_group
+
+    def kill(pgid: int) -> None:
+        signalled.append(pgid)
+        real_kill(pgid)
+
+    async def scenario():
+        await ws.prepare()
+        try:
+            ended = await ws.open_session("true")  # ends at once and leaves nothing in its group
+            await ended.proc.wait()
+            await asyncio.sleep(0.1)
+            left = await ws.open_session("sleep 300 & echo $!")  # ends, and leaves a child in its group
+            child = int((await left.proc.stdout.readline()).decode())
+            while left.proc.returncode is None:  # wait() would wait for the child too: it holds the pipe
+                await asyncio.sleep(0.05)
+            monkeypatch.setattr(workspace_module, "_kill_group", kill)
+            await ended.stop(None)
+            await left.stop(None)
+            return ended.proc.pid, left.proc.pid, child
+        finally:
+            await ws.close()
+
+    ended, left, child = run(scenario())
+    assert ended not in signalled  # its group is gone: the number may be someone else's now
+    assert left in signalled  # its group still holds the child: still the lane's, and killed
+    assert_dies(child)
 
 
 def test_an_image_with_python3_leaves_the_python_tool_on(fake_docker, tmp_path, handout):

@@ -590,8 +590,10 @@ def answers_for(provider: str, ladder: Sequence[str], runtime: str, *, base_url:
     and key variable unless others are given (custom has neither of its own, so both must
     be: ValueError), Anthropic's prices for an Anthropic ladder, no dollar cap for a server
     that costs nothing (a cap would only stop every lane once to ask about a cost nobody
-    reports), and for an OpenAI-compatible server on this machine the longer timeout and the
-    reply cap, since a local model can take minutes for one reply."""
+    reports): Ollama, an MLX server, and a custom server on this machine (P92; the token cap
+    stays, and server_lines says what a local proxy to a paid API should set), and for an
+    OpenAI-compatible server on this machine the longer timeout and the reply cap, since a
+    local model can take minutes for one reply."""
     from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
     from .light import on_this_machine
 
@@ -604,20 +606,28 @@ def answers_for(provider: str, ladder: Sequence[str], runtime: str, *, base_url:
     here = dialect == "openai" and on_this_machine(base_url)
     return Answers(
         base_url, key_env, tuple(ladder), runtime, max_lanes,
-        dollar_cap=None if provider in LOCAL_PROVIDERS else 2.0,
+        dollar_cap=None if provider in LOCAL_PROVIDERS or (provider == "custom" and here) else 2.0,
         provider=dialect, prices=anthropic_prices(ladder) if dialect == "anthropic" else {},  # the refusal fallback's models too
         fallback=fallback, light=light,
         timeout=LOCAL_TIMEOUT if here else None, max_tokens=LOCAL_MAX_TOKENS if here else None,
     )
 
 
+LOCAL_PROXY_NOTE = (
+    "dollar cap: none, for a server on this machine (the token cap still holds); if it passes calls on to a paid API, "
+    "set dollar_cap under [lanes] and the models' prices under [prices]"
+)
+
+
 def server_lines(answers: Answers, provider: str) -> list[str]:
     """What a player is told about a model server on this machine once its config is written:
-    how long a lane's call may take and how long its reply may be, what Ollama does with a
+    for a custom one, that it has no dollar cap and what a proxy to a paid API should set; how long a lane's call may take and how long its reply may be, what Ollama does with a
     lane's context, and the command that starts the MLX server. Nothing for a remote API."""
     from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
 
     lines = []
+    if provider == "custom" and answers.dollar_cap is None:
+        lines.append(LOCAL_PROXY_NOTE)
     if answers.timeout is not None:
         lines.append(f"lane calls: {LOCAL_TIMEOUT} s per try and replies of up to {LOCAL_MAX_TOKENS} tokens, for a server "
                      "on this machine: a local model can take minutes for one reply (the default 180 s gave up on Gemma 4 "
@@ -654,10 +664,30 @@ def write_config(answers: Answers, path: Path, *, force: bool = False) -> Path:
     """Check the config in memory, then write it. Refuses to overwrite unless force.
 
     A ConfigError names `path` and what is wrong; nothing is written before the check, so
-    a key typed in the wrong place never reaches a file."""
+    a key typed in the wrong place never reaches a file.
+
+    The file is never written over in place: the text goes into a new file beside it, which
+    is renamed over the path (config_edit.replace_file: the mode of the config it replaces
+    is kept, a link stays a link). A write that fails half way leaves the config that was
+    there as it was, and a new config that cannot be written is not left half made. A new
+    config gets the mode any new file of the player's gets (their umask), and a file that
+    appears at the path while this runs is not written over (FileExistsError)."""
+    from .config_edit import replace_file
+
     text = check_config(answers, path, force=force)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    target = Path(os.path.realpath(path))  # what a link at the path points at, there or not yet
+    made = False
+    if not target.exists():
+        # an empty file, made with the mode the umask gives, which replace_file then keeps
+        os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666))
+        made = True
+    try:
+        replace_file(path, text.encode("utf-8"))
+    except BaseException:
+        if made:
+            target.unlink(missing_ok=True)
+        raise
     return path
 
 
@@ -710,8 +740,12 @@ API_CHECKS = ("api key", "fallback key", "model server", "fallback server")  # w
 
 
 def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.environ,
-           agent: str | None = None, clean: bool = False) -> list[Check]:
-    """Every check, in order. Never prints or returns the API key. `agent` ("claude" or
+           agent: str | None = None, clean: bool = False,
+           terminal: tuple[int, int] | None = None) -> list[Check]:
+    """Every check, in order. Never prints or returns the API key. `terminal`: the size the
+    terminal check measures (columns, lines), for a caller whose output is not the player's
+    terminal (the home screen's checks run in a child process: health.py); None asks the
+    terminal on standard output, and there is no terminal check without one. `agent` ("claude" or
     "codex") also checks that coding-agent CLI and its credential, and in the docker runtime
     that the lane image has it, as play --agent does; the [api] checks are then warnings,
     since that CLI's lanes never use the [api] key or server. The last checks are what runs
@@ -719,7 +753,7 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
     removed only with `clean`."""
     from dataclasses import replace
 
-    checks = _checks(config_path, environ, agent)
+    checks = _checks(config_path, environ, agent, terminal)
     checks += _leftover_checks(config_path, docker=any(c.name == "docker" and c.ok for c in checks), clean=clean)
     if agent is None:
         return checks
@@ -727,7 +761,8 @@ def doctor(config_path: Path | None = None, *, environ: Mapping[str, str] = os.e
     return [replace(c, essential=False, detail=c.detail + ("" if c.ok else why)) if c.name in API_CHECKS else c for c in checks]
 
 
-def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | None) -> list[Check]:
+def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | None,
+            terminal: tuple[int, int] | None = None) -> list[Check]:
     from .config import ConfigError, default_config_path, load_config
 
     checks: list[Check] = []
@@ -750,6 +785,7 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
             checks.append(Check("config", False, str(exc), "fix it, or run `flightdeck init --force` to write a new one"))
         else:
             checks.append(Check("config", True, f"{path}: {len(config.models)} model(s), runtime {config.lanes.runtime}"))
+    checks += _config_home_check(environ, config_named=config_path is not None or None)
     if config is not None:
         checks += _key_check("api key", config.api.key_env, environ, "the config's API needs no key")
         if config.fallback is not None:
@@ -779,8 +815,13 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
             try:
                 checks.append(Check(f"plugin {name}", True, plugins.doctor_line(plugins.load(ref)), essential=False))
             except plugins.PluginError as exc:
-                checks.append(Check(f"plugin {name}", False, str(exc),
-                                    f"fix the plugin's plugin.toml, or take [plugins.{name}] out of {path}", essential=False))
+                said = str(exc).removeprefix(f"plugin {name}: ")  # the line is named "plugin NAME" already
+                if not (ref.path / plugins.MANIFEST).exists():  # the folder moved or is gone: no plugin.toml to fix
+                    fix = (f"put the plugin's folder back at {ref.path}, or change [plugins.{name}] path in {path} to where "
+                           f"it is now, or take [plugins.{name}] out")
+                else:
+                    fix = f"fix the plugin's plugin.toml, or take [plugins.{name}] out of {path}"
+                checks.append(Check(f"plugin {name}", False, said, fix, essential=False))
     found = False
     if agent is not None:
         agent_checks = _agent_checks(agent, config, environ)
@@ -794,10 +835,13 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
     image_there = any(c.name == "lane image" and c.ok for c in docker)
     if agent is not None and found and image_there and config is not None and config.lanes.runtime == "docker":
         checks.append(_agent_image_check(agent, config))  # play --agent runs the CLI inside that image
-    try:
-        columns, lines = os.get_terminal_size()
-    except OSError:
-        columns = lines = 0
+    if terminal is not None:
+        columns, lines = terminal
+    else:
+        try:
+            columns, lines = os.get_terminal_size()
+        except OSError:
+            columns = lines = 0
     if columns:
         checks.append(_terminal_check(columns, lines, config))
     return checks
@@ -1149,6 +1193,22 @@ def _l1_check(pack: Path) -> Check:
         return Check("l1 pack", False, f"{pack} has no engines (no .manifest.toml files)",
                      "`flightdeck l1 import` writes manifests for a folder of scripts")
     return Check("l1 pack", True, f"{pack}: {len(engines)} engine(s)")
+
+
+def _config_home_check(environ: Mapping[str, str], *, config_named: bool | None) -> list[Check]:
+    """The `config folder` check, only when $XDG_CONFIG_HOME moved flightdeck's config folder
+    and a file of it is still at ~/.config/ctf-flightdeck: where each was found, and whether it
+    is read (confighome.notes). Not essential: a run reads the file that line names."""
+    from . import confighome
+
+    try:
+        lines = confighome.notes(environ, config_named=config_named)
+    except (OSError, RuntimeError):
+        return []
+    if not lines:
+        return []
+    return [Check("config folder", False, "; ".join(lines),
+                  f"keep flightdeck's files in {confighome.show(confighome.folder(environ))}", essential=False)]
 
 
 def _key_check(name: str, variable: str, environ: Mapping[str, str], none_needed: str, *,

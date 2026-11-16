@@ -47,7 +47,7 @@ whatever the pull policy), so only its submit policy uses the platform: auto or 
 answers to the Game Master and read its solved list.
 
 An "http" profile carries an [http] table (platform/http.py): the routes of the platform's
-API, or a preset that ships with flightdeck (rctf). The table is data, not code, so the
+API, or a preset that ships with flightdeck (rctf, rctf2, noctf, gzctf). The table is data, not code, so the
 profile may carry it, a teammate's too: every route is a path under event.url, the token goes
 nowhere else, and describe() prints each request and where the token goes before anything
 runs. The token variable must be named for the platform (HTTP_TOKEN, HTTP_TOKEN_..., or the
@@ -117,6 +117,7 @@ STRICTNESS = (Policy.AUTO, Policy.CONFIRM, Policy.MANUAL, Policy.OFF)
 
 STAGES = ("pull", "l1", "agents", "submit", "instance")
 PLATFORMS = ("ctfd", "manual", "gamemaster", "http")
+INSTANCE_PLATFORMS = ("ctfd", "http")  # where flightdeck starts a challenge's instance ([instances])
 LIVE_TARGETS = ("allowed", "confirm", "off")
 RUNTIMES = ("docker", "host")
 MAX_PROFILE_BYTES = 1_000_000  # an event profile bigger than this is refused
@@ -390,6 +391,8 @@ def check(
         _check_http(profile, requested, env, model_config, refuse, warn)
     else:  # a plugin's platform is never played as a folder board
         _check_plugin(profile, requested, env, model_config, refuse, warn)
+    if profile.platform != "manual" and profile.url is not None and (unedited := placeholder_url(profile.url)) is not None:
+        refuse.append(unedited)  # as play, pull and http check say it: start says so before play is offered
     if profile.http is not None and profile.platform != "http":
         warn.append('the [http] table does nothing in this run: it is read only for platform = "http"')
     if profile.instances is not None:
@@ -546,6 +549,19 @@ NO_CONFIG_FOR_PLUGIN = ("event.platform names a plugin's platform, and your conf
                         "tell whether you added it")
 
 
+EXAMPLE_HOST = "ctf.example.org"  # the address every example profile writes (http example, plugin new, preflight --example)
+
+
+def placeholder_url(url: str) -> str | None:
+    """Why `url` cannot be asked: it is still the example profile's address, so the player's
+    token would go to a host that is not the event's. None for any other address. Said by the
+    commands that send the token (http check and pull, plugin pull, play), before they do."""
+    if (urlsplit(url).hostname or "").lower() != EXAMPLE_HOST:
+        return None
+    return (f"event.url is still the example's address ({EXAMPLE_HOST}): put the event's own address there, "
+            "so your token goes to the event and nowhere else")
+
+
 def no_such_plugin(config: Config) -> str:
     """Why a profile whose platform is not built in and not a plugin of the player's config is
     refused. event.platform is not shown: it is the profile's word, which may be a teammate's
@@ -660,7 +676,7 @@ def _check_http(
     be inside the profile's own folder, as a plugin's."""
     http = profile.http
     if http is None:
-        refuse.append('platform "http" needs an [http] table: preset = "rctf", or the platform\'s own routes (docs/BOARDS.md)')
+        refuse.append(f'platform "http" needs an [http] table: {http_platform.PRESET_CHOICE}, or the platform\'s own routes (docs/BOARDS.md)')
         return
     uses = requested.pull in USES_PLATFORM or requested.submit in USES_PLATFORM
     if profile.url is None:
@@ -971,7 +987,7 @@ def describe(
         lines.append(f"token     ${profile.token_env} ({state}), given only to the {plugin} plugin, for {_shown_url(profile)}")
     if profile.platform == "http" and profile.http is not None:
         # every request the table can make, and where the token goes: read before anything runs, as `plugin add` shows a plugin
-        lines += [f"http      {line}" for line in http_platform.plan(profile.http)]
+        lines += [f"http      {line}" for line in http_platform.plan(profile.http, profile.instances)]
     if profile.board is not None:
         lines.append(f"board     {_show(profile.board)}")
     if profile.start is not None or profile.end is not None:
@@ -1022,19 +1038,26 @@ def label_line(label: str) -> str:
 
 def instances_off(profile: EventProfile, policies: Policies) -> str:
     """Why flightdeck starts no instance on the platform under this profile and these policies,
-    or "" when it does: it needs the [instances] table, CTFd, the rules' leave to use the
-    platform's API, and an instance policy of auto (starting one is reaching it). A plugin's
-    platform is not named: event.platform is the profile's word, and nothing shows it."""
+    or "" when it does: it needs the [instances] table, CTFd or the http platform (and a named
+    plugin of that platform's), the rules' leave to use the platform's API, and an instance
+    policy of auto (starting one is reaching it). A plugin's platform is not named:
+    event.platform is the profile's word, and nothing shows it."""
     if profile.instances is None:
         return "the profile has no [instances] table"
     if profile.plugin:
-        return "the event is on a plugin's platform, and flightdeck starts instances only on CTFd"
-    if profile.platform != "ctfd":
-        return f'the platform is "{profile.platform}", and only CTFd has a container plugin flightdeck knows'
+        return "the event is on a plugin's platform, and flightdeck starts instances only on CTFd and the http platform"
+    if profile.platform not in INSTANCE_PLATFORMS:
+        return f'the platform is "{profile.platform}", and flightdeck starts instances only on CTFd and the http platform'
+    shape = profile.instances.platform
+    if shape is not None and shape != profile.platform:
+        return (f'instances.plugin {profile.instances.plugin} is for platform "{shape}", and this event\'s is '
+                f'"{profile.platform}"' + (' (rCTF v2\'s instancer: plugin = "rctf"; GZCTF\'s: plugin = "gzctf")' if profile.platform == "http" else ""))
     if not profile.platform_automation:
         return "the rules do not allow flightdeck to use the platform's API (rules.platform_automation is false)"
     if policies.instance is not Policy.AUTO:
-        return f'the instance policy is "{policies.instance}", and flightdeck starts an instance only under "auto"'
+        how = ('set live_targets = "allowed" under [rules]' if profile.live_targets != "allowed"
+               else 'take instance out of [policies], or set it to "auto" there')
+        return f'the instance policy is "{policies.instance}", and flightdeck starts an instance only under "auto" ({how})'
     return ""
 
 
@@ -1076,8 +1099,8 @@ live_targets = "confirm"            # "allowed", "confirm" or "off": may lanes t
 # submit = "confirm"                # submit flags to the platform
 # instance = "confirm"              # let lanes reach challenge instances
 
-# Optional, CTFd only: challenges whose instance the platform starts when asked (a container
-# per team, a few at a time). With this table and the instance policy "auto", flightdeck starts
+# Optional, on CTFd (or on rCTF v2, platform "http", with plugin = "rctf"): challenges whose
+# instance the platform starts when asked (a container per team, a few at a time). With this table and the instance policy "auto", flightdeck starts
 # one before a lane works its challenge, keeps at most max_running going, and stops it when the
 # challenge is solved or nobody works it. See BOARDS.md for a plugin that is not listed.
 # [instances]
@@ -1147,7 +1170,7 @@ def _http(path: Path, doc: dict, event: dict) -> HttpConfig | None:
     if "http" not in doc:
         if event.get("platform") == "http":
             raise ProfileError(f'{_show(path)}: the [http] table is missing: platform = "http" asks the platform by the routes it '
-                               'writes (preset = "rctf", or the platform\'s own: `flightdeck http example` prints one to edit)')
+                               f'writes ({http_platform.PRESET_CHOICE}, or the platform\'s own: `flightdeck http example` prints one to edit)')
         return None
     try:
         return http_platform.parse_config(doc["http"])

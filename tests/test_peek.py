@@ -270,7 +270,7 @@ def test_a_selected_lane_that_the_filter_hides_is_not_peeked_at_since_no_key_act
 
     async def script(pilot):
         await select(pilot, app, "L01")
-        await press(pilot, "space", "slash", *"filter beta", "enter")
+        await press(pilot, "space", "slash", *"filter zzz", "enter")  # no row left to take the selection (P96)
         assert app.fleet.selected_lane == "L01" and app.fleet.bar_lane() is None  # as test_console has it: p warns there
         assert peek_text(app)[0].startswith("no lane ─") and "step-8" not in " ".join(peek_text(app))
         await press(pilot, "p")
@@ -533,6 +533,37 @@ def test_the_peek_gives_every_tool_call_its_own_row_and_one_row_to_anything_else
     drive(app, script, SIZE)
 
 
+def test_the_same_call_made_several_times_in_a_row_is_one_row_in_the_peek_with_how_many_times():
+    """A lane that loops would fill the peek with one command; folded (P72), it is one row,
+    `×N` first, and the rows above it show what the lane did before."""
+    deck, app = console(by_hand=True, layout="simple")
+    release(deck, "alpha")
+    lane = deck.lanes["L01"]
+    deck.report("L01", TurnReport(action="says: the service answers on 9000"))
+    deck.report("L01", TurnReport(action="unzip a.zip", output="2 files"))
+    for _ in range(5):  # five turns of one call each
+        deck.report("L01", TurnReport(action="$ nc -z 127.0.0.1 9000", output="exit 1"))
+    deck.report("L01", TurnReport(action="$ nc -z 127.0.0.1 9000", output="exit 1", calls=(  # and a turn that made it twice more
+        Call("$ nc -z 127.0.0.1 9000", "exit 1"), Call("$  nc -z 127.0.0.1  9000", "exit 1"))))
+    assert [line.plain for line in views.peek_lines(deck, lane, 6)] == [
+        "⏺ the service answers on 9000",
+        "⏺ unzip a.zip → 2 files",
+        "⏺ ×7 $  nc -z 127.0.0.1  9000 → exit 1",  # the last of the seven, as it was made
+    ]
+    assert [line.plain for line in views.peek_lines(deck, lane, 1)] == ["⏺ ×7 $  nc -z 127.0.0.1  9000 → exit 1"]  # counted whole in one row
+    deck.note("L01", "the port is closed")
+    deck.report("L01", TurnReport(action="$ nc -z 127.0.0.1 9000", output="exit 1"))  # after the note, a fold of its own
+    assert [line.plain for line in views.peek_lines(deck, lane, 3)] == [
+        "⏺ ×7 $  nc -z 127.0.0.1  9000 → exit 1", "· the port is closed", "⏺ $ nc -z 127.0.0.1 9000 → exit 1"]
+
+    async def script(pilot):
+        await press(pilot, "space")
+        assert peek_rows(app) == [line.plain for line in views.peek_lines(deck, lane, 6)]
+        assert "⏺ ×7 $  nc -z 127.0.0.1  9000 → exit 1" in peek_rows(app)
+
+    drive(app, script, SIZE)
+
+
 def test_a_row_longer_than_the_peek_is_cut_at_its_edge_and_never_wraps():
     deck, app = console(by_hand=True, layout="simple")
     release(deck, "alpha")
@@ -631,18 +662,18 @@ def test_in_the_mock_space_peeks_and_comma_freezes_the_clock():
     world, app = make("sstv")
 
     async def script(pilot):
-        assert "▶ live: , freezes" in region_text(app, "#header") and app.frozen is False
+        assert "▶ live · ',' freezes" in region_text(app, "#header") and app.frozen is False
         await press(pilot, "space")
         assert app.frozen is False and peek_open(app)  # space no longer touches the clock
         await press(pilot, "comma")
-        assert app.frozen is True and "⏸ frozen: , resumes · . steps" in region_text(app, "#header")
+        assert app.frozen is True and "⏸ frozen · ',' resumes '.' steps" in region_text(app, "#header")
         before = world.deck.now
         app._on_tick()  # the mock's timer, frozen: the world stands still
         assert world.deck.now == before
         await press(pilot, "full_stop")  # one step by hand
         assert world.deck.now > before
         await press(pilot, "comma")
-        assert app.frozen is False and "▶ live: , freezes" in region_text(app, "#header")
+        assert app.frozen is False and "▶ live · ',' freezes" in region_text(app, "#header")
         await press(pilot, "question_mark")
         assert isinstance(app.screen, HelpScreen)
         assert app.screen.query_one("#help-body").max_scroll_y == 0  # all of the help is on screen, to be read
@@ -650,7 +681,7 @@ def test_in_the_mock_space_peeks_and_comma_freezes_the_clock():
         assert ", Freeze or restart the mock clock" in said and "space Freeze" not in said and "space Peek" in said
 
     # wide enough for the deck layout's header to keep the clock's note, and tall enough for all of the help
-    drive(app, script, (160, 160))
+    drive(app, script, (160, 180))
 
 
 def test_outside_the_mock_comma_is_no_key():

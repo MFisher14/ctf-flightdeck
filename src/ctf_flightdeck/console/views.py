@@ -21,7 +21,8 @@ screenshotted like a run folder.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import re
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from weakref import WeakKeyDictionary
@@ -69,6 +70,7 @@ CATEGORY_ORDER = ("web", "for", "rev", "pwn", "cry", "misc", "osint")
 _STATE_ROLE = {  # a lane state's colour, as a role of the palette (themes.ROLES)
     LaneState.RUNNING: "ok",
     LaneState.WAITING: "pending",
+    LaneState.QUEUED: "muted",
     LaneState.PAUSED: "warn",
     LaneState.TAKEOVER: "info",
     LaneState.SOLVED: "ok",
@@ -112,6 +114,19 @@ PENDING_ANSWERS = {
     PendingKind.BUDGET: ("more budget", "stop the lane"),
     PendingKind.LIVE_BOX: ("use the live box", "stay off it"),
 }
+NO_PRICE_ANSWERS = ("carry on with no dollar cap", "stop the lane")  # a budget question that is about no price, not the cap
+NO_PRICE_AT_CAP_ANSWERS = ("carry on with no dollar cap and 50% more tokens", "stop the lane")  # and the token cap reached
+
+
+def pending_answers(lane: Lane) -> tuple[str, str]:
+    """(approve, decline) in words for what the lane waits for: a budget question on a model
+    with no price is whether to go on without the dollar cap, which approving drops; "more
+    budget" would say the cap is raised."""
+    assert lane.pending is not None
+    if lane.asks_without_price():
+        # approving drops the dollar cap, and raises a token cap that is reached (Deck._approve)
+        return NO_PRICE_AT_CAP_ANSWERS if lane.token_cap and lane.tokens >= lane.token_cap else NO_PRICE_ANSWERS
+    return PENDING_ANSWERS[lane.pending.kind]
 
 
 COMPACT_MAX_WIDTH = 64  # columns: at this width or narrower both views use the compact layout (a phone over SSH)
@@ -209,7 +224,7 @@ def quick_answers(lane: Lane) -> list[QuickAnswer]:
     if lane.finished:
         return []
     if lane.pending is not None:
-        yes, no = PENDING_ANSWERS[lane.pending.kind]
+        yes, no = pending_answers(lane)
         if lane.pending.kind is PendingKind.SUBMIT:
             yes = lane.pending.detail
         return [QuickAnswer("1", "a", "", yes), QuickAnswer("0", "d", "", no)]
@@ -332,7 +347,7 @@ class HeaderFacts:
     event: str
     team: bool
     containerized: bool
-    lanes: int  # active lanes
+    lanes: int  # lanes holding one of the max_lanes slots (Deck.slotted_lanes, P83)
     max_lanes: int
     queue: int
     need: int  # lanes that need the player
@@ -344,20 +359,23 @@ class HeaderFacts:
     mock: str = ""  # the mock's tag; "" in a run
     later: bool = False  # a lane's coding-agent CLI turn is under way (an ended lane's too): its cost is still to come
     autopilot: bool = False  # autopilot is engaged (Deck.autopilot): the header says so
+    gated: str = ""  # why the start gate holds new lanes back (Deck.gated: the machine is busy); "" while they start
 
 
 def header_facts(deck: Deck, mock: str = "") -> HeaderFacts:
     cfg = deck.config
     tokens, dollars, unpriced = deck.totals()
     return HeaderFacts(
-        cfg.event, cfg.team, cfg.containerized, len(deck.active_lanes()), cfg.max_lanes, len(deck.queue),
+        cfg.event, cfg.team, cfg.containerized, len(deck.slotted_lanes()), cfg.max_lanes, len(deck.queue),
         len(deck.needing()), deck.held, tokens, dollars, unpriced, deck.now, mock,
         later=any(lane.dollars_later for lane in deck.lanes.values()),
         autopilot=deck.autopilot is not None and bool(deck.autopilot.engaged),
+        gated=deck.gated if deck.queue else "",  # with nothing queued, nothing waits for it
     )
 
 
 HELD = "queue held"
+GATED = "lanes wait"  # the start gate (the governor) holds new lanes back: no hold for the player to lift
 AUTOPILOT, AUTOPILOT_SHORT = "AUTOPILOT", "AP"  # the header's chip while autopilot is engaged; the compact layout's
 HELD_WHY_MIN = 12  # cells: less room than this after the other pieces, and the header names no reason
 WHY_OUTRANKS = 3  # pieces of this drop rank or more (the event's name, the clock, tokens, dollars) make room for it
@@ -424,10 +442,10 @@ def header_pieces(facts: HeaderFacts, *, compact: bool = False, simple: bool = F
         out.append(("autopilot", 0, (AUTOPILOT_SHORT if compact else AUTOPILOT, theme.INK, theme.GREEN, True)))
     if facts.need:
         out.append(("need", 0, (f"▲ {facts.need} need you", theme.WHITE, theme.RED, True)))
-    elif not facts.held and (compact or not simple):  # a held queue is not all clear: nothing starts until the player lifts it
+    elif not (facts.held or facts.gated) and (compact or not simple):  # a held queue is not all clear: nothing starts
         out.append(("need", 0, ("all clear", theme.MUTED, theme.SEGMENT, False)))
-    if facts.held:
-        out.append(("held", 0, (HELD, theme.INK, theme.YELLOW, True)))
+    if facts.held or facts.gated:
+        out.append(("held", 0, (HELD if facts.held else GATED, theme.INK, theme.YELLOW, True)))
     dollars = f"${fmt.dollars(facts.dollars)}" + ("+" if facts.unpriced else "") + (LATER if facts.later else "")  # as lane_dollars
     if compact or simple:
         out.append(("dollars", 0, plain(dollars) if simple and not compact else (dollars, theme.TEXT, theme.SEGMENT, False)))
@@ -460,16 +478,17 @@ def fit_header(facts: HeaderFacts, width: int, *, compact: bool = False, simple:
 
     while text.cell_len > width and any(rank for _, rank, _ in pieces):
         drop()
-    if not facts.held:
+    if not (facts.held or facts.gated):
         return text, left_out
-    why = untrusted(facts.held, one_line=True)
+    label = HELD if facts.held else GATED
+    why = untrusted(facts.held or facts.gated, one_line=True)
     while width - text.cell_len - len(": ") < cell_len(why) and any(rank >= WHY_OUTRANKS for _, rank, _ in pieces):
         drop()
     room = width - text.cell_len - len(": ")
     if room >= HELD_WHY_MIN:
         index = next(i for i, (name, _, _) in enumerate(pieces) if name == "held")
         name, rank, (_, fg, bg, bold) = pieces[index]
-        pieces[index] = (name, rank, (f"{HELD}: {_cut(why, room)}", fg, bg, bold))
+        pieces[index] = (name, rank, (f"{label}: {_cut(why, room)}", fg, bg, bold))
         text = theme.segments([part for _, _, part in pieces])
     return text, left_out
 
@@ -679,7 +698,7 @@ COMPACT_PENDING_TAG = {
 }
 COMPACT_SENDING = "send"
 COMPACT_STATE = {
-    LaneState.RUNNING: "run", LaneState.WAITING: "wait", LaneState.PAUSED: "pause", LaneState.TAKEOVER: "take",
+    LaneState.RUNNING: "run", LaneState.WAITING: "wait", LaneState.QUEUED: "que", LaneState.PAUSED: "pause", LaneState.TAKEOVER: "take",
     LaneState.SOLVED: "done", LaneState.KILLED: "kill", LaneState.STOPPED: "stop", LaneState.GAVE_UP: "gave",
 }
 FINISHED_ROW = "__finished__"
@@ -855,6 +874,7 @@ def finished_cells(lanes: list[Lane], expanded: bool) -> dict[str, Text]:
 OPEN_STATE_WORDS = {
     LaneState.RUNNING: "running",
     LaneState.WAITING: "waiting for you",
+    LaneState.QUEUED: "waiting for a slot",
     LaneState.PAUSED: "paused",
     LaneState.TAKEOVER: "taken over",
 }
@@ -946,7 +966,7 @@ def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = 
     ones solved, each only when there are any, and the sort only when it is not by attention."""
     if simple and not compact:
         text = Text("lanes ", "bold")
-        text.append(f"{len(deck.active_lanes())}/{lanes_text(deck.config.max_lanes)}")
+        text.append(f"{len(deck.slotted_lanes())}/{lanes_text(deck.config.max_lanes)}")
         if deck.queue:
             text.append(f" · {len(deck.queue)} waiting", theme.MUTED)
         solved = sum(ch.status is ChallengeStatus.SOLVED for ch in deck.challenges.values())
@@ -956,7 +976,7 @@ def lanes_title(deck: Deck, sort: SortMode, query: str, *, board_hidden: bool = 
             text.append(f" · sort {sort.value}", theme.MUTED)
     else:
         text = Text("fleet ", "bold")
-        text.append(f"{len(deck.active_lanes())}/{lanes_text(deck.config.max_lanes)}")
+        text.append(f"{len(deck.slotted_lanes())}/{lanes_text(deck.config.max_lanes)}")
         text.append(f" · sort {sort.value}", theme.MUTED)
         if board_hidden and not compact:  # the compact layout never has the board, and no room to say so
             text.append(" · board hidden: narrow terminal", theme.MUTED)
@@ -1308,9 +1328,44 @@ def _more_lines(count: int) -> str:
     return f" …+{count} line{'' if count == 1 else 's'}"
 
 
-def _call_row(deck: Deck, lane: Lane, call: Call, out: Text) -> None:
+_BLANKS = re.compile("[ \t]+")
+
+
+def _call_key(call: Call) -> str:
+    """What two tool calls must share to fold into one row: the call's whole text, every run of
+    blanks (spaces and tabs) read as one space. Nothing else is read as the same: `xxd -s 16`
+    and `xxd -s 32` are two calls, since a sweep over offsets is progress, and a row that said
+    they were one command would say what the lane did not do. A newline or any other control
+    character is not a blank (str.split would take it for one): a two-line script is not the
+    same words on one line."""
+    return _BLANKS.sub(" ", call.text).strip(" ")
+
+
+def same_call(one: Call, other: Call) -> bool:
+    """Whether two tool calls fold into one row (_call_key)."""
+    return _call_key(one) == _call_key(other)
+
+
+def repeats(calls: Sequence[Call]) -> int:
+    """How many of the last `calls` are the same call as the last one, in a row: 1 when the
+    last differs from the one before it, 0 when there are none."""
+    count = 0
+    for call in reversed(calls):
+        if count and not same_call(call, calls[-1]):
+            break
+        count += 1
+    return count
+
+
+FOLD_MARK = "×"  # before a call that ran several times in a row: `×4 $ curl …`
+
+
+def _call_row(deck: Deck, lane: Lane, call: Call, out: Text, times: int = 1) -> None:
     """One tool call on one row: the first line of the call, then of its output, each with
-    how many lines more it has."""
+    how many lines more it has. `times`: the same call ran that many times in a row, and this
+    is the last of them; the count comes first, where the edge that cuts a long row leaves it."""
+    if times > 1:
+        out.append(f"{FOLD_MARK}{times} ", "bold")
     first, more = _first_line(untrusted(lane_text(deck, lane, call.text), one_line=True))
     out.append(first, "bold")
     if more:
@@ -1325,7 +1380,8 @@ def _call_row(deck: Deck, lane: Lane, call: Call, out: Text) -> None:
 def entry_text(deck: Deck, lane: Lane, entry: Entry) -> Text:
     """One entry of the calm transcript, its text as the lane's transcript keeps it (lane_text).
     Each line of it is one row, which the view cuts at its edge: a run of tool calls is two
-    (how many, and the last one, which is what the lane is doing now), anything else is one,
+    (how many, and the last one, which is what the lane is doing now, with how many times in a
+    row it ran when it is the same call as the ones before it), anything else is one,
     with how many lines more it has. The model's words are the exception: the view wraps them."""
     action = entry.actions[0]
     out = Text()
@@ -1335,7 +1391,7 @@ def entry_text(deck: Deck, lane: Lane, entry: Entry) -> Text:
         if len(calls) > 1:
             out.append(f"{len(calls)} tool calls", "bold")
             out.append("\n  ⎿ ", theme.MUTED)
-        _call_row(deck, lane, calls[-1], out)
+        _call_row(deck, lane, calls[-1], out, repeats(calls))
         return out
     if entry.kind == "message":
         return transcript_lines(deck, lane, action)[0]
@@ -1367,25 +1423,44 @@ PEEK_EMPTY = "nothing yet: the lane has taken no step"
 PEEK_NO_LANE = "the peek shows the lane the keys act on: there is none here"
 
 
+def _backwards(actions: Sequence[Action]) -> Iterator[tuple[int, Action, Call | None]]:
+    """`actions` newest first, each tool call on its own (the action that holds it, and the
+    call), anything else with no call."""
+    for index in range(len(actions) - 1, -1, -1):
+        action = actions[index]
+        if _is_call(action):
+            for call in reversed(calls_of(action)):
+                yield index, action, call
+        else:
+            yield index, action, None
+
+
 def peek_lines(deck: Deck, lane: Lane, rows: int) -> list[Text]:
     """The last `rows` rows of `lane`'s log, oldest first, each one row that the peek cuts at
     its edge. They are the calm transcript's rows (entry_text) with a run of tool calls
     opened: every call has its own row (its first line, then its output's), since the last
-    few steps are what the player reads a peek for, where the lane's own view counts them."""
-    out: list[Text] = []
-    for index in range(len(lane.actions) - 1, -1, -1):
-        if len(out) >= rows:
+    few steps are what the player reads a peek for, where the lane's own view counts them.
+    The same call made several times in a row (same_call), in one turn or over several, is
+    one row, the last of them with how many times it ran (`×4 $ curl …`), so a lane that
+    loops shows it in one row and leaves the others for what came before."""
+    found: list[list] = []  # [index, action, call or None, times], newest first
+    for index, action, call in _backwards(lane.actions):
+        if call is not None and found and found[-1][2] is not None and same_call(found[-1][2], call):
+            found[-1][3] += 1
+            continue
+        if len(found) >= rows:
             break
-        action = lane.actions[index]
-        if _is_call(action):
-            for call in reversed(calls_of(action)):
-                row = Text("⏺ ", theme.GREEN)
-                _call_row(deck, lane, call, row)
-                out.append(row)
+        found.append([index, action, call, 1])
+    out: list[Text] = []
+    for index, action, call, times in reversed(found):
+        if call is not None:
+            row = Text("⏺ ", theme.GREEN)
+            _call_row(deck, lane, call, row, times)
+            out.append(row)
         else:
             kind = "says" if action.kind is ActionKind.STEP else _ENTRY_KIND[action.kind]
             out.append(entry_text(deck, lane, Entry(index, kind, (action,))))
-    return out[:rows][::-1]
+    return out
 
 
 def peek(deck: Deck, lane: Lane | None, rows: int) -> RenderableType:
@@ -1412,7 +1487,6 @@ def peek(deck: Deck, lane: Lane | None, rows: int) -> RenderableType:
 
 # ---------------------------------------------------------------------- /copy: a lane's text for the clipboard
 
-COPY_WHAT = ("output", "command", "flag", "all")  # what /copy takes; alone it is `output`
 SHELL_MARK = "$ "  # how every runtime starts the line of a shell call
 
 
@@ -1519,7 +1593,7 @@ def now_card(deck: Deck, lane: Lane, *, compact: bool = False, simple: bool = Fa
     numbered = {(answer.key, answer.text): answer.number for answer in quick_answers(lane)}
     top = top_answerable(lane)
     if lane.pending is not None:  # first: its numbers are the ones a digit answers, and the first rows are never the ones cut
-        yes, no = PENDING_ANSWERS[lane.pending.kind]
+        yes, no = pending_answers(lane)
         rows.append(Text.assemble(("◆ waiting for you: ", f"bold {theme.PURPLE}"), (untrusted(lane_text(deck, lane, lane.pending.detail), one_line=True), theme.TEXT)))
         indent = " " if compact else "   "
         rows.append(Text.assemble((indent, ""), _number("1"), ("/approve", f"bold {theme.ACCENT}"), (f"   {yes}", theme.MUTED), **one_row))
@@ -1671,7 +1745,7 @@ def calm_card(deck: Deck, lane: Lane, width: int | None = None) -> Text:
         rows.extend(folded)
         # in the approval's own words: a flag's answer in quick_answers is the detail, which row 1 has
         rows.extend(_packed([Text.assemble((answer.number, f"bold {theme.ACCENT}"), (f" {label}", theme.MUTED))
-                             for answer, label in zip(quick_answers(lane), PENDING_ANSWERS[pending.kind])], width))
+                             for answer, label in zip(quick_answers(lane), pending_answers(lane))], width))
     else:
         asked = top.kind
         rows.append(Text.assemble((f"▲ {top.kind.label}: ", alert_style(top.kind)), (lane_line(deck, lane, top.reason), theme.TEXT)))

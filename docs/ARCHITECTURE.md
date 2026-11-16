@@ -47,7 +47,7 @@ The components, in one line each:
 
 | Component | Job |
 |---|---|
-| Platform adapter | Board, challenge download, submit: `manual` (a folder board), `ctfd`, a Game Master, `http` (a platform with a JSON API, by the routes the event profile writes; rCTF is a preset), and any other platform through a plugin: the player's own program, run out of process. |
+| Platform adapter | Board, challenge download, submit: `manual` (a folder board), `ctfd`, a Game Master, `http` (a platform with a JSON API, by the routes the event profile writes; rCTF and noCTF are presets), and any other platform through a plugin: the player's own program, run out of process. |
 | Order | Fewest points first, then most solves, then by name: rules, not a model. With the light model's `route` job, a lane's opening brief also carries a guess at the challenge's category, where the board names none, and the specialist family it suits; neither changes the order. |
 | L1 runner | Routes a challenge to the player's no-model solvers and collects their `SolverResult`s. Each engine runs in its own copy of the handout, with an allowlisted environment, its own process group and a timeout: in a container when lanes run in Docker, as you on the host. The results go into the lane's opening context. |
 | Lane manager | Starts, queues (`max_lanes`), pauses, forks, kills lanes; Docker or host per `[lanes] runtime`. |
@@ -89,7 +89,11 @@ The console never talks to lanes directly. It reads a `Deck` and sends it interv
 
 Where: `core/deck.py`.
 
-Board, queue and lanes. Enforces `max_lanes` (paused and taken-over lanes keep their slot), the flag
+Board, queue and lanes. Enforces `max_lanes` (paused and taken-over lanes keep their slot; a lane
+waiting for the player gives its slot up and takes one again, ahead of the queue, once answered:
+at once for a live-box answer, P83, and after `bench_after` seconds for a flag or budget answer,
+P91, with at most `max_waiting` lanes without a slot and a lane whose sessions run on keeping
+its own; the run calls `Deck.recheck_waits` every five seconds), the flag
 format and submit policy, a per-lane queue of approvals, 80%/100% caps, team-mode rules. Applies
 interventions and logs every change as an `Event` with a structured payload (the M1 JSONL log is the
 event stream). Must be called from one thread.
@@ -180,7 +184,9 @@ set it there (`ctrl+o`, `/details`), else off in `simple` and on in `deck` and t
 layout. `FocusScreen._rows()` turns the lane's log into rows for `console/lanelog.py`: with
 details on, one row for each action, drawn by `views.transcript_lines` as before; off, one for
 each entry of `views.entries()` (a run of consecutive tool calls is one entry), drawn by
-`views.entry_text()`. A row has a key (the index of its first action), a token that changes
+`views.entry_text()`. A run's last row and the peek's rows fold the same call made several
+times in a row into one, its count first (`views.same_call()`, `views.repeats()`: the call's
+whole text, its blanks read as one; P72). A row has a key (the index of its first action), a token that changes
 when what it draws does, and a function that draws it, called only for a row that is mounted.
 `LaneLog` is a scroll container with one Static for each row: rows that are unchanged stay, the
 last one is drawn again when its run grows, new ones are mounted under it, and anything else
@@ -266,10 +272,22 @@ title it shows (xterm's title stack) and `close()` has it take that title back.
 `FlightdeckApp.refresh_view()` calls `show()` with `len(deck.needing())` and `deck.held`, the
 header's facts; `on_mount` opens it, `on_unmount` closes it (the driver's output closes after),
 and Textual's `app_suspend_signal` and `app_resume_signal` close and open it round a
-take-over. The bytes go through `FlightdeckApp._to_terminal()`, the driver's `write`, so a
+take-over.
+
+**Take-over** (P69). `console/takeover.py`'s `run_in_terminal` runs the lane's shell inside
+Textual's `App.suspend()`, which resumes the console only when the code inside it returns. So
+nothing is raised inside it: what the shell's start raised (the program missing, no terminal,
+a cancel) is kept and raised once the console is back, and a shell that ran ends as a
+`ShellExit` (its status, how long it ran), whose `problem()` names one that ended at once with
+an error or by a signal. `FlightdeckApp._shell` hands the lane back on every way out, a
+cancel too; a shell that never ran is abandoned (the driver's `Takeover.abandon`: its home
+folder goes, and the lane is told nothing), one that ran is finished (the lane hears what
+changed). The bytes go through `FlightdeckApp._to_terminal()`, the driver's `write`, so a
 headless console's driver gets them too (`App.bell()` skips a headless driver), which is how
 `tests/test_terminal_title.py` reads them; one test there runs `flightdeck mock` on a pty.
-`Run.app()` and `flightdeck mock` pass `[console] title` and `bell`.
+`Run.app()` and `flightdeck mock` pass `[console] title`, and whether to ring from
+`ConsoleConfig.rings_bell()`: `bell` as written, and when it is left out yes in a run and no in
+the mock (P70), whose `test_on_a_terminal_…` writes `bell = true` to hear one.
 
 **The command menu** (P62). Two rules in `console/commands.py`, kept apart. `complete()` is
 loose: while the name is typed it lists a command whose name, alias (`Command.aliases`) or
@@ -284,6 +302,17 @@ hand it the lane's suggestions each time they draw (`set_suggestions`), which is
 open menu is compared with the deck and drawn again if it differs. `no_match()` is the one
 row for a name that is no command. The bar's Enter takes a row while the name is incomplete
 or once the arrow keys chose one (`_chosen`), and otherwise posts what is typed.
+
+**The bar's history and editor** (P71). `widgets.History` is what Enter sent, one list the app
+keeps (`FlightdeckApp.bar_history`) and hands to both screens' bars, never written to a file.
+`CommandBar.action_menu` moves in the menu while it is open and otherwise walks the history
+(`_walk`); `_changed` tells a line the walk put there (no menu) from one the player typed (the
+walk ends). `ctrl+g` (`action_editor`) runs `console/editor.py`'s `edit()` in a worker:
+`editor_command()` reads `VISUAL`, then `EDITOR`, and raises `EditorError` with the reason
+rather than choose an editor; the text goes through a `mkstemp` file and the terminal through
+`takeover.run_in_terminal`, as a take-over's shell does; `one_line()` joins what comes back and
+draws control characters with `text.untrusted()`. The bar says the outcome through the app's
+`say()`.
 
 **The bar's title** (P64). The title on the bar's border says who what is typed goes to.
 `commands.goes_to(typed)` reads the text with `parse()`, so it is what Enter would do: the
@@ -316,7 +345,7 @@ view, then `BOTH_KEY_HELP` and the rest.
 | Piece | Where | Job |
 |---|---|---|
 | Agent driver | `agent/driver.py`, `agent/prompts.py` | flightdeck's own loop: one asyncio task per lane, one model call per turn. [More](#agent-driver). |
-| Tools | `agent/tools.py` | `shell`, `read_file`, `view_image` (a picture in the workspace, for the model to look at: [More](#lane-images)), `python`, `http` (only the challenge's own origins), `submit_flag`, `set_plan`; long output cut, the rest saved to a file in the workspace. |
+| Tools | `agent/tools.py` | `shell`, `read_file`, `view_image` (a picture in the workspace, for the model to look at: [More](#lane-images)), `python`, `http` (only the challenge's own origins), the session tools (a process kept running across turns: [More](#sessions)), `submit_flag`, `set_plan`; long output cut, the rest saved to a file in the workspace. |
 | Workspaces | `agent/workspace.py` | A copy of the handout per lane, on the host or in a container, and the take-over shell. [More](#workspaces). |
 | Lane network | `agent/egress.py`, `agent/egress_proxy.py` | The fence round a Docker lane's network: its challenge's instance, a coding-agent CLI's API, nothing else. [More](#lane-network). |
 | Lane summary | `core/summary.py` | What a lane did, in at most 3000 characters (plan, the newest steps, files, flags and what became of them, alerts, the player's messages). Escalation and the context refresh hand it to the model, fenced as data, after the L1 results. |
@@ -345,10 +374,24 @@ end the lane (a flag written in one waits for the player); a model API failure e
 failure that may pass (a 408 or 429, any 5xx, Anthropic's 529) ends only its own lane once the model
 has answered in the run, until `OUTAGE_LANES` (2) lanes in a row end on one, each within
 `OUTAGE_SECONDS` (300) of the one before and with no reply from the API in between
-(`AgentDriver._outage()`): then the queue is held as well, and the hold names those lanes, so their
-challenges are queued again when it is lifted. Only a failure that ends a lane counts: not a
-superseded call's, nor one a `[fallback]` API took over. A lane the same outage ends while the hold
-stands is added, and once the hold is lifted the count starts again.
+(the run's `Outage` count, `agent/driver.py`): then the queue is held as well, and the hold names
+those lanes, so their challenges are queued again when it is lifted. Only a failure that ends a
+lane counts: not a superseded call's, nor one a `[fallback]` API took over. A lane the same outage
+ends while the hold stands is added, and once the hold is lifted the count starts again.
+
+The `claude` and `codex` lanes keep the same count (P78), from what the CLI says once its own
+retries have run out. A claude turn that fails says why in fields of its own: the result's
+`api_error_status`, else the error category of the message claude makes of the failed call
+(`rate_limit`, `overloaded`, `server_error` may pass), else the last `api_retry` event of the
+turn (`claude_passing()`). The text of the turn is never read for it. Codex gives only a
+message with `turn.failed`, so its own wording at the start of that message is read: a status it
+gave up on (`exceeded retry limit, last status: 503 ...`, `unexpected status ...`) that may pass,
+or its words for an overload, a rate limit, a broken stream or connection or a timeout; a stream
+the content filter ended is not one (`codex_passing()`). Any answer from the model API (an
+assistant message from claude that is not one of those, any codex item but an error, a codex turn
+that completed) clears the count. A coding-agent lane does not hold the queue on its first such
+failure before any answer, as flightdeck's own lanes do: a CLI that never reached its API
+usually ends with its own reason first (no key, no login).
 
 A flag the model submits that the challenge's description or handout, as it came, holds is not
 claimed: it waits for the player under auto too, and the model hears why; the lane says what that
@@ -465,6 +508,72 @@ which gdb traces its own child but cannot switch address randomisation off. `lan
 labels the image with the Dockerfile's fingerprint (`lane.LABEL`), and `flightdeck doctor` warns
 of a lane image that carries another, or none (`setup._lane_image_build_checks`).
 
+### Sessions
+
+Where: `agent/sessions.py`, `agent/tools.py`, `agent/workspace.py` (`open_session`), `agent/driver.py` (P82).
+
+The shell tool is a fresh bash for each call, so a debugger or a connection ends with the call.
+`session_start(command)` starts a process that lasts across turns: on the host, bash in the
+workspace in a process group of its own, like every lane command, so the workspace's close kills
+it too; in Docker, a `docker exec -i` of its own in the lane's container, whose first line is the
+process's pid in the container (`SESSION_PID`, taken off the output), with stderr merged into
+stdout inside the container so the order holds. `session_send(session, input, until,
+wait_seconds)` writes a line (or the input as it is, `newline: false`) and reads: until the text
+`until` appears, until the output has been quiet half a second after something came, until the
+process ends, or for at most `wait_seconds` (default 2, at most 60). No input only reads.
+`session_close` kills the process and everything under it: its group on the host, and in Docker
+the process tree in the container (`SIGNAL_TREE`, the script the coding-agent lanes use, since
+`docker exec` passes no signal on) and then the client.
+
+The process gets pipes, not a terminal: no echo and no line editor's escapes in what comes back,
+and a program that looks for a terminal acts as it would in a script: it may print no prompt, or
+hold its output in a buffer (`python3` does both unless started as `python3 -u -i`).
+
+`session_start(command, terminal: true)` gives it a terminal instead (`agent/terminal.py`, P87).
+The command runs under a short Python relay (`RELAY`) that opens a pty, starts bash on its far
+side and copies between its own pipes and the pty, so flightdeck still talks to it through pipes
+and every cap, the idle close and the kill are the same. On the host the relay is the Python that
+runs flightdeck; in Docker it is the container's `python3` (an image without one: the session
+says so and ends with 127, and nothing starts without the terminal asked for). The command gets
+no controlling terminal (no setsid), so it stays in the relay's process group, which is the group
+the host kills and the tree under the pid the container's first line names; the price is that
+ctrl+c sends no signal and `/dev/tty` cannot be opened. `TERM` is `dumb` and the pty's echo is
+off, so a line editor and a colour library mostly leave their escapes out; what is left is taken
+out by `TerminalText` on the host side as the output is read, before the session stores it, so
+the relay (which in a container is the lane's own python3) is trusted with nothing. The filter
+takes CSI, the control strings (OSC, DCS, APC, PM, SOS) and the other ESC forms, carriage returns
+and bells; it keeps its state between chunks, so a sequence split across reads still goes whole,
+and an escape that never ends gives its bytes back, less the ESC, after 4 KiB. A pty takes a line
+at a time up to `MAX_CANON` (1024 bytes on macOS), so a send to a terminal session refuses a line
+over `TERMINAL_LINE` (1000 bytes, its newline included) rather than let the terminal cut it.
+The pty's line discipline edits nothing that is sent: the relay turns off its input processing
+(ICRNL, INLCR, IGNCR, IXON, IXOFF, ISTRIP, ISIG, IEXTEN, and the erase, kill and extra
+end-of-line characters), so DEL, ctrl+u, ctrl+w, ctrl+v, ctrl+s, ctrl+c and a carriage return
+reach the program as the bytes they are. What is left is canonical mode: a line at a time, a line
+ending only at a newline, and ctrl+d (`END_OF_FILE`) taken as the end of the input, which is how
+the end of the relay's own input reaches the program; a send to a terminal session that holds
+ctrl+d is refused and says to write it to a file or use a session without a terminal.
+
+Limits: at most three sessions open in a lane (`MAX_SESSIONS`); one nobody sends to or reads for
+ten minutes is closed (`IDLE_SECONDS`), and naming it later says why; at most 1 MiB of output
+waits between reads, the oldest dropped first and the count said; 64 KiB per send. Names are s1,
+s2, ... and never reused in a lane. A take-over closes every session before the shell opens (a
+debugger must not run on beside the player), and the hand-back tells the lane which were closed;
+the lane's end closes them before its workspace closes. An escalation or a context refresh keeps
+them, as it keeps the workspace's files.
+
+What a session writes is the challenge's, as any tool output is: it goes through the run's held
+secrets before anything cuts it, then the cut of `shell` (the rest to a file in `.flightdeck/out`).
+A few bytes at the end of a read that could begin a held secret (`Secrets.unfinished`) wait for the
+next read, so a secret written across two reads is found whole. The read says how many it held;
+the next read releases them when nothing came after them (a prompt with no newline), and a read
+that matched `until` shows the match whole. Sessions are a tool of
+flightdeck's own lanes; a coding-agent CLI has its own. The brief (`prompts.brief`'s `sessions`,
+which the driver sets when the lane's workspace can open one) names them in one line after the
+challenge's fence (`prompts.SESSIONS`), when the lane has a file or an instance it may reach, and
+the debugger line says a session can drive gdb or r2; a coding-agent lane, which shares the brief,
+is told neither (P87).
+
 ### Lane network
 
 Where: `agent/egress.py` (the fence), `agent/egress_proxy.py` (the proxy's script), `run.py`
@@ -577,8 +686,10 @@ Where: `agent/external.py`.
 `play --agent claude|codex`: the same LaneDriver protocol over the CLI's own event stream (Claude
 Code's stream-json, Codex's exec --json); messages, pause (SIGSTOP), take-over (the shell opens once
 the step of the command it waited for is recorded, and so for a Codex file edit or tool call whose
-step is going on the lane, so your first edit is never credited to the agent; a hand-back's SIGINT
-reaches the frozen CLI before its SIGCONT), escalation (a fresh session on the next model) and the
+step is going on the lane, so your first edit is never credited to the agent; a hand-back's
+interrupt reaches the frozen CLI before its SIGCONT: for Claude Code a stream-json interrupt
+request on its stdin, since it exits on a SIGINT that finds it waiting (P86), for Codex SIGINT),
+escalation (a fresh session on the next model) and the
 CLI's own cost. Files the CLI would read as its configuration are moved out of the workspace first.
 With a pack, the [L1 stage](#l1-stage) runs before the CLI is first started.
 
@@ -638,6 +749,13 @@ script in one `docker run --rm --pull never --network none` of the image and rai
 non-essential `pack tools` check uses the first for host lanes and the second for Docker lanes, and `flightdeck pack info` prints
 both.
 
+**The flightdeck a pack needs** (`pack.py`; P76). `pack.toml` takes an optional `flightdeck` requirement (`">=0.5, <1"`).
+`pack.needs_flightdeck()` reads it with a small parser of its own (the operators `>=` `>` `<=` `<` `==` `!=` with plain dotted
+versions, joined by commas; anything else is an error) and checks it against `__version__`, a pre-release counting as below
+its release. It is checked in two places, before anything else in the file: `pack.read()` (install, info, doctor's `pack tools`)
+and `l1/manifest.engines_folder()`, which every search for a pack's engines goes through (a run, the `l1` commands, doctor's
+`l1 pack`, `start`). An unmet requirement is a `PackError` or `ManifestError` naming both versions, so the pack is not used.
+
 ### L1 stage
 
 Where: `agent/l1stage.py`.
@@ -677,9 +795,9 @@ coding-agent lane's file changes hold nothing an engine wrote.
 | Pre-flight | `preflight.py` | The event profile (`event.toml`): what the rules allow, and a policy per stage (`pull`, `l1`, `agents`, `submit`, `instance`), never looser than the rules. `flightdeck preflight` checks it. Two rules are about AI use beyond `ai_allowed` (P58): `material_to_models = false` turns `agents` off with a refusal of its own (`NO_MATERIAL_TO_MODELS`: a lane gives its model the challenge's text and files), and `declared_label` is the team's word to the event, which is shown and recorded and checked against nothing. |
 | Live instance policy | `agent/driver.py`, `run.py` | `auto`: lanes may reach their challenge's instance. `confirm`: a lane asks first (a live-box approval); until the player allows it, its http tool is off and its container has no network, then the container joins a fenced network that reaches the instance and nothing else ([Lane network](#lane-network)). `off`: never. Pre-flight sets it from the event profile. |
 | Game Master | `platform/gamemaster.py`, `platform/gamemaster_run.py` | Pulls a Game Master's started attempts into a folder board, submits answers, and reads its solved list. [More](#game-master). |
-| Instances on demand | `platform/instances.py`, `instancerun.py` | A CTFd container plugin's client (start, status, renew, stop: named plugin shapes (`docker_per_team`, `ctfd_owl`, `chall_manager`) or the profile's own routes and answer keys, scoped to the board's challenges, each request that changes something sent once; a start that names no address asks the status; on a plugin with one container per account a stop asks first), and the run's scheduler: no lane starts on an on-demand challenge before its instance is up (`Deck.wait_for` / `ready`, which `_fill` passes over), `plan()` stops what nobody works and starts what is wanted in the queue's order up to `max_running`, an instance found running is adopted and never stopped (one that turns up within ten minutes of this run's own start that got no clear answer is this run's), a full cap is retried, instances are renewed before their end and stopped at the run's. The address becomes the challenge's `urls` in the maps lanes and L1 read. |
+| Instances on demand | `platform/instances.py`, `instancerun.py`, `platform/http.py` (`InstanceWire`) | An instancer's client (start, status, renew, stop: named shapes (`docker_per_team`, `ctfd_owl`, `chall_manager`, `ctfd_whale` on CTFd; `rctf` and `gzctf` on the http platform, `{game}` in a route filled from the wire) or the profile's own routes and answer keys, by the platform's own id (a CTFd number, or a string ref percent-encoded in a path) and with its own auth (CTFd's token, or the `[http]` table's, its sign-in shared), an answer's state words and endpoint list read (a pending instance is waited for; a kind no lane can take is left out by name; a CAPTCHA refusal is left to the player), scoped to the board's challenges, each request that changes something sent once; a start that names no address asks the status; on a plugin with one container per account a stop asks first; on one whose start replaces that container a start asks first too, and another challenge's container is `InstanceBusy`, read as the cap; a TLS endpoint (ctfd-whale's TLS lines, rCTF's `tcp-ssl`) is `tls://host:port`; an address a shape names unreachable, GZCTF's proxied Guid, is one no lane gets, with the reason), and the run's scheduler: no lane starts on an on-demand challenge before its instance is up (`Deck.wait_for` / `ready`, which `_fill` passes over), `plan()` stops what nobody works and starts what is wanted in the queue's order up to `max_running`, an instance found running is adopted and never stopped (one that turns up within ten minutes of this run's own start that got no clear answer is this run's), a full cap is retried, instances are renewed before their end and stopped at the run's. The address becomes the challenge's `urls` in the maps lanes and L1 read. |
 | Plugins | `plugins/`, `plugin_cli.py`, `platform/plugin_run.py`, `platform/link.py` | A platform flightdeck does not know, through a program of the player's own: one process per call (`pull`, `submit`, `solved`), allowed only by the player's config. [More](#plugins). |
-| http platform | `platform/http.py`, `platform/http_presets/`, `http_cli.py` | A platform with a JSON API, asked by the routes in the event profile's `[http]` table (rCTF is a preset): data, not code, so a profile may carry it. It makes a plugin's three calls in process. [More](#http-platform). |
+| http platform | `platform/http.py`, `platform/http_presets/`, `http_cli.py` | A platform with a JSON API, asked by the routes in the event profile's `[http]` table (rCTF, noCTF and GZCTF are presets): data, not code, so a profile may carry it. It makes a plugin's three calls in process. [More](#http-platform). |
 | Event runs | `run.py` | `play --event`: the profile's policies, CTFd pulls and waves, submits off the console's loop, the team folder. [More](#event-runs). |
 | Team channel | `team.py` | Claims, live-box holds and solves shared through a synced folder (no server); everything in it is untrusted. |
 
@@ -775,8 +893,8 @@ Nothing of a plugin is imported, and no third-party code is loaded for one.
 
 ### http platform
 
-Where: `platform/http.py`, `platform/http_presets/rctf.toml`, `http_cli.py`, `preflight.py`,
-`run.py` (P56; [BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api) is the player's
+Where: `platform/http.py`, `platform/http_presets/` (`rctf.toml`, `noctf.toml`, `gzctf.toml`),
+`http_cli.py`, `preflight.py`, `run.py` (P56, P75; [BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api) is the player's
 page).
 
 A built-in platform, not a plugin: a plugin is code only the player's config can allow, and a
@@ -819,6 +937,11 @@ runs. It reuses the plugin's run side whole through one protocol.
   poll of the submission while its value is one of `pending`. A failure after the request left
   is a `CallFailed` with `timed_out`, which the link words as "it may have reached the
   platform".
+- **Refuse** (`HttpCaller._refusal`, P75): a table's `[http.refuse]` is a `GET` made without
+  the token before each flag. A value at its path, or an answer that cannot be read, is a
+  `CallFailed` (not `timed_out`: nothing was sent) with the table's reason, so the link gives
+  the flag back. A pull asks too and puts the reason in its `notes`; `check()` prints it and
+  counts it as a problem. The gzctf preset reads `/api/config`'s `apiPublicKey`.
 - **Pre-flight** (`preflight._check_http`, `http_token_env`, `describe`): no leave from the
   config is needed; the token variable must be `HTTP_TOKEN`, start with `HTTP_TOKEN_` or start with
   the preset's name (never `HTTP_PROXY` or another `HTTP_...` setting), and is never one the
@@ -826,7 +949,9 @@ runs. It reuses the plugin's run side whole through one protocol.
   `describe()` prints `http.plan()`: each request and where the token goes.
 - **In a run**: `run._adapter` makes the caller for a plugin or for http, and everything after
   it (`_plugin_first`, `PluginLink`, the by-hand rules) is shared. `flightdeck http check` is
-  `HttpCaller.check()`: the sign-in, the list and the solved list, and what each path matched.
+  `HttpCaller.check()`: the sign-in, the list and the solved list, and what each path matched;
+  with `[instances]`, one status `GET` of the first on-demand challenge through
+  `InstanceClient` and `instance_wire()` (P89), never a start.
 
 ### Event runs
 
@@ -856,7 +981,8 @@ once the Watch is attached, so it sees the alerts the Watch raised. It is code, 
 subscribes to the deck's events, but an event only marks that there is something to look at:
 `step()` does the looking on the event loop's next turn (the mock, which has no loop, calls it
 after each tick), never from inside the deck's dispatch of a lane's report. A step checks the
-guardrails (the run budget), then applies the rules to each lane (P23), then starts the next
+guardrails (the run budget), then applies the rules to each lane (P23; a hint or wrong-way alert
+that comes back after its redirect escalates the lane as a stall does, P78), then starts the next
 round (P22). Every action goes through `Deck.apply(..., by=Actor.AUTOPILOT)`, which logs it as
 autopilot's and refuses what a rule may not do (an approval, an answer to a flag).
 
@@ -1194,8 +1320,8 @@ makes false for a server on this machine when unset and true for any other), and
 ([Layouts and themes](#layouts-and-themes)): the theme's palette is loaded with the config
 (`ConsoleConfig.palette`), from a built-in or from `themes/NAME.toml` beside the config file.
 Its `mouse` (default true) is whether the console's driver asks the terminal to report the mouse.
-Its `title` and `bell` (default true) are whether the console writes the terminal's title and
-rings its bell ([Layouts and themes](#layouts-and-themes), "Title and bell").
+Its `title` (default true) and `bell` are whether the console writes the terminal's title and
+rings its bell (`bell` left out is `None`: `rings_bell(mock=)` rings in a run, not in the mock) ([Layouts and themes](#layouts-and-themes), "Title and bell").
 `[plugins.NAME]` tables, each with a `path`, name the plugins the player added
 ([Plugins](#plugins)): only the names and the paths are checked here.
 
@@ -1207,10 +1333,24 @@ text back when it does not load or does not hold the change. Three callers: `pac
 `save_console()` (the console's `theme` and `layout`). `set_keys()` edits a table by lines, so
 comments stay; `save_console()` also checks, before it writes, that the new text parses to the
 old settings with those keys changed and nothing else. Every failure is an `EditError` that
-names the file, the reason and how the file was left.
+names the file, the reason and how the file was left. `flightdeck init` writes its config the
+same way the edits put text in place (P85): `setup.write_config` hands it to
+`config_edit.replace_file`, a new file beside it renamed over the path, so a write cut off
+half way never leaves half a config; a new config is first made empty with the umask's mode.
 
 Unknown keys fail loudly. Keys are read from the environment, else
 `~/.config/ctf-flightdeck/keys.env` (`keys.py`, chmod 600).
+
+The config folder (`confighome.py`, P94) is `$XDG_CONFIG_HOME/ctf-flightdeck` when that is an
+absolute path, else `~/.config/ctf-flightdeck`; `config.default_config_path` and
+`keys.keys_path` ask it for their file unless `$FLIGHTDECK_CONFIG` or `$FLIGHTDECK_KEYS` names
+one. When `$XDG_CONFIG_HOME` moves the folder, each file is looked for at both places: one only
+at `~/.config/ctf-flightdeck` is read (and written) there, and with one at both places the new
+one is read. `confighome.notes` says which, a line per file, and a line for a `themes` folder
+left beside the config that is not read; the CLI's root callback prints them on stderr once per
+command (none for the config when the command was given `--config` or `--path`: `_ByPanel.resolve_command`
+keeps the command's arguments for it), and doctor shows them as a `config folder` check instead (not essential). They name
+paths only, never what is in a file.
 
 `flightdeck init` (`setup.py`) writes `timeout = 600` and `max_tokens = 8192` for a server on this
 machine, suggests a ladder for Ollama and MLX and a light model for `--light ollama|mlx` (from
@@ -1227,6 +1367,28 @@ whether Docker answers (`workspace.docker_unavailable_stoppable`: `docker versio
 group of its own, killed when the form closes or the app ends), and saves no runtime before it
 has answered or the player has chosen one. `cli._home` opens the home screen again after a run
 it started ends.
+`flightdeck start` (`start_cli.py`) and the home screen's new-event form (`NewEventForm`) take
+the same answers (`start.py`): CTFd, by hand, or a JSON-API platform by one of the http
+platform's presets (P95). For a preset, the event file is the `[event]`, `[rules]` and
+`[policies]` start writes for CTFd with the preset's `[http]` table under them
+(`http_cli.preset_table`, the table `flightdeck http example --preset NAME` prints, with the
+game filled in for GZCTF), and the token variable is the preset's prefix and `TOKEN_` with the
+event's name (`start.token_prefix`): a name `preflight.http_token_env` takes, bound to the
+site by `start.token_variable_for` as a CTFd token is.
+Its "Settings and health" (`console/health.py`, P79) reads the config's main settings and where
+each is set, and shows doctor's checks, which run in a child process (`health.py`: `python -P -m
+ctf_flightdeck.health`, a process group of its own that prints the checks as JSON and is killed
+when the screen closes), given the terminal's size because its own output is a pipe.
+The settings and the checks are each drawn as a `health.Sheet`: a heading and a two-column
+`rich` grid (P97), so a long value wraps under its own column; its `plain` is what it draws on a
+terminal wide enough for every row, which the tests read.
+A running console opens the same screen for `/settings` (P90, `FlightdeckApp.open_settings`)
+with a `health.InRun`: the run's own settings on top, a count of the lanes that need the
+player, `c` for `/config`'s dialog, and the checks of the run's config file and coding agent
+(`COLUMNS LINES [--agent KIND] CONFIG`: `doctor(agent=...)`, as `flightdeck doctor --agent`),
+kept for the run until `r`. The child lowers its own priority first
+(`health.lower_priority`, nice 10), so in a run it and the docker it starts yield to the
+console and the lanes.
 
 ### Credentials
 
@@ -1289,7 +1451,10 @@ When the config's lanes use Ollama on this machine, it and `flightdeck doctor` (
 warning) say what context Ollama gives the ladder's model (its `/api/ps` for a loaded one, else an
 estimate from `OLLAMA_CONTEXT_LENGTH` or the GPU memory: 4,096 under 23 GiB, 32,768 from 23, 262,144
 from 47) against what a lane needs, and the fix; `[api] context` makes a lane's refresh point follow
-the server's context (`config.lane_refresh_at`).
+the server's context (`config.lane_refresh_at`). Where none is set and the server drops messages
+anyway, the driver sees it in a lane (`AgentDriver._dropped`: the context only grew since the call
+before, the same model answered, and the count did not grow), says so on the lane, refreshes it at
+once, and keeps that count as the model's refresh point for the run (`AgentDriver.fits`).
 
 It recommends and never writes a config. `flightdeck doctor` shows the machine in one line that is
 never essential.
@@ -1325,13 +1490,13 @@ These come from analysing about 300k agent responses across four 2026 CTFs:
   the instance until the player says yes, but the CLI lanes do not ask yet, so an event whose
   instance policy is not `auto` still refuses them.
 - **Timeline replay in `play`.** `Release` exists (Practice mode, under After a run); `play` does not use it.
-- **An API outage with coding-agent lanes holding the queue**, which is what would disengage
-  autopilot there ([Autopilot](#autopilot)).
 - **More from a plugin than a platform.** A plugin pulls, submits and reads the solved list
   ([Plugins](#plugins)); console commands, detectors, notification sinks and instances from a
   plugin are not built, and neither is a plugin's platform in `flightdeck start`.
 - **More of the http platform.** Pages of a listing, a download route per challenge,
   form-encoded bodies and a CSRF header are refused by name ([http platform](#http-platform));
-  instances on an http platform (rCTF v2 has them) are not started; `flightdeck start` and the
-  home screen's form do not offer `http` or `rctf`; and the rctf preset has met a stand-in
-  only, never a real rCTF.
+  instances on an http platform start only through rCTF v2's or GZCTF's shape or routes of
+  the profile's own (P81, P88), and a GZCTF container behind its WebSocket proxy is not
+  reached; `flightdeck start` and the home screen's form offer the presets (P95), not a table
+  of the player's own routes; a flag a GZCTF site wants encrypted is not sent;
+  and the presets have met stand-ins only, never a real rCTF, noCTF or GZCTF.

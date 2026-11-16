@@ -136,13 +136,23 @@ NOTHING_GIVEN = (
 VIEW_IMAGE = "Some of the files are images: view_image shows you one."
 
 
-def shell_tools(found: Sequence[str]) -> str:
+# Said after the fence to a lane that has the session tools (agent/tools.py, agent/sessions.py:
+# flightdeck's own lanes; a coding-agent lane has none) when there is something to drive: a file
+# or an instance it may reach. One line, in flightdeck's own words.
+SESSIONS = (
+    "To keep a program running across calls (a debugger, an interpreter, a connection to the instance), start it with "
+    "session_start and talk to it with session_send; terminal: true gives it a terminal when it shows no prompt without one."
+)
+
+
+def shell_tools(found: Sequence[str], *, sessions: bool = False) -> str:
     """What a lane whose shell has a debugger or a decompiler is told about them, in flightdeck's
     own words: `found` are the names its container's image answered (workspace.SHELL_TOOLS:
     gdb, gdb-multiarch, r2, and pdg for r2's Ghidra decompiler), and a name that is not one of
     those adds nothing. "" when there is neither gdb nor r2. It names the program and the one
     thing a model cannot guess: a command gets no terminal, so each is driven from its command
-    line. No technique, no advice on when to use them."""
+    line. No technique, no advice on when to use them. With `sessions` (the lane has the session
+    tools) the last sentence says a session can drive one too."""
     has = set(found)
     said: list[str] = []
     if "gdb" in has:
@@ -159,12 +169,12 @@ def shell_tools(found: Sequence[str]) -> str:
     if not said:
         return ""
     return ("Your shell has " + " and ".join(said) + ". A command gets no terminal, so give each program its commands "
-            "on the command line, as shown.")
+            "on the command line, as shown" + (", or drive it in a session." if sessions else "."))
 
 
 def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], approach: str = "", *, flag_format: str = "",
           recon: str = "", instance: str = "auto", shell_hosts: Mapping[str, str] | None = None, toolkit: str = "",
-          view_image: bool = False, tools: Sequence[str] = ()) -> str:
+          view_image: bool = False, tools: Sequence[str] = (), sessions: bool = False) -> str:
     """The first user message: the challenge as the lane should see it.
 
     Everything that comes from the board or the event profile (name, category, file names,
@@ -186,7 +196,10 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
     is an image by its name (imageread.MEDIA), VIEW_IMAGE follows the fence. `tools` are the
     analysis programs the lane's shell has (a Docker lane's: DockerWorkspace.shell_tools):
     shell_tools() follows the fence when the challenge has a file, since there is nothing to
-    debug or decompile without one."""
+    debug or decompile without one. `sessions` says the lane has the session tools
+    (flightdeck's own lanes do; a coding-agent lane, which shares this brief, does not): then
+    SESSIONS follows the fence when the lane has a file or an instance it may reach, and
+    shell_tools() names sessions too."""
     shown = ", ".join(one(name, 200) for name in files[:MAX_BRIEF_FILES])
     if len(files) > MAX_BRIEF_FILES:
         shown += f", and {len(files) - MAX_BRIEF_FILES} more (list the workspace to see them)"
@@ -214,9 +227,11 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
         lines.append(shell_names(shell_hosts))
     if challenge.rotates:
         lines.append(rotates(challenge.rotates))
+    if sessions and (files or (urls and not off)):
+        lines.append(SESSIONS)
     if view_image and any(PurePosixPath(name).suffix.lower() in MEDIA for name in files):
         lines.append(VIEW_IMAGE)
-    if files and (has := shell_tools(tools)):
+    if files and (has := shell_tools(tools, sessions=sessions)):
         lines.append(has)
     if toolkit.strip():
         lines += [TOOLKIT, _MARKER.sub(MARKER_REMOVED, toolkit.strip())]
@@ -229,13 +244,21 @@ def brief(challenge: Challenge, files: Sequence[str], urls: Sequence[str], appro
 
 def _instance(url: str) -> str:
     """One live instance as the brief names it: a TCP service (tcp://host:port, as the board
-    loader writes one) with the command that reaches it, "tcp://host:port (nc host port)"."""
+    loader writes one) with the command that reaches it, "tcp://host:port (nc host port)",
+    and a TLS endpoint that is no web server (tls://host:port, from an instance plugin) with
+    what speaks TLS to it: Python's ssl module, which the lane image has (it has no ncat or
+    openssl command), or pwntools where a lane has it."""
     shown = one(url)
-    if url.startswith("tcp://"):
-        host, _, port = url.removeprefix("tcp://").rpartition(":")
-        host = host.removeprefix("[").removesuffix("]")  # an IPv6 address: nc takes it bare
-        if host and port.isascii() and port.isdigit():
-            shown += f" (nc {one(host)} {port})"
+    for scheme in ("tcp://", "tls://"):
+        if url.startswith(scheme):
+            host, _, port = url.removeprefix(scheme).rpartition(":")
+            host = host.removeprefix("[").removesuffix("]")  # an IPv6 address: nc takes it bare
+            if host and port.isascii() and port.isdigit():
+                if scheme == "tcp://":
+                    shown += f" (nc {one(host)} {port})"
+                else:
+                    shown += (f" (TLS, not plain TCP: nc will not do; Python's ssl module, or pwntools "
+                              f'remote("{one(host)}", {port}, ssl=True))')
     return shown
 
 

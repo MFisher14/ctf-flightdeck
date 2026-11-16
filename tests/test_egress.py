@@ -56,6 +56,12 @@ def test_urls_become_hosts_with_the_ports_each_names_and_the_scheme_gives_a_miss
     assert not any(host.renamed for host in found) and shell_hosts(("https://shop.chal.example.test",)) == {}
 
 
+def test_a_tls_endpoint_is_fenced_to_its_port_as_a_tcp_service_is():
+    found = hosts(("tls://5eed0001.trp.example.test:1443", "tls://10.0.0.5:9443"))
+    assert found == (Host("5eed0001.trp.example.test", "5eed0001.trp.example.test", (1443,), "5eed0001.trp.example.test"),
+                     Host("instance-10-0-0-5", "10.0.0.5", (9443,), "10.0.0.5"))
+
+
 @pytest.mark.parametrize(
     "url, name, upstream, written",
     [
@@ -75,7 +81,7 @@ def test_an_address_or_localhost_gets_a_name_on_the_lanes_network_and_this_machi
     assert shell_hosts((url,)) == ({written: name} if written != name else {})
 
 
-@pytest.mark.parametrize("url", ["ftp://chal.example.test:21", "tcp://chal.example.test", "http://", "http://bad host/",
+@pytest.mark.parametrize("url", ["ftp://chal.example.test:21", "tcp://chal.example.test", "tls://chal.example.test", "http://", "http://bad host/",
                                  "http://chal.example.test:99999", "http://-x-.example.test./", "http://exa$mple.test"])
 def test_an_address_no_fence_can_be_built_for_is_refused_with_the_reason(url):
     with pytest.raises(FenceError, match="not an|is not a name"):

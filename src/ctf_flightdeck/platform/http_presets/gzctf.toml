@@ -1,0 +1,77 @@
+# GZCTF, as a table of routes for platform = "http" (docs/BOARDS.md). A profile that says
+# preset = "gzctf" under [http] gets every key below; a key it writes itself wins. It must also
+# say which game: game = "3", the number in the game's address (https://.../games/3).
+#
+# Read from GZCTF's own source (github.com/GZTimeWalker/GZCTF, branch develop: GameController,
+# InfoController, the request models and Utils/Enums.cs). Nobody has played a real event through
+# this table yet: `flightdeck http check EVENT.toml` shows what each path matches on the site in
+# front of you, and submits nothing.
+#
+# The token is the value of the GZCTF_Token cookie your browser holds once you have signed in
+# (its developer tools, Storage or Application, Cookies). GZCTF gives players no API token, and
+# flightdeck does not sign in with a password or solve a captcha. The cookie lasts 7 days from
+# your last visit; when the site answers 401, sign in again in the browser and copy it again.
+
+[auth]
+kind = "cookie"
+cookie = "GZCTF_Token"
+
+# One answer has the board, by category, and the team's own scoreboard row.
+[list]
+request = ["GET", "/api/game/{game}/details"]
+items = "$.challenges.*[*]"
+ref = "$.id"
+name = "$.title"
+category = "$.category"
+points = "$.score"
+solves = "$.solved"
+
+# The text, the attachment and the counted tries are only in each challenge's own answer.
+# limit is 0 when the tries are not counted, as max_attempts is. A challenge whose type is a
+# container one is marked on-demand on the board: the site starts its container for the team
+# when asked, and with [instances] plugin = "gzctf" in the profile flightdeck asks
+# (docs/BOARDS.md, Instances on demand).
+[detail]
+request = ["GET", "/api/game/{game}/challenges/{ref}"]
+description = "$.content"
+file_urls = "$.context.url"
+max_attempts = "$.limit"
+instance = "$.type"
+instance_values = ["StaticContainer", "DynamicContainer"]
+
+# GZCTF judges a flag after it takes it: the submit answers with the submission's number, and
+# its status says FlagSubmitted until the flag is judged. A flag sent again for a challenge the
+# team has solved is judged as any other, so it is Accepted. NotFound (no instance of the
+# challenge for the team) is no verdict: the flag comes back to the player.
+[submit]
+request = ["POST", "/api/game/{game}/challenges/{ref}"]
+body = { flag = "{flag}" }
+verdict_path = "$"
+detail_path = "$.title"
+
+[submit.verdicts]
+Accepted = "correct"
+WrongAnswer = "incorrect"
+
+[submit.status]
+429 = "rate_limited"
+
+[submit.poll]
+request = ["GET", "/api/game/{game}/challenges/{ref}/status/{submission}"]
+id_path = "$"
+pending = ["FlagSubmitted"]
+every = 1.0
+at_most = 15
+
+[solved]
+request = ["GET", "/api/game/{game}/details"]
+refs = "$.rank.solvedChallenges[*].id"
+
+# A site can turn on ApiEncryption, and then it takes a flag only encrypted to its own key
+# (X25519 and AES-GCM in the browser). flightdeck does not do that, and a flag it sent in the
+# clear would not be judged, so before each flag it reads the site's public settings: a key in
+# apiPublicKey means the flag is kept back for you to submit in the browser.
+[refuse]
+request = ["GET", "/api/config"]
+path = "$.apiPublicKey"
+reason = "this GZCTF site encrypts flags in the browser before they are sent (its ApiEncryption setting), which flightdeck does not do: submit the flag on the site"

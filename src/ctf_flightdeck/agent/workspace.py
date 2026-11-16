@@ -37,15 +37,17 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Protocol
 
 from ..core.model import FileChange
 from ..text import untrusted
+from .terminal import RELAY
 
 if TYPE_CHECKING:
     from ..leftovers import ProcessRecord
@@ -92,6 +94,20 @@ class ShellSpec:
     cwd: Path | None
     env: dict[str, str] | None  # None: inherit the player's environment
     home: Path | None = None  # a folder made for this shell alone (the host's HOME): remove_shell_home() once it exits
+
+
+@dataclass(frozen=True)
+class SessionProcess:
+    """A long-lived process a lane talks to across turns (agent/sessions.py): `proc` has a pipe
+    for its input and one for its output, stderr merged into stdout. `marker` is the start of
+    the first line it writes when that line is the workspace's own, saying the process's pid
+    where it runs (a docker lane's container: SESSION_PID); "" when there is none. stop(pid)
+    kills the process and everything it started, given that pid (None when the line never
+    came), and waits for `proc`; it never raises."""
+
+    proc: asyncio.subprocess.Process
+    stop: Callable[[int | None], Awaitable[None]]
+    marker: str = ""
 
 
 class WorkspaceError(Exception):
@@ -550,6 +566,37 @@ class HostWorkspace:
             return RunResult(None, output)
         return RunResult(_exit_status(code), output)
 
+    async def open_session(self, command: str, *, terminal: bool = False) -> SessionProcess:
+        """Start `command` with bash in root as a long-lived process the lane talks to (a
+        debugger, an interpreter, a connection to the challenge's instance), in a process group
+        of its own like every command here, so close() kills it too. Pipes, not a terminal;
+        with `terminal`, bash runs on a pty under the relay (agent/terminal.py), started by
+        the Python that runs flightdeck, in the same group. OSError when it cannot be
+        started, or when .flightdeck cannot be set up."""
+        bash = self._ready()
+        _check_call(command, 1.0)
+        restore_private(self.root)
+        self._prune()
+        argv = [bash, "-c", command]
+        if terminal:
+            argv = [sys.executable, "-I", "-c", RELAY, *argv]
+        proc = await asyncio.create_subprocess_exec(
+            *argv, cwd=self.root, env=self._env(), stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True,
+        )
+        self._started(proc)
+
+        async def stop(_pid: int | None) -> None:
+            # the group is signalled only while it is known to be ours: once the process is
+            # reaped and its group empty, the system may give that number to someone else's
+            self._prune()
+            if proc.returncode is None or proc.pid in self._groups:
+                _kill_group(proc.pid)
+            await proc.wait()
+            self._prune()
+
+        return SessionProcess(proc, stop)
+
     async def close(self) -> None:
         """Kill every process group the lane left running, and remove a take-over's HOME that
         is still there (its hand-back did not run). WorkspaceError when one cannot be removed."""
@@ -613,6 +660,7 @@ class HostWorkspace:
         env["TMPDIR"] = str(home / "tmp")
         env["TERM"] = os.environ.get("TERM", "dumb")  # the player's own terminal, so editors and pagers work
         env["HISTFILE"] = str(self.root / PRIVATE / "takeover_history")
+        env["BASH_SILENCE_DEPRECATION_WARNING"] = "1"  # macOS's bash opens with a note to change to zsh: not ours to say
         return ShellSpec([self.shell, "--noprofile", "--norc", "-i"], self.root, env, home=home)
 
     def _ready(self) -> str:
@@ -783,6 +831,39 @@ for t in gdb gdb-multiarch r2; do [ -n "$(type -P -- "$t")" ] && echo "$t"; done
 r2 -N -q -c Lc -- </dev/null | grep -q r2ghidra && echo pdg
 exit 0
 """
+
+
+SIGNAL_TREE = r"""
+sig=$1; root=$2; tree=$3
+pids=$root
+if [ "$tree" = 1 ]; then
+  more=1
+  while [ "$more" = 1 ]; do
+    more=0
+    for f in /proc/[0-9]*/stat; do
+      s=$(cat "$f" 2>/dev/null) || continue
+      pid=${s%% *}
+      rest=${s##*) }
+      set -- $rest
+      case " $pids " in *" $pid "*) continue ;; esac
+      case " $pids " in *" $2 "*) pids="$pids $pid"; more=1 ;; esac
+    done
+  done
+fi
+kill -s "$sig" $pids 2>/dev/null
+exit 0
+"""
+"""Signals a process and (tree=1) everything under it, inside a lane's container, run as `sh -c SIGNAL_TREE sh SIG PID TREE`: `docker
+exec` does not pass a signal on to the process it started."""
+
+SESSION_PID = "flightdeck-session-pid "
+"""The start of a docker session's first line (DockerWorkspace.open_session): its pid in the container follows."""
+_SESSION_WRAPPER = f'echo "{SESSION_PID}$$"; exec bash -c "$1" 2>&1'
+NO_TERMINAL_PYTHON = "flightdeck: a terminal session needs python3 in the lane's container, and it has none; start it without terminal"
+# A terminal session's (P87): the relay ($2) runs bash -c "$1" on a pty, and needs the container's python3
+_TERMINAL_WRAPPER = (f'echo "{SESSION_PID}$$"; command -v python3 >/dev/null 2>&1 || {{ echo "{NO_TERMINAL_PYTHON}"; exit 127; }}; '
+                     'exec python3 -I -c "$2" bash -c "$1" 2>&1')
+DOCKER_SESSION_STOP = 15.0  # seconds a session's kill inside the container may take
 
 
 def _seconds(timeout: float) -> str:
@@ -988,6 +1069,41 @@ class DockerWorkspace:
         if code != 0 and output.startswith((b"Error response from daemon", b"OCI runtime")) and not await self._running():
             raise WorkspaceError(f"container {self.name} is not running any more (stopped or removed outside flightdeck)")
         return RunResult(_exit_status(code), output)
+
+    async def open_session(self, command: str, *, terminal: bool = False) -> SessionProcess:
+        """Start `command` in the lane's container as a long-lived process the lane talks to,
+        through a `docker exec -i` of its own: pipes, not a terminal, stderr merged into stdout
+        inside the container so the order holds. With `terminal`, bash runs on a pty under the
+        relay (agent/terminal.py), on the container's python3 (none: the session says so and
+        ends with 127); the docker client still has pipes, so no `-t`. Its first line is SESSION_PID and its pid in
+        the container, which stop() needs: `docker exec` passes no signal on, so the process
+        and everything under it are killed in the container (SIGNAL_TREE), and then the docker
+        client. close() kills the client too, and removing the container ends the rest.
+        OSError when the client cannot be started; WorkspaceError when the workspace is closed."""
+        if self._closed or not self._ready:
+            raise WorkspaceError("workspace is closed" if self._closed else "workspace not prepared: call prepare() first")
+        _check_call(command, 1.0)
+        argv = ["docker", "exec", "-i", "-w", CONTAINER_ROOT, self.name, "bash", "-c", _SESSION_WRAPPER, "flightdeck-session", command]
+        if terminal:
+            argv = [*argv[:-5], "bash", "-c", _TERMINAL_WRAPPER, "flightdeck-session", command, RELAY]
+        proc = await asyncio.create_subprocess_exec(
+            *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
+        self._clients.add(proc)
+
+        async def stop(pid: int | None) -> None:
+            if pid is not None and proc.returncode is None and not self._closed:
+                try:
+                    await _docker("exec", self.name, "sh", "-c", SIGNAL_TREE, "sh", "KILL", str(pid), "1", timeout=DOCKER_SESSION_STOP)
+                except WorkspaceError:
+                    pass  # the client is killed below, and the container's removal ends what is left
+            if proc.returncode is None:  # a client that has ended and been reaped: its number may be someone else's now
+                _kill_group(proc.pid)
+            await proc.wait()
+            self._clients.discard(proc)
+
+        return SessionProcess(proc, stop, SESSION_PID)
 
     async def close(self) -> None:
         self._closed = True

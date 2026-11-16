@@ -1,8 +1,8 @@
 """The player's config: the model API (and its fallback), the model ladder, prices, lane
 settings and the run folder.
 
-It lives outside the repository (~/.config/ctf-flightdeck/config.toml, or the file
-$FLIGHTDECK_CONFIG names) and holds no secret: it names the environment variable that
+It lives outside the repository (~/.config/ctf-flightdeck/config.toml, or under
+$XDG_CONFIG_HOME: confighome.py; or the file $FLIGHTDECK_CONFIG names) and holds no secret: it names the environment variable that
 holds the API key, and api_key() reads the key from there only when it is needed
 (fallback_key() for the [fallback] API's).
 
@@ -45,7 +45,8 @@ itself), and `on` lists which of NOTIFY_KINDS are sent (all of them when it is l
 
 The optional [console] table says how the console looks: `layout` (LAYOUTS), `mouse` (false:
 the console never asks the terminal for the mouse), `title` and `bell` (false: the console
-leaves the terminal's title alone, or never rings its bell: console/terminal.py) and `theme`, a
+leaves the terminal's title alone, or never rings its bell: console/terminal.py; a `bell` left
+out rings in a run and not in the mock: ConsoleConfig.rings_bell) and `theme`, a
 built-in palette or the name of a theme file in the `themes` folder beside the config
 (themes.py). The palette is loaded here, so a theme that cannot be used stops the command that
 loads the config; the default is never used in its place. load_console() reads this table
@@ -102,7 +103,7 @@ PROVIDER_DEFAULTS = {  # provider -> (base_url, key_env) when the table leaves t
     "openai": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
     "anthropic": (ANTHROPIC_BASE_URL, "ANTHROPIC_API_KEY"),
 }
-_LANE_KEYS = ("max_lanes", "runtime", "image", "token_cap", "dollar_cap", "submit", "submit_limited", "wrong_stop", "variant_tries")
+_LANE_KEYS = ("max_lanes", "max_waiting", "runtime", "image", "token_cap", "dollar_cap", "submit", "submit_limited", "wrong_stop", "variant_tries")
 LIGHT_ENGINES = ("rules", "openai", "anthropic", "cactus", "decider")
 MODEL_ENGINES = ("openai", "anthropic")  # the light engines that take a model, a base_url and a key_env
 _LIGHT_KEYS = ("engine", "model", "base_url", "key_env", "timeout", "price", "threshold", "thinking")
@@ -197,6 +198,7 @@ class LightConfig:
 @dataclass(frozen=True)
 class LaneConfig:
     max_lanes: int = 4
+    max_waiting: int = 4  # lanes that may give their slot up while they wait for you, each keeping its workspace (P91); 0: none
     runtime: str = "docker"  # docker | host
     image: str = "ctf-flightdeck-lane:1"  # lane.IMAGE: built by `flightdeck image build`
     token_cap: int | None = 400_000  # None: no cap
@@ -244,7 +246,14 @@ class ConsoleConfig:
     palette: themes.Palette = themes.DEFAULT  # that theme's colours
     mouse: bool = True  # false: the terminal keeps the mouse (its own text selection; every key still works)
     title: bool = True  # false: the terminal's title is left alone (true: it says how many lanes need the player)
-    bell: bool = True  # false: the terminal's bell never rings (true: once each time more lanes need the player)
+    bell: bool | None = None  # rings_bell(): None (not written) rings in a run and not in the mock
+
+    def rings_bell(self, *, mock: bool) -> bool:
+        """Whether the console rings the terminal's bell, once each time more lanes need the
+        player. `bell = false` never, `bell = true` always. Not written: a run rings and the
+        mock does not, since the mock's lanes are scripted and need no one: a player trying it
+        out, or watching it in a meeting, is not called by a lane that is not there (P70)."""
+        return self.bell if self.bell is not None else not mock
 
 
 @dataclass(frozen=True)
@@ -308,13 +317,17 @@ class ConfigError(Exception):
 
 
 def default_config_path() -> Path:
-    """$FLIGHTDECK_CONFIG if it is set, else ~/.config/ctf-flightdeck/config.toml. ConfigError
-    when a ~ in it names a user that does not exist, or there is no home directory."""
+    """$FLIGHTDECK_CONFIG if it is set, else config.toml in flightdeck's config folder:
+    $XDG_CONFIG_HOME/ctf-flightdeck, else ~/.config/ctf-flightdeck (confighome.find, which
+    also says when the file is only at the old place). ConfigError when a ~ in it names a user
+    that does not exist, or there is no home directory."""
+    from . import confighome
+
     named = os.environ.get(CONFIG_ENV)
     try:
         if named:
             return Path(named).expanduser()
-        return Path.home() / ".config" / "ctf-flightdeck" / "config.toml"
+        return confighome.find(confighome.CONFIG_FILE).path
     except RuntimeError:
         where = f"${CONFIG_ENV} starts with ~ for a user that does not exist" if named else "there is no home directory"
         raise ConfigError(f"cannot find the config: {where}; name the file with an absolute path in ${CONFIG_ENV}") from None
@@ -641,6 +654,10 @@ ladder = []
 [lanes]
 max_lanes = 4                   # lanes at once; the rest wait in the queue. "unlimited": no limit (the [governor] still
                                 # holds new lanes back while this machine is over a limit). In the console: /config lanes N
+max_waiting = 4                 # a lane that waits for you (a live-box answer at once; a flag or more budget after a
+                                # minute) gives its slot to the next queued lane, and takes one again once answered. At
+                                # most this many go without a slot at once, each keeping its workspace. 0: lanes keep
+                                # their slots while they wait
 runtime = "docker"              # "docker": a container per lane; "host": on this machine
 image = "ctf-flightdeck-lane:1" # the lanes' docker image: `flightdeck image build` makes it (never pulled)
 token_cap = 400000              # per lane; false for no cap
@@ -678,7 +695,8 @@ dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log an
 # the count in the terminal's title ("▲ 2 need you · flightdeck"; the title you had comes back
 # when the console leaves). bell rings the terminal's bell once each time the count goes up.
 # Inside tmux the bell marks the window with nothing set up; the title reaches the terminal
-# outside only with `set -g set-titles on`. false turns either off.
+# outside only with `set -g set-titles on`. false turns either off. Left out, the bell rings in
+# a run and not in `flightdeck mock`; bell = true rings it in the mock too.
 # title = true
 # bell = true
 
@@ -1284,8 +1302,12 @@ def _lanes(path: Path, table: dict) -> LaneConfig:
         raise _error(
             path, ("lanes", "image"), "must be a docker image name: no spaces or control characters, and not starting with -"
         )
+    max_waiting = table.get("max_waiting", defaults.max_waiting)
+    if not _is_int(max_waiting) or max_waiting < 0:
+        raise _error(path, ("lanes", "max_waiting"), f"must be a whole number, 0 or more (0: lanes keep their slots while they wait){_got(max_waiting)}")
     return LaneConfig(
         max_lanes=max_lanes,
+        max_waiting=max_waiting,
         runtime=_choice(path, table, ("lanes", "runtime"), defaults.runtime, RUNTIMES),
         image=image,
         token_cap=_cap(path, table, "token_cap", defaults.token_cap, whole=True),
@@ -1426,11 +1448,10 @@ def _governor(path: Path, table: dict) -> GovernorConfig:
 def _console(path: Path, table: dict) -> ConsoleConfig:
     _known(path, ("console",), table, ("bell", "layout", "mouse", "theme", "title"))
     layout = _choice(path, table, ("console", "layout"), ConsoleConfig().layout, LAYOUTS)
-    switches = {}
-    for key in ("mouse", "title", "bell"):
-        switches[key] = table.get(key, getattr(ConsoleConfig(), key))
-        if not isinstance(switches[key], bool):
-            raise _error(path, ("console", key), f"must be true or false{_got(switches[key])}")
+    switches = {key: table[key] for key in ("mouse", "title", "bell") if key in table}  # the rest: the defaults (bell: None, not written)
+    for key, value in switches.items():
+        if not isinstance(value, bool):
+            raise _error(path, ("console", key), f"must be true or false{_got(value)}")
     if "theme" not in table:
         return ConsoleConfig(layout=layout, **switches)  # no theme named: no theme file is looked for
     name = table["theme"]

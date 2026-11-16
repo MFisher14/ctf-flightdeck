@@ -45,14 +45,25 @@ from ..core.driver import TakeoverRefused
 from ..core.model import ME, UNLIMITED_LANES, ChallengeStatus, Event, EventKind, Lane, LaneState, lanes_text
 from ..text import untrusted
 from . import theme, views
-from .commands import CommandError, State, Word, needs_lane, parse
+from .commands import COPY_WHAT, CommandError, State, Word, needs_lane, parse
 from .fleet import FleetScreen
 from .focus import FocusScreen
 from .screens import ApprovePrompt, ChallengeCard, ForkPrompt, HelpScreen, KillPrompt, QuitPrompt, TakeOverScreen
 from .terminal import STOP_SIGNALS, Beacon, TerminalDriver
+from .widgets import History
 
 STATUS_EVENTS = (EventKind.RELEASE, EventKind.TEAMMATE, EventKind.SUBMIT, EventKind.WARNING)
 STATUS_SECONDS = 12.0
+ANSWERS = (iv.Approve, iv.Decline, iv.Kill)  # answers that can end a lane: the lane list moves on from it (P96)
+# What a look's status line adds on a narrow terminal (look_said). It is true only while the terminal is narrow:
+# made wide, the status line leaves it out (status_text), and the layout list's note goes too (narrow_note).
+NARROW_SAID = "; this terminal is narrow, so the compact layout shows"
+
+
+def narrow_note(columns: int) -> str:
+    """The layout list's note for a terminal `columns` wide: the compact layout shows whichever
+    is chosen, or nothing when there is room for them."""
+    return "This terminal is narrow, so the compact layout shows in both." if views.compact(columns) else ""
 # A terminal that has no bracketed paste sends a dropped file as its path, typed: every character
 # at once. Keys that start like a path and come closer together than nobody types are held until
 # they stop coming (take_keys), and are a drop only when all of them together are paths that exist.
@@ -104,6 +115,7 @@ class FlightdeckApp(App[None]):
         copier: Callable[[str], str] | None = None,
         terminal_title: bool = True,
         terminal_bell: bool = True,
+        agent: str = "",
     ) -> None:
         """`on_start` runs once the console's event loop is up (a real run releases the board
         there, so lanes start on this loop); `on_exit` is awaited before the console quits
@@ -118,7 +130,9 @@ class FlightdeckApp(App[None]):
         must be told when it could not, "" when it did (None: clipboard.put).
         `terminal_title`: the terminal's title says how many lanes need the player, and is put
         back when the console leaves; `terminal_bell`: the terminal's bell rings once each time
-        that count goes up (terminal.Beacon; a run passes the config's [console] title and bell)."""
+        that count goes up (terminal.Beacon; a run passes the config's [console] title and bell).
+        `agent`: the coding agent the run's lanes are (play --agent; "": flightdeck's own), which
+        /settings' checks are told."""
         if layout not in LAYOUTS:
             raise ValueError(f"layout must be one of {', '.join(LAYOUTS)}, got {layout!r}")
         self.layout = layout
@@ -132,6 +146,7 @@ class FlightdeckApp(App[None]):
         # the copier runs here, off the event loop the lanes share: a clipboard tool that hangs
         # holds up only the copies after it, one at a time so the last copy is the one that stays
         self._clipboard_thread: ThreadPoolExecutor | None = None
+        self.bar_history = History()  # what the command bars sent this run, for up and down (P71); never written to a file
         self._copied: object = None  # the selection last copied (a screen's `selections`): a button that comes up again copies it once
         theme.use(palette or themes.DEFAULT)  # before Textual reads the styles' variables, which it does as it is built
         super().__init__()
@@ -155,7 +170,9 @@ class FlightdeckApp(App[None]):
         self.stager = stager
         self.unstager = unstager
         self._staging = asyncio.Lock()  # one drop is copied at a time, in the order they came
+        self.agent = agent  # the run's coding agent, "claude" or "codex" ("": flightdeck's own lanes), for /settings
         self.config_path = config_path  # the player's config file, named by /config ("": none, as in the mock)
+        self._in_run = None  # /settings' part of the run (health.InRun), made when it is first opened, kept for the run
         self._exiting = False
         self.stopped_by: signal.Signals | None = None  # the signal that stopped the run, if one did
         self._signals: list[int] = []  # the signals this console catches while it runs
@@ -338,7 +355,7 @@ class FlightdeckApp(App[None]):
         note = ""
         if self._ticker is not None:
             if clock_keys:
-                note = "⏸ frozen: , resumes · . steps" if self.frozen else "▶ live: , freezes"
+                note = "⏸ frozen · ',' resumes '.' steps" if self.frozen else "▶ live · ',' freezes"
             else:
                 note = "⏸ frozen" if self.frozen else "▶ live"
         return views.header(self.deck, mock=self.mock, note=note, width=width, compact=compact, simple=self.layout == "simple")
@@ -349,6 +366,8 @@ class FlightdeckApp(App[None]):
         text, severity, when = self._status
         if self._refresh_seconds and self.status_clock() - when > STATUS_SECONDS:
             return Text("")
+        if not views.compact(self.size.width):  # said on a narrow terminal that has since been made wide: no longer so
+            text = text.replace(NARROW_SAID, "")
         color = {"warning": theme.YELLOW, "error": theme.RED}.get(severity, theme.ACCENT)
         return Text.assemble(("● ", color), (untrusted(text, one_line=True), theme.TEXT if severity == "information" else color))
 
@@ -420,9 +439,9 @@ class FlightdeckApp(App[None]):
     def copy_from(self, lane: Lane, what: str) -> None:
         """/copy [output|command|flag|all]: a text of the lane's to the clipboard, with no
         mouse (views.lane_copy has what each is). Alone it is the last output."""
-        word = what.strip().lower() or views.COPY_WHAT[0]
-        if word not in views.COPY_WHAT:  # not shown: it is not one of them
-            self.warn(f"/copy takes nothing (the last output) or one of: {', '.join(views.COPY_WHAT)}")
+        word = what.strip().lower() or COPY_WHAT[0]
+        if word not in COPY_WHAT:  # not shown: it is not one of them
+            self.warn(f"/copy takes nothing (the last output) or one of: {', '.join(COPY_WHAT)}")
             return
         try:
             text, name = views.lane_copy(self.deck, lane, word)
@@ -592,7 +611,10 @@ class FlightdeckApp(App[None]):
         if self.adder is None:
             return False
         form = self.screen if isinstance(self.screen, NewChallengePrompt) else None
-        line = not_there_line(text, choose="press ctrl+o to choose it" if form else "type /attach with no file to choose it")
+        choose = ("press ctrl+o to choose it" if form is not None
+                  else "press ctrl+o or type /attach with no file to choose it" if self.screen is self._fleet
+                  else "type /attach with no file to choose it")  # ctrl+o in a lane's view is details
+        line = not_there_line(text, choose=choose)
         if not line:
             return False
         if form is not None:
@@ -982,10 +1004,18 @@ class FlightdeckApp(App[None]):
         known = set(self.deck.lanes)
         outcome = self.deck.apply(intervention)
         self.say(outcome.message, "information" if outcome.ok else "warning")
+        if outcome.ok and isinstance(intervention, ANSWERS):
+            self._answered_in_list(intervention.lane)
         self.refresh_view()
         if outcome.ok and isinstance(intervention, iv.Kill) and intervention.requeue:
             self.follow(self.deck.lanes[intervention.lane].challenge_id, intervention.lane, known)
         return outcome
+
+    def _answered_in_list(self, lane_id: str) -> None:
+        """An answer the player gave a lane while no lane's view is open (the lane list, or
+        a prompt over it): the list moves its selection on when the lane folds (P96)."""
+        if self.focus_screen is None:
+            self._fleet.answered(lane_id)
 
     def suggested(self, lane: Lane, key: str) -> str:
         """The text an alert suggests for `key` (to prefill a field), as the console shows
@@ -1088,6 +1118,7 @@ class FlightdeckApp(App[None]):
                 why = None if outcome.ok else outcome.message
             if why is None:
                 approved.append(lane_id)
+                self._answered_in_list(lane_id)
             else:
                 left.append((lane_id, why, why))
         count = len(approved)
@@ -1186,22 +1217,31 @@ class FlightdeckApp(App[None]):
     async def _shell(self, lane_id: str, session) -> None:
         """Open the shell, then always hand the lane back, with what happened: a lane must
         never stay taken over with no way back. A problem shows after the hand-back's own
-        outcome, so it is what the status line says."""
+        outcome, so it is what the status line says. Cancelled (the console is closing), the
+        lane is handed back all the same, and the cancel goes on."""
         try:
             note, problem = await self._open_shell(lane_id, session)
+        except asyncio.CancelledError:
+            self._hand_back(lane_id, "the console closed during the take-over")
+            raise
         except Exception as exc:
-            note = problem = f"the take-over failed: {exc}"
-        lane = self.deck.lanes.get(lane_id)
-        if lane is not None and lane.state is LaneState.TAKEOVER:
-            self.apply(iv.HandBack(lane_id, note))
+            note = problem = f"the take-over failed: {type(exc).__name__}: {exc}"
+        self._hand_back(lane_id, note)
         if problem:
             self.warn(f"{lane_id}: {problem}")
 
+    def _hand_back(self, lane_id: str, note: str) -> None:
+        lane = self.deck.lanes.get(lane_id)
+        if lane is not None and lane.state is LaneState.TAKEOVER:
+            self.apply(iv.HandBack(lane_id, note))
+
     async def _open_shell(self, lane_id: str, session) -> tuple[str, str]:
-        """(the hand-back note, a problem to warn about or "")."""
+        """(the hand-back note, a problem to warn about or ""). A shell that never ran is
+        abandoned (its session's abandon(), when it has one: the lane hears nothing); one that
+        ran is finished, which tells the lane what changed, even when it ended at once."""
         from textual.app import SuspendNotSupported
 
-        from .takeover import run_in_terminal
+        from .takeover import not_started, run_in_terminal, takeover_banner
 
         if getattr(session, "busy", False):
             self.inform(f"{lane_id} is finishing a command; your shell opens when it ends")
@@ -1210,15 +1250,25 @@ class FlightdeckApp(App[None]):
         except TakeoverRefused as exc:
             return str(exc), str(exc)
         try:
-            await run_in_terminal(self, shell.argv, shell.cwd, shell.env)
-        except SuspendNotSupported:
-            return "no shell: this console cannot hand over the terminal", "this console cannot hand over the terminal; the lane carries on"
-        except OSError as exc:
-            return f"the shell did not start: {exc}", f"the shell did not start: {exc}"
+            ended = await run_in_terminal(self, shell.argv, shell.cwd, shell.env, banner=takeover_banner(lane_id, shell.cwd))
+        except BaseException as exc:
+            abandon = getattr(session, "abandon", None)
+            if abandon is not None:
+                abandon()
+            if isinstance(exc, SuspendNotSupported):
+                return "no shell: this console cannot hand over the terminal", "this console cannot hand over the terminal; the lane carries on"
+            if isinstance(exc, OSError):
+                why = f"the shell did not start: {not_started(exc, shell.argv)}"
+                return why, f"{why}; the lane carries on"
+            raise
+        problem = ended.problem()
         try:
-            return session.finish(), ""
+            note = session.finish()
         except Exception as exc:
             return f"the workspace could not be checked: {exc}", f"handed back, but its workspace could not be checked: {exc}"
+        if problem:
+            return f"{problem} ({note})", f"{problem}; the lane carries on"
+        return note, ""
 
     def autopilot(self, arg: str) -> None:
         """/autopilot on: engage autopilot (refused, with the reason, without a run budget, off
@@ -1321,9 +1371,8 @@ class FlightdeckApp(App[None]):
             show(name)
             self.keep_look(save=save, layout=name)
 
-        narrow = "This terminal is narrow, so the compact layout shows in both." if views.compact(self.size.width) else ""
         self.push_screen(Picker("layout", [Choice(name, LAYOUT_HELP[name]) for name in LAYOUTS], in_use=before, preview=show,
-                                save_to=self.config_path, note=narrow), done)
+                                save_to=self.config_path, note=narrow_note), done)
 
     def keep_look(self, *, save: bool = False, theme: str | None = None, layout: str | None = None) -> None:
         """Say that the console is in the theme or the layout just chosen, and for how long
@@ -1341,7 +1390,7 @@ class FlightdeckApp(App[None]):
 
         chosen = {"theme": theme, "layout": layout}
         said = " and ".join(f"{key} {chosen[key]}" for key in CONSOLE_KEYS if chosen[key] is not None)
-        narrow = "; this terminal is narrow, so the compact layout shows" if layout is not None and views.compact(self.size.width) else ""
+        narrow = NARROW_SAID if layout is not None and views.compact(self.size.width) else ""
         if not self.config_path:
             return f"{said} for this run (this console has no config file){narrow}", True
         if not save:
@@ -1427,6 +1476,36 @@ class FlightdeckApp(App[None]):
         own = f"Your own themes are NAME.toml files in {self.themes_folder}" if self.themes_folder is not None else ""
         self.push_screen(Picker("theme", choices, in_use=before.name, preview=lambda name: show(palettes[name]),
                                 save_to=self.config_path, note=own), done)
+
+    def open_settings(self) -> None:
+        """/settings: the home screen's Settings and health over the console (P90): this run's
+        settings, which /config changes (c there opens its dialog), the setup the run's config
+        holds, and doctor's checks, which run in a child process at a lower priority, never on
+        this loop the lanes share. What the checks found is kept for the run (self._in_run), so
+        opening it again shows them with their age and starts nothing until r."""
+        from .health import HealthScreen, InRun
+
+        if isinstance(self.screen, HealthScreen):
+            return
+        if self._in_run is None:
+            self._in_run = InRun(rows=self._run_rows, needing=lambda: len(self.deck.needing()), change=self.config_dialog,
+                                 config=Path(self.config_path) if self.config_path else None, agent=self.agent or None)
+        self.push_screen(HealthScreen(in_run=self._in_run))
+
+    def _run_rows(self) -> list:
+        """This run's own settings, as /config's dialog has them now, for /settings."""
+        from .health import Row
+
+        cfg = self.deck.config
+        lanes = "unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes)
+        flags = {"auto": "submitted as soon as found (auto approve)", "confirm": "each waits for your yes"}.get(cfg.submit, cfg.submit)
+        rows = [Row("Lanes", f"{lanes} at once", "for this run: /config lanes N, or the dialog"),
+                Row("Flags", flags, "for this run: /config submit auto|confirm, or the dialog"),
+                Row("Layout", self.layout, "for this run: /layout; s there saves it in your config"),
+                Row("Theme", theme.active().name, "for this run: /theme; s there saves it in your config")]
+        if not self.config_path:
+            rows.append(Row("Config", "none", "the mock reads none: below is the one flightdeck reads"))
+        return rows
 
     def config_dialog(self) -> None:
         """/config alone: the settings dialog (ConfigPrompt). What it changes for the run goes
@@ -1538,6 +1617,8 @@ class FlightdeckApp(App[None]):
             outcome = self.deck.tell_all(arg)
             self.say(outcome.message, "information" if outcome.ok else "warning")
             self.refresh_view()
+        elif name == "settings":
+            self.open_settings()
         elif name == "config":
             self.configure(arg)
         elif name == "theme":

@@ -115,7 +115,7 @@ def test_the_mock_and_a_run_leave_the_mouse_when_the_config_says_so(tmp_path, mo
 
     # what Run.app reads of a run: its console is made by the code a real run's is
     of_a_run = SimpleNamespace(config=load_config(config), deck=FakeWorld(scenarios.get("sstv")).deck, dir=tmp_path, by_hand=False,
-                               release=None, shutdown=None)
+                               release=None, shutdown=None, options=SimpleNamespace(agent=None))
     assert Run.app(of_a_run).mouse is mouse
 
 
@@ -1002,8 +1002,8 @@ def test_lane_keys_warn_when_the_filter_hides_the_selected_lane():
         selected = deck.lanes[app.fleet.selected_lane]
         assert selected.challenge_id != "bent-coin"
         await press(pilot, "tab")
-        await send(pilot, app, "/filter bent")
-        assert lane_rows(app) == [deck.lanes_on("bent-coin")[0].id]
+        await send(pilot, app, "/filter zzz")  # no lane row left: a lane row would take the selection (P96)
+        assert row_keys(app) == []
         assert app.fleet.selected_lane == selected.id
         before = snapshot(app)
         await press(pilot, "p")
@@ -1685,7 +1685,8 @@ def test_every_scenario_opens_and_runs_30_ticks_in_the_console(name):
         assert sorted(lane_rows(app)) == sorted(lane.id for lane in active)
         assert (FINISHED_ROW in row_keys(app)) == any(lane.finished for lane in deck.lanes.values())
         header = region_text(app, "#header")
-        assert f"lanes {len(active)}/{deck.config.max_lanes} · queue {len(deck.queue)}" in header
+        slotted = deck.slotted_lanes()  # a lane waiting for a live-box answer holds no slot (P83)
+        assert f"lanes {len(slotted)}/{deck.config.max_lanes} · queue {len(deck.queue)}" in header
 
     drive(app, script)
 
@@ -2553,7 +2554,7 @@ def test_the_focus_view_has_no_clock_keys_in_its_header_and_tab_goes_to_the_file
     world, app = make("sstv")
 
     async def script(pilot):
-        assert "▶ live: , freezes" in region_text(app, "#header")  # in the fleet, `,` does
+        assert "▶ live · ',' freezes" in region_text(app, "#header")  # in the fleet, `,` does
         focus = await open_focus(pilot, app, "L01")
         header = region_text(app, "#header")
         assert "▶ live" in header and "freezes" not in header
@@ -2907,6 +2908,35 @@ def test_the_quit_prompt_names_each_flag_on_its_way_to_the_platform_and_says_qui
     assert "L01 Alpha  t{two}\n" in views.quit_summary(deck).plain and "t{one}" not in views.quit_summary(deck).plain
 
 
+def test_a_lane_waiting_for_a_slot_after_its_live_box_answer_says_so_in_its_row_and_the_quit_prompt():
+    deck = platform_run(("alpha", "bravo"), max_lanes=1)
+    (alpha,) = deck.lanes_on("alpha")
+    deck.report(alpha.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "reach the instance")))
+    assert deck.lanes_on("bravo")  # its slot went to bravo
+    assert deck.apply(iv.Approve(alpha.id)).ok
+    assert alpha.state is LaneState.QUEUED
+    assert "2 lanes still open: 1 waiting for a slot, 1 running" in views.quit_summary(deck).plain
+    app = FlightdeckApp(deck, refresh_seconds=None)
+
+    async def script(pilot):
+        assert cell(app, "lanes", alpha.id, "state") == "queued"
+
+    drive(app, script)
+
+
+def test_the_header_and_the_lanes_title_count_slots_not_a_lane_that_gave_its_slot_up():
+    deck = platform_run(("alpha", "bravo", "charlie"), max_lanes=1)
+    (alpha,) = deck.lanes_on("alpha")
+    deck.report(alpha.id, TurnReport(pending=Pending(PendingKind.LIVE_BOX, "reach the instance")))
+    assert deck.lanes_on("bravo") and len(deck.active_lanes()) == 2  # bravo took alpha's slot
+    assert views.header_facts(deck).lanes == 1
+    assert "lanes 1/1 · queue 1" in views.header(deck, width=400).plain
+    assert "1/1 · q1" in views.header(deck, width=400, compact=True).plain  # the simple header has no lane count
+    for compact, simple in ((False, False), (False, True), (True, False)):
+        title = views.lanes_title(deck, SortMode.ATTENTION, "", compact=compact, simple=simple).plain
+        assert "2/1" not in title and "1/1" in title, title
+
+
 def test_the_quit_prompt_names_five_flags_on_their_way_and_counts_the_rest():
     names = tuple(f"chal{letter}" for letter in "abcdefg")  # letters only: the flag format is t\{[a-z]+\}
     deck = platform_run(names, max_lanes=len(names))
@@ -3118,8 +3148,8 @@ def test_a_take_over_whose_workspace_cannot_be_checked_still_hands_the_lane_back
     from ctf_flightdeck.agent.workspace import WorkspaceError
     from ctf_flightdeck.console import takeover
 
-    async def the_shell_ran(app, argv, cwd, env):
-        return None
+    async def the_shell_ran(app, argv, cwd, env, banner=""):
+        return takeover.ShellExit(0, 30.0)
 
     monkeypatch.setattr(takeover, "run_in_terminal", the_shell_ran)
 
@@ -3148,6 +3178,158 @@ def test_a_take_over_whose_workspace_cannot_be_checked_still_hands_the_lane_back
         assert lane.state is LaneState.RUNNING
         assert_warning(app, "its workspace could not be checked: cannot snapshot workspace /gone")
         assert "the workspace could not be checked" in lane.actions[-1].text
+
+    drive(app, script)
+
+
+class ShellSession:
+    """A driver's take-over session that records what the console made of it."""
+
+    def __init__(self, begin_fails: Exception | None = None) -> None:
+        self.calls: list[str] = []
+        self.begin_fails = begin_fails
+
+    async def begin(self):
+        self.calls.append("begin")
+        if self.begin_fails is not None:
+            raise self.begin_fails
+        return type("Spec", (), {"argv": ["docker", "exec", "-it", "fd-L01", "bash"], "cwd": None, "env": None})()
+
+    def abandon(self) -> None:
+        self.calls.append("abandon")
+
+    def finish(self) -> str:
+        self.calls.append("finish")
+        return "no files changed"
+
+
+def shell_failure_run(session: ShellSession, *, paused: bool = False):
+    class ShellDriver(QuietDriver):
+        def takeover(self, lane):
+            return session
+
+    deck = Deck(DeckConfig(event="ev", models=("glm",)), ShellDriver(), ManualClock(), wrong_flag)
+    deck.release([Challenge("a", "A", "misc", 50)], [QueueEntry("a", "glm")])
+    (lane,) = deck.lanes_on("a")
+    if paused:
+        assert deck.apply(iv.Pause(lane.id)).ok
+    return deck, lane, FlightdeckApp(deck, refresh_seconds=None)
+
+
+async def until_handed_back(pilot, lane) -> None:
+    for _ in range(100):
+        if lane.state is not LaneState.TAKEOVER:
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"{lane.id} is still taken over")
+
+
+def test_a_take_over_whose_shell_program_is_missing_hands_back_with_why_and_the_lane_hears_nothing(monkeypatch):
+    """P69: no docker (or no bash) to run. The lane is running again, the status line names the
+    program, and the shell's session is abandoned, not finished: nothing ran in the workspace."""
+    from ctf_flightdeck.console import takeover
+
+    async def no_docker(app, argv, cwd, env, banner=""):
+        raise FileNotFoundError(2, "No such file or directory", "docker")
+
+    monkeypatch.setattr(takeover, "run_in_terminal", no_docker)
+    session = ShellSession()
+    deck, lane, app = shell_failure_run(session)
+
+    async def script(pilot):
+        await press(pilot, "t")
+        await until_handed_back(pilot, lane)
+        assert lane.state is LaneState.RUNNING and app.is_running
+        assert session.calls == ["begin", "abandon"]
+        assert_warning(app, "L01: the shell did not start: docker was not found (is it installed and on your PATH?); the lane carries on")
+        assert "handed back by the player: the shell did not start: docker was not found" in lane.actions[-1].text
+
+    drive(app, script)
+
+
+def test_a_take_over_whose_shell_exits_at_once_with_an_error_says_so_and_a_paused_lane_stays_paused(monkeypatch):
+    """docker exec into a container that is gone ends at once with an error, and what docker
+    printed is drawn over when the console comes back: the status line keeps the status."""
+    from ctf_flightdeck.console import takeover
+
+    async def exits_at_once(app, argv, cwd, env, banner=""):
+        return takeover.ShellExit(1, 0.1)
+
+    monkeypatch.setattr(takeover, "run_in_terminal", exits_at_once)
+    session = ShellSession()
+    deck, lane, app = shell_failure_run(session, paused=True)
+
+    async def script(pilot):
+        await press(pilot, "t")
+        await until_handed_back(pilot, lane)
+        assert lane.state is LaneState.PAUSED  # as the player left it before the take-over
+        assert session.calls == ["begin", "finish"]  # it ran, if only for a moment: what changed is said
+        assert_warning(app, "L01: the shell exited at once with status 1; the lane carries on")
+        assert "the shell exited at once with status 1 (no files changed)" in lane.actions[-1].text
+
+    drive(app, script)
+
+
+def test_a_take_over_whose_shell_the_player_used_and_left_with_an_error_status_is_no_problem(monkeypatch):
+    from ctf_flightdeck.console import takeover
+
+    banners = []
+
+    async def used(app, argv, cwd, env, banner=""):
+        banners.append(banner)
+        return takeover.ShellExit(1, 300.0)  # bash exits with the last command's status
+
+    monkeypatch.setattr(takeover, "run_in_terminal", used)
+    deck, lane, app = shell_failure_run(ShellSession())
+
+    async def script(pilot):
+        await press(pilot, "t")
+        await until_handed_back(pilot, lane)
+        # the shell opens under a line that says whose it is and how to hand it back
+        assert banners == ["flightdeck: L01's shell, in its container. The lane is paused; exit (or ctrl+d) hands it back."]
+        assert lane.state is LaneState.RUNNING
+        assert lane.actions[-1].text.endswith("handed back by the player: no files changed")
+        await pilot.pause()
+        assert "Handed L01 back" in status_line(app) and "exited" not in status_line(app)
+
+    drive(app, script)
+
+
+def test_a_take_over_whose_session_breaks_hands_back_with_the_error_named(monkeypatch):
+    deck, lane, app = shell_failure_run(ShellSession(begin_fails=RuntimeError("the snapshot thread died")))
+
+    async def script(pilot):
+        await press(pilot, "t")
+        await until_handed_back(pilot, lane)
+        assert lane.state is LaneState.RUNNING and app.is_running
+        assert_warning(app, "L01: the take-over failed: RuntimeError: the snapshot thread died")
+
+    drive(app, script)
+
+
+def test_a_take_over_cancelled_while_the_player_has_the_shell_still_hands_the_lane_back(monkeypatch):
+    from ctf_flightdeck.console import takeover
+
+    inside = asyncio.Event()
+
+    async def in_the_shell(app, argv, cwd, env, banner=""):
+        inside.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(takeover, "run_in_terminal", in_the_shell)
+    session = ShellSession()
+    deck, lane, app = shell_failure_run(session)
+
+    async def script(pilot):
+        await press(pilot, "t")
+        await inside.wait()
+        assert lane.state is LaneState.TAKEOVER
+        (worker,) = [w for w in app.workers if w.name == "take over L01"]
+        worker.cancel()
+        await until_handed_back(pilot, lane)
+        assert lane.state is LaneState.RUNNING
+        assert session.calls == ["begin", "abandon"]
+        assert "the console closed during the take-over" in lane.actions[-1].text
 
     drive(app, script)
 

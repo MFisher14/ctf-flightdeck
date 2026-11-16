@@ -2,6 +2,308 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## 0.6.0 (2026-11-16)
+
+Lanes that keep a program running: sessions for gdb, radare2, an interpreter or `nc`, on a
+terminal when asked. Events on more platforms: GZCTF and noCTF presets, `flightdeck start` for
+the json-api ones, and ctfd-whale, rCTF v2 and GZCTF instances. Settings and health on the home
+screen and as `/settings` in a run; the bar recalls what was sent, and `ctrl+g` opens it in your
+editor; the same call made in a row folds into one row. A lane waiting on you gives its slot to
+the queue. The claude lane was checked against the real Claude Code CLI, and the console went
+through three review rounds and was driven in a pseudo-terminal, as a beginner and as an expert, before the release.
+
+- `flightdeck init` and the home screen's setup write no dollar cap for a custom
+  OpenAI-compatible server on this machine (`127.0.0.1`, `localhost` or `::1`), as they already
+  did for Ollama and MLX: a lane no longer stops on its first turn to ask about a budget nothing
+  can price. The token cap still holds. The setup notes say, in one line, that a local proxy to
+  a paid API should set `dollar_cap` and `[prices]`.
+- The welcome screen's key line is `enter  open the console` alone on a board with challenges
+  and in the mock, where esc did the same thing under another name. On an empty board, where
+  Enter adds your first challenge, `esc  just show me the console` is still named. esc and q
+  still close the welcome screen everywhere.
+- The config folder follows `$XDG_CONFIG_HOME`: with it set to an absolute path, `flightdeck
+  init` writes the config there, and the config, the keys file and your themes are read from
+  `$XDG_CONFIG_HOME/ctf-flightdeck`. A file you already have in `~/.config/ctf-flightdeck` is
+  still read when the new folder has none, and each command says so once on stderr (`flightdeck
+  doctor` in a `config folder` line), so nothing is ignored in silence.
+- The lane list's keys act on the row you see highlighted. A filter that hides the selected
+  lane now selects the row the cursor is on, where before the keys went on refusing the hidden
+  lane. And when you approve, decline or kill a lane from the list and it ends, the selection
+  moves on to the next lane that needs you (or the row under it), instead of staying on the
+  folded `N finished` row.
+- In the simple layout a lane that waits for you shows `1 0 answer` on the key line, in the lane
+  list and in its own view, so the keys match the numbered answers under the list and on the
+  card (`1 more budget  0 stop the lane`). `a` and `d` still answer it, and `?` says so. A lane
+  waiting on whether to carry on with no dollar cap now says that in its transcript when it
+  gives its slot up, not "more budget".
+- A lane's session no longer answers one call late. Output a program wrote before a send (a
+  debugger still loading, say) comes with the send's read but no longer ends it, so the read
+  waits for the reply, and `until` is looked for only in what came after the send. A secret of
+  the run's that a session writes is now taken out even when a read showed its start (after a
+  pause, or inside what `until` matched), and when the session's full buffer drops its oldest
+  bytes.
+- A claude lane escalated or stopped in the middle of a turn now counts all the output tokens
+  of that turn's last call, not only what claude's events had shown of it, so a token cap or
+  a token budget no longer counts less than was spent.
+- A lane on a model server whose context is too small for it (Ollama's 4,096-token default)
+  no longer refreshes its context on nearly every call, which hid each tool's output from its
+  model. When a fresh context alone takes most of what the server keeps, the lane says once
+  that the server's context is too small and what to set, and goes on in its context.
+- On a machine without Docker the setup form now says so and offers host, instead of showing
+  "Looking for Docker…" for good with no runtime chosen, so that `ctrl+s` would not save.
+- Approving more budget says the new cap and what is used of it, `L01's cap is now 15k tokens
+  (12k used)`, where `11k of 15k tokens` read as a cap of 11k. Approving a lane on a model with
+  no price says `L01 carries on with no dollar cap; its token cap is 400k tokens (120 used)`, not
+  `L01's cap is now 120 of 400k tokens`. When that lane had reached its token cap too, the
+  answer reads `carry on with no dollar cap and 50% more tokens` and the reply says `its token
+  cap is raised to ...`, since approving raises it.
+- `/` alone in the command bar, sent after esc closed its list, says `/ alone is no command:
+  type / and a command's name, the list shows them` instead of `Unknown command /: type / to
+  see the list`, and a stray space after the `/` (`/ hint try the cookie`) says `No space
+  after the /: /hint`.
+- The practice score says once which lanes had turns with no price (`L01, L02 and L08 had
+  turns with no price, …`), not the same line for every lane.
+- A lane on a model with no price asks whether to `carry on with no dollar cap` (1) or `stop the
+  lane` (0), as its question says; its answers said `more budget`, which is not what approving
+  does there.
+- `/settings` in a run names its `c` key `change this run's settings`, where it said `change
+  this run's` and stopped.
+- A command typed fast straight after the `/` in the lane list is no longer cut short or
+  turned into keys: a letter that came before the bar had opened went to the list (`/layout`
+  arrived as `/ayout`), and there it could act (the `a` of `/approve` approved the selected
+  lane's flag, the `q` of `/queue` quit). Every key after the `/` now goes into the bar, and
+  so does every key after `h` and `r`, which open the bar with `/hint` and `/redirect`.
+- While the host governor holds new lanes back (the machine is busy) and challenges wait, the
+  header says `lanes wait` and why, and the line that says the board loaded says it too
+  (`· no new lane starts for now: load 4.0 per CPU …`): before, the governor's warning came
+  just before that line, which hid it, and the queued lanes waited with no reason on the
+  screen. That line also counts in words: `1 challenge`, `1 lane started`, not `1 lanes started`.
+- `ctrl+g` brings back what your editor wrote again. Every editor, even one that exited
+  cleanly, was taken as failed (`the editor ... exited with status ShellExit(status=0, ...): the
+  box keeps what it had`), so the box never got the edited text. An editor a signal ends now
+  says which signal.
+- A take-over's shell opens under a line that says whose shell it is, where, and that `exit`
+  (or `ctrl+d`) hands the lane back, instead of at a bare `bash-3.2$` prompt. On macOS it no
+  longer opens with bash's note about changing to zsh.
+- While the filter hides the selected lane, the line under the list says so (`L02 is hidden by
+  the filter: esc clears it`) instead of offering that lane's answers, which every key refused.
+- In `flightdeck mock`, the header's clock note quotes its keys (`▶ live · ',' freezes`, `⏸ frozen
+  · ',' resumes '.' steps`): a bare comma read as punctuation (`▶ live: , freezes`).
+- When an `[instances]` table does nothing because the instance policy is not `auto`,
+  `preflight` now says what to change (`live_targets = "allowed"` under `[rules]`).
+- On noCTF, GZCTF and a table whose token is sent as it is, a 401 or 403 from the platform
+  now ends with `(is the token the right one for this event, and still valid?)`, as a refused
+  rCTF sign-in already did, instead of the bare status. A 404 to a route with `{game}` in it
+  (GZCTF's) asks whether `game` under `[http]` is the event's.
+- "The token variable ... is not set" (from `http check`, `http pull`, `plugin pull` and
+  `play --event`) now says where your keys file is: `put RCTF_TOKEN=<token> in your keys file
+  (~/.config/ctf-flightdeck/keys.env) or export it`.
+- `flightdeck plugin pull` and `flightdeck http pull` say `pulling the board through ...` (on
+  stderr) before they start, so a plugin that takes its time (a pull may take five minutes)
+  no longer looks like a frozen terminal.
+- `flightdeck start`'s question of how the challenges arrive no longer leaves "by hand" as the
+  only answer off CTFd: it says that on rCTF, noCTF or GZCTF `flightdeck http example --preset
+  NAME > event.toml` sets up an event flightdeck pulls and submits for.
+- An example profile left unedited no longer sends your token to its placeholder address:
+  `http check`, `http pull`, `plugin pull` and `play --event` refuse an `event.url` that is
+  still `ctf.example.org` and say to put the event's own address there, and so do
+  `flightdeck preflight` and `flightdeck start`, which once called such a profile ready. The http and
+  plugin examples in BOARDS.md and the guide now say to make the folder and edit the profile
+  first.
+- `flightdeck doctor` names a plugin that cannot be read once (`warn plugin myctf: ...`, not
+  `plugin myctf: plugin myctf: ...`), and for one whose folder moved or is gone it says to put
+  the folder back or change its path in the config, not to fix a `plugin.toml` that is not
+  there.
+- `flightdeck start FOLDER` on a folder already set up now says when the event's token
+  variable is not set, before it offers to launch; it used to say nothing, and the run then
+  refused.
+- A lane waiting for your answer to a flag or to more budget now gives its slot to the next
+  queued challenge once it has waited a minute, as a lane waiting for a live-box answer does at
+  once; an answer you give within the minute keeps its slot. At most `max_waiting` lanes
+  (`[lanes]`, 4 by default) are without a slot at once, each keeping its workspace; one more
+  keeps its slot, and so does a lane with a session open, and its transcript says why.
+  `max_waiting = 0` keeps every slot, the live-box wait's too.
+- A take-over whose shell cannot open no longer leaves the console frozen. When `docker` (or
+  `bash`) is not there to run, the shell ends at once with an error (the lane's container is
+  gone), or a signal ends it, you are back in the console straight away, the lane is handed
+  back as it was (a paused lane stays paused), and the status line says why: `the shell did
+  not start: docker was not found (is it installed and on your PATH?)`, or `the shell exited at
+  once with status 1`. A shell that never ran is not told to the lane, except that the
+  take-over closed its sessions, when it had any.
+- `flightdeck mock` no longer rings the terminal's bell unless your config says `bell = true`
+  under `[console]`: its lanes are scripted and need no one. A run rings as before, and
+  `bell = false` still silences both.
+- `/copy ` with a space lists what it copies (`output`, `command`, `flag`, `all`), each with a
+  few words, as `/sort` and `/autopilot` list theirs.
+- In the simple layout, while the filter hides the selected lane, the key line shows the keys
+  for no lane, as help and the command bar's `no lane` do, instead of keys that would be
+  refused.
+- Up and down in the command bar and a lane's chat box bring back what you sent this run,
+  newest first, as a shell does; down past the newest gives back what you were typing. While
+  the `/` menu is open they still move in the menu. `ctrl+g` opens what is in the box in your
+  editor (`$VISUAL`, else `$EDITOR`); when you save and quit, the text is back in the box on one
+  line and nothing is sent until you press Enter. With no editor set it says so and opens
+  nothing ([the guide](docs/GUIDE.md#the-command-bar)).
+- A lane that runs the same command again and again shows it at a glance. In a lane's calm
+  view the last row of a run of tool calls starts with how many times in a row the lane made
+  that call (`⎿ ×7 $ nc -z 127.0.0.1 9000 → exit 1`), and in the peek the repeats are one row
+  with the count, so the rows above it still show what the lane did before. Calls fold only
+  when their text is the same (blanks aside). `ctrl+o` still shows every call, and `/copy all`
+  copies every one.
+- A lane notices when its model server drops its oldest messages. Ollama does this past the
+  context it gives a model, with no error, and a lane with no `context` under `[api]` then went
+  on without its brief. Now, when the context grew but the server counted no more prompt
+  tokens than the call before, the lane says so, tells you once to set `OLLAMA_CONTEXT_LENGTH`
+  and `[api] context`, and goes on at once in a fresh context with a summary. For the rest of
+  the run, lanes on that model are refreshed when they reach the count where the drop was seen
+  ([details](docs/MODEL-APIS.md#context-on-a-server-on-your-machine)).
+- noCTF, DownUnderCTF's platform, ships as a preset of the http platform: `preset = "noctf"`
+  under `[http]`, the API's address as `event.url`, and the session token the site keeps once
+  you sign in in a variable named `NOCTF_...`. `flightdeck http example --preset noctf` prints
+  a profile for it. A flag noCTF queues for the organisers to judge comes back to you, never
+  marked wrong. It was written from noCTF's source and tried against a stand-in only, not a
+  real noCTF yet: run `flightdeck http check` first
+  ([Boards](docs/BOARDS.md#a-board-from-a-platform-with-a-json-api)).
+- GZCTF ships as a preset of the http platform: `preset = "gzctf"` and the game's number
+  (`game = "3"`) under `[http]`, with the value of your `GZCTF_Token` cookie (from the browser,
+  once you have signed in) in a variable named `GZCTF_...`. `flightdeck http example --preset
+  gzctf` prints a profile. flightdeck pulls the game's board, files and counted tries, sends a
+  flag and waits for GZCTF to judge it, and reads your team's solves. A site that encrypts its
+  flags (GZCTF's `ApiEncryption`) gets none from flightdeck: each flag comes back to you with
+  the reason, and `http check` and each pull say so. A table for another platform can say the
+  same with `[http.refuse]`. The preset has met a stand-in only, not a real GZCTF yet
+  ([BOARDS.md](docs/BOARDS.md#a-board-from-a-platform-with-a-json-api)).
+- A solver pack can say which flightdeck it needs: `flightdeck = ">=0.6"` in its `pack.toml`
+  (`>=`, `>`, `<=`, `<`, `==`, `!=`, joined by commas). A flightdeck that does not meet it
+  refuses the pack and says both versions, as in `this pack needs flightdeck >=0.6, you have
+  0.5.0: upgrade flightdeck`: `pack install` stops before it runs anything, and doctor,
+  `pack info`, the `l1` commands and a run use none of its engines. `pack info` shows the
+  requirement ([the solver guide](docs/SOLVERS.md#a-pack-that-needs-setup)).
+- The `/new` form and help ("Files, in this terminal") say how to drop a file in the terminal
+  you are in, and what to press when nothing lands: over SSH, inside tmux, VS Code's terminal,
+  iTerm2 and WezTerm on X11 each have their own sentence, and every other terminal the general
+  one ([the guide](docs/GUIDE.md#events-and-teams)).
+- Coding-agent lanes (`--agent claude` or `--agent codex`) hold the queue when the model API
+  keeps failing in a way that may pass (a rate limit, a 5xx, an overload), as flightdeck's own
+  lanes do: two lanes in a row whose CLI gave up on it, with no answer in between, hold the
+  queue, so the rest of the queue is not spent on an API that does not answer, and autopilot
+  disengages. `/unhold` puts the challenges they parked back in front of the queue (#33).
+- Under autopilot, a lane that ignores the hint or goes the wrong way again after autopilot
+  redirected it is escalated one rung, and at the top rung killed and its challenge parked, as
+  a stalled lane is. It used to wait for you (#33).
+- "Settings and health" on the home screen: your main settings (the config file, the model API,
+  whether its key is set, the models, where lanes run, and the layout, theme, bell, title and
+  mouse), each with where it is set, and the checks of `flightdeck doctor` with the fix under
+  each problem. A key shows as `set` or `not set`, never its value. The checks run while the
+  screen stays yours: `esc` leaves at once and stops them, `r` runs them again
+  ([the guide](docs/GUIDE.md#install-and-first-run)).
+- `ctrl+o` in the lane list opens your system's file window to attach files to the selected
+  lane's challenge, as `/attach` with no file does: for a terminal where dragging a file in
+  does nothing. In a lane's own view `ctrl+o` still turns details on or off. `?` lists both.
+- A `/new` with a screenshot that was answered with `reading 1 image...` and then could not be
+  added removes the copies of the files you dropped for it, and the warning says so: drop them
+  again with `/new`. They used to stay in the run's folder until the run ended.
+- `flightdeck init --force` replaces your config in one step, keeping its permissions: a write
+  cut off half way (a full disk) leaves the old config as it was, never half of each.
+- Instances on demand work with ctfd-whale: `plugin = "ctfd_whale"` under `[instances]`.
+  flightdeck never sends a start while your account runs a container, because whale's start
+  removes it: your own challenge's container is used as it is, and another challenge's is
+  treated as the cap and left alone. Each form the site writes the address in is read, and a
+  TLS endpoint reaches the lane as `tls://host:port`, with a brief that says to speak TLS to
+  it. Built from the plugin's public source and tested against a fake of it only
+  ([BOARDS.md](docs/BOARDS.md#which-plugin)).
+- Instances on rCTF v2. With `preset = "rctf2"` under `[http]` and `plugin = "rctf"` under
+  `[instances]`, flightdeck starts a challenge's instance on rCTF v2 before a lane works it,
+  as it does on CTFd: it signs in with your team token as the pull does, renews the instance
+  while it is worked and stops it when the challenge is solved. A challenge with an instance
+  is marked on the board when it is pulled. An instance that is still starting is asked about
+  every 10 seconds and gets no second start. A start the site guards with a CAPTCHA is said
+  once and never sent again; start that instance on the site, and flightdeck uses it. Built
+  from rCTF v2's API reference; it has not met a real event yet. The older rCTF keeps
+  `preset = "rctf"`, and its instancer (klodd) wants a CAPTCHA, so start those by hand.
+  `flightdeck http example --preset rctf2` prints a profile for it, with its token in
+  `RCTF_TOKEN` and the two `[instances]` lines to take the `#` off, and `--routes` writes
+  rCTF v2's routes out.
+- Containers on GZCTF. With `preset = "gzctf"` under `[http]` and `plugin = "gzctf"` under
+  `[instances]`, flightdeck starts a container challenge's container before a lane works it,
+  with your `GZCTF_Token` cookie, extends it near its end and stops it when the challenge is
+  solved. A pull marks the challenges whose type is `StaticContainer` or `DynamicContainer`.
+  flightdeck leaves 10 seconds between two container changes, as GZCTF refuses faster ones.
+  A site that serves its containers through its own WebSocket proxy gives no address a lane
+  can use, and flightdeck says so: open those from the site. Built from GZCTF's source and
+  tested against a stand-in only; it has not met a real event yet.
+- `instance_values` under `[http.list]` or `[http.detail]` names the values of `instance` that
+  mark a challenge on-demand, for a platform whose field says something for every challenge.
+- An instance with several addresses (a web front and a TCP service, say) gives its lanes all
+  of them. rCTF's `tcp-ssl` address, a TLS service, reaches the lane as `tls://host:port`, as
+  ctfd-whale's do. One flightdeck cannot hand a lane yet is named in the line that says the
+  instance started.
+- For an instancer flightdeck has no name for, `[instances]` reads more answers:
+  `endpoints_key` (a list of addresses), `state_key` with `running_states` and
+  `pending_states`, and `expires_unit = "ms"`. On the http platform the `[http]` list may mark
+  a challenge with an instance by an `instance` path, and a plugin's pull may say
+  `"instance": "on-demand"`.
+- flightdeck's own lanes can keep a program running across their turns: a debugger, an
+  interpreter, a connection to the challenge's instance. A lane starts one with
+  `session_start`, writes to it and reads it back with `session_send`, and stops it with
+  `session_close`; you see each as a step (`session s1 start: gdb -q ./chall`, `session s1 <
+  break main`). At most three per lane, one unused for ten minutes is closed, and every session
+  is closed when the lane ends or when you take it over; the lane hears which when you hand
+  back. Its output is handled like a command's: held secrets taken out, long output cut and
+  saved ([the guide](docs/GUIDE.md#what-a-lanes-shell-has)).
+- A lane can start a session on a terminal, for a program that shows its prompt or menu only at
+  one (`session s1 start (terminal): python3`). What it writes comes back as plain text: colours
+  and other terminal escapes are taken out before the lane or the console sees them. What the
+  lane sends it reaches the program as sent: the terminal edits nothing, and a send that holds
+  ctrl+d, which a terminal takes as the end of the input, is refused. The
+  lane's brief now tells it of sessions in one line; a coding-agent lane, which has none, is
+  not told.
+- A lane that asks for the live instance (instance `confirm`) gives its slot to the next queued
+  challenge while it waits for your answer, so the queue does not stand still while you are
+  away. Once you answer, the lane goes on if a slot is free; if none is, its state reads `queued`
+  until one frees, and it takes that one before anything queued. A `queued` lane that is asked
+  something more (a flag the platform gave no verdict on) waits for your answer first: it takes
+  no slot until you give it. Its transcript says which lane
+  took its slot, and the run log has a `slot` event for each move. Other approvals keep their
+  slot.
+- Claude lanes were checked against a real Claude Code (2.1.325), and what differed is fixed. A
+  message you send mid-turn now ends claude's turn with an interrupt request instead of Ctrl-C,
+  which made claude quit when the turn had just ended. A lane's tokens now count all that
+  claude's model calls wrote (they were low), and a call cut short by your message is charged
+  at your config price, since claude leaves it out of its cost. `claude started on ...` is noted
+  once, not every turn; a subscription's usage limit, near or reached, is a note on the lane; and
+  a turn that fails for want of a login says `api_error`, not `success`. The guide says what was
+  checked, and that a lane needs `CLAUDE_CODE_OAUTH_TOKEN` for a subscription: it does not see
+  the login `claude` uses on your machine.
+- `flightdeck http check` also asks the instancer's status when the profile has an
+  `[instances]` table: once, for the first challenge marked on-demand, with a `GET` only, and
+  it prints where the instance runs, that none runs, or what the site said. It never starts,
+  renews or stops one, and it exits with status 1 when the answer is nothing a run could use.
+- An rCTF v2 instance the site says "errored" is no longer taken for no instance. flightdeck
+  says it failed, sends no start for it while the site says so, and asks again later: stop it
+  or start it again on the site, and the run goes on.
+
+- `/settings` in a run now opens Settings and health, the same screen as on the home screen:
+  this run's settings on top (lanes at once, what happens to a flag, the layout and the theme;
+  `c` opens `/config` to change them), a line that counts the lanes that need you, your setup
+  and `flightdeck doctor`'s checks (in a run with `--agent claude` or `codex`, the checks of
+  `flightdeck doctor --agent`: that CLI and its login, and the API key a warning). The checks run beside the console at a lower priority, and
+  opening the screen again shows what they found until `r` checks again. `/config` works as
+  before; `/settings` is no longer another name for it, and `/settings lanes 8` says to type
+  `/config lanes 8`.
+- `flightdeck start` and the home screen's "Start a new CTF" set up an event on rCTF, rCTF v2,
+  noCTF or GZCTF: choose `3  json api`, then the platform, and give the site's address (on
+  GZCTF the game's page gives the game too) and your token, which the question says where to
+  find. The event file is the one `flightdeck http example --preset NAME` prints, filled in;
+  the token goes to your keys file as `RCTF_TOKEN_<NAME>`, `NOCTF_TOKEN_<NAME>` or
+  `GZCTF_TOKEN_<NAME>`, never shown. Without a terminal: `--preset NAME`, `--url` and, for
+  GZCTF, `--game NUMBER`. By hand is still `2`.
+- Settings and health is laid out in two columns: a long path, where a setting comes from, or
+  a check's detail and fix wraps under its own column instead of under the names on the left.
+- Making the terminal wider while the layout list is open takes away its "this terminal is
+  narrow" note (narrowed again, it comes back), and a status line said while the terminal was
+  narrow no longer says so once it is wide.
+
 ## 0.5.0 (2026-11-14)
 
 A calm console: the simple layout, a lane view of one row per step, a peek at the selected lane,

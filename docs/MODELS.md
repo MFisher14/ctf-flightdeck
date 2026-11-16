@@ -113,7 +113,10 @@ machine with under 23 GiB of GPU memory (or none) and 32,768 from 23 GiB, and dr
 oldest messages past that without saying so. Set `OLLAMA_CONTEXT_LENGTH=65536` where Ollama runs,
 restart it, and set `context = 65536` under `[api]` so lanes are refreshed before they outgrow it
 ([details](MODEL-APIS.md#context-on-a-server-on-your-machine)); `flightdeck doctor` checks it.
-The light model's short prompts fit 4,096.
+The light model's short prompts fit 4,096. If you forget, a lane whose server drops messages says
+so in its transcript and is refreshed then, but it has lost its oldest messages for one call.
+When a fresh context alone nearly fills the server's (4,096 is too small for most), the lane
+says so once and is not refreshed again: it goes on without its oldest messages.
 
 MLX (Apple silicon). For lanes, start the server with thinking off and replies of up to 8192
 tokens: Qwen3.5 on MLX solved practice challenges only that way. `init --provider mlx` prints the

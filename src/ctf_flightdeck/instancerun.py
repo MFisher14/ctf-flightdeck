@@ -49,7 +49,9 @@ all the same: no lane gets the address, the challenge waits, and the instance is
 A plugin that keeps one container per account (ctfd-owl: InstancesConfig.single) has a
 `max_running` of 1, so the queue's on-demand challenges take turns. A teammate's container
 of another challenge is not seen by a status; the start is then refused in the plugin's
-words, which read as the cap being reached.
+words, which read as the cap being reached. On ctfd-whale, whose start would remove that
+container, the status itself refuses (InstanceBusy, read as the cap the same way), and no
+start is sent while the account runs anything (platform/instances.py).
 
 When the platform says no:
 - "full" (the team's cap is reached, by teammates' instances this run cannot see): nothing
@@ -58,6 +60,9 @@ When the platform says no:
 - any other refusal or error: a warning with the platform's words (once per challenge and
   message), and the next try after a wait that doubles from RETRY_FIRST up to RETRY_MOST.
   The challenge keeps its place in the queue meanwhile; nothing else waits for it.
+- an instance the platform says failed (InstanceFailed: rCTF v2's "errored"): a warning of
+  its own, once, and no start is sent while the status says so; the status is asked again
+  after the same doubling wait, and a start goes only once it no longer says "failed".
 
 Expiry. When the plugin says how long an instance lives, it is renewed RENEW_BEFORE seconds
 before its end while its challenge is wanted. An instance that ended anyway (the renew was
@@ -83,12 +88,13 @@ from dataclasses import dataclass, replace
 
 from .core.deck import Deck
 from .core.model import Challenge, ChallengeStatus
-from .platform.instances import Instance, InstanceError, InstanceRefused
+from .platform.instances import Instance, InstanceBusy, InstanceError, InstanceFailed, InstancePending, InstanceRefused
 from .text import untrusted
 
 EVERY = 5.0  # seconds between looks at the deck
 RENEW_BEFORE = 300.0  # seconds before an instance's end at which it is renewed
 RETRY_FULL = 30.0  # seconds before a start is tried again when the team's cap was reached
+RETRY_PENDING = 10.0  # seconds before the status of an instance on its way up or down is asked again
 RETRY_FIRST = 30.0  # seconds before a start that failed is tried again, the first time
 RETRY_MOST = 300.0  # and at most
 CLAIM_FOR = 600.0  # seconds after a start with no clear answer in which an instance of its challenge that turns up is this run's
@@ -162,6 +168,7 @@ class InstanceRunner:
         self._said: set[tuple[str, str]] = set()  # (challenge id, message) warned of already
         self._full_said = False
         self._renew_refused: set[str] = set()
+        self.by_hand: set[str] = set()  # the platform wants a person for their start (a CAPTCHA): only the status is asked
         self._starting: dict[str, asyncio.Future[Instance]] = {}  # challenge id -> a start a cancel cut off, still going (close)
 
     # ------------------------------------------------------------------ what the run calls
@@ -254,12 +261,33 @@ class InstanceRunner:
         mine = cid in self.running and cid not in self.adopted  # ours, and thought ended: asked about again
         try:
             there = await asyncio.to_thread(self.client.status, cid)
+            if there is None and cid in self.by_hand:  # its start wants a person: the player starts it on the site
+                self.retry_at[cid] = self.clock() + RETRY_FULL
+                return
             got = there if there is not None else await self._send_start(cid)
         except InstanceError as exc:
             if exc.up and (exc.maybe_done or cid in self.unusable or cid in self._claims()):
                 self.unusable.add(cid)  # this run's, at an address it will not use: stopped when nobody works it, and by close()
             if exc.maybe_done:  # only a start is marked so: the platform may have started it all the same
                 self.unanswered[cid] = self.clock()
+            if isinstance(exc, InstancePending):  # on its way up (or down): nothing is sent for it, its status asked again soon
+                self.retry_at[cid] = self.clock() + RETRY_PENDING
+                self._warn(cid, f"instances: the instance of {self._name(cid)} is on its way up or down on the platform; its lanes "
+                                f"wait, and flightdeck asks again every {RETRY_PENDING:g} s")
+                return
+            if isinstance(exc, InstanceFailed):  # the platform says it failed: no start is sent, the status asked again later
+                count = self.failures.get(cid, 0) + 1
+                self.failures[cid] = count
+                self.retry_at[cid] = self.clock() + min(RETRY_FIRST * (2 ** (count - 1)), RETRY_MOST)
+                self._warn(cid, f"instances: {exc}. Its lanes wait, and flightdeck asks the platform again later (queued "
+                                "challenges behind it go on)")
+                return
+            if isinstance(exc, InstanceRefused) and exc.human:
+                self.by_hand.add(cid)
+                self.retry_at[cid] = self.clock() + RETRY_FULL
+                self._warn(cid, f"instances: could not start the instance of {self._name(cid)}: {exc}. Its lanes wait; flightdeck "
+                                f"sends no start for it again, and looks every {RETRY_FULL:g} s for the one you start")
+                return
             if not isinstance(exc, InstanceRefused):
                 self._failed(cid, str(exc), maybe_done=exc.maybe_done)
                 return
@@ -290,19 +318,23 @@ class InstanceRunner:
         if mine and there is not None and got.expires_at is not None and got.expires_at <= self.clock():
             got = replace(got, expires_at=None)  # the platform still runs it past the end it named: its end is not known
         self.running[cid] = got
-        url = got.url(web=ch.category == WEB)
+        urls = got.urls(web=ch.category == WEB)
+        url = urls[0]
         for target in self.urls:
-            target[cid] = (url,)
+            target[cid] = urls
         ch.live = True
-        if before is None or (before.host, before.port) != (got.host, got.port):
+        shown = untrusted(", ".join(urls), one_line=True)
+        if before is None or before.places() != got.places():
             how = "was already running (a teammate's, or an earlier run's: flightdeck will not stop it)" if adopted else "started"
-            text = f"instances: the instance of {self._name(cid)} {how}: {untrusted(url, one_line=True)}"
+            text = f"instances: the instance of {self._name(cid)} {how}: {shown}"
             if claimed:
-                text = (f"instances: the instance of {self._name(cid)} is up: {untrusted(url, one_line=True)} (the start flightdeck sent "
+                text = (f"instances: the instance of {self._name(cid)} is up: {shown} (the start flightdeck sent "
                         "earlier got no answer and was done all the same, so this is its own: it stops it when the challenge is done)")
-            self.deck.warn(text, challenge=cid, data={"source": "instances", "url": url, "adopted": adopted})
-        if before is not None and (before.host, before.port) != (got.host, got.port):
-            self._moved(cid, url)
+            if got.left_out:
+                text += f". Left out, as no lane can be given it: {untrusted('; '.join(got.left_out), one_line=True)}"
+            self.deck.warn(text, challenge=cid, data={"source": "instances", "url": url, "urls": list(urls), "adopted": adopted})
+        if before is not None and before.places() != got.places():
+            self._moved(cid, ", ".join(urls))
         self.deck.ready(cid)
 
     async def _send_start(self, cid: str) -> Instance:
@@ -347,6 +379,8 @@ class InstanceRunner:
         """Whether the platform names an instance of the challenge, at any address."""
         try:
             return await asyncio.to_thread(self.client.status, cid) is not None
+        except InstanceBusy:
+            return False  # the account's one container is another challenge's: none of this one
         except InstanceError as exc:
             if exc.up:
                 return True

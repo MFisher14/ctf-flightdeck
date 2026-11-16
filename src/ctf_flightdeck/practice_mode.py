@@ -50,7 +50,7 @@ import math
 import re
 import stat
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -668,9 +668,11 @@ def score(events_jsonl: Path, board: Board) -> Score:
         )
     solved = tuple(sorted(credits, key=lambda cid: credits[cid].index))  # in the order of the log, as they came
     unpriced = tuple(lane for lane, acc in lanes.items() if acc.dollars is None)
+    no_price = [lane for lane, acc in lanes.items() if acc.unpriced_turn]  # one note for them all: on a model with no price, it is every lane
+    if no_price:
+        who, its = (no_price[0], "its") if len(no_price) == 1 else (_and(no_price), "their")
+        notes.append(f"{who} had turns with no price, so {its} cost is not fully known: the dollars count only what had a price.")
     for lane, acc in lanes.items():
-        if acc.unpriced_turn:
-            notes.append(f"{lane} had turns with no price, so its cost is not fully known: the dollars count only what had a price.")
         if acc.cost_due:
             notes.append(f"{lane}'s coding-agent CLI never reported what its last turn cost, so its cost is not fully known: "
                          "the dollars count only what had a price.")
@@ -1185,3 +1187,8 @@ def _quote(text: str) -> str:
     """Untrusted text quoted for a message: made safe, and cut short."""
     safe = untrusted(text, one_line=True)
     return json.dumps(safe if len(safe) <= 60 else safe[:57] + "...", ensure_ascii=False)
+
+
+def _and(names: Sequence[str]) -> str:
+    """`L01, L02 and L03`."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"

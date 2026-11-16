@@ -8,7 +8,7 @@ queue, the lanes, your approvals, the resend of a rate-limited flag, the solved 
 
 Before you write one: if the platform's own web page talks JSON to the site, an `[http]` table
 in the event profile may be all it takes, with no code at all
-([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)); rCTF is a preset there. A
+([BOARDS.md](BOARDS.md#a-board-from-a-platform-with-a-json-api)); rCTF and GZCTF are presets there. A
 plugin is for what a table cannot say: HTML pages, a login with a password, encrypted
 requests, pages of a listing.
 
@@ -17,8 +17,8 @@ A plugin is not a solver pack and not a CTFd plugin:
 - A **pack** ([SOLVERS.md](SOLVERS.md)) is your no-model solvers, which work a challenge. A
   plugin never sees a challenge's files being worked; it only talks to the platform.
 - A **CTFd container plugin** is part of a CTFd site, which starts a challenge's instance
-  ([BOARDS.md](BOARDS.md#instances-on-demand)). flightdeck starts instances only on CTFd, never
-  through a plugin of yours.
+  ([BOARDS.md](BOARDS.md#instances-on-demand)). flightdeck starts instances only on CTFd and on
+  the http platform (rCTF v2), never through a plugin of yours.
 
 ## In short
 
@@ -197,7 +197,7 @@ List every challenge the platform shows you. For each:
 |---|---|---|
 | `ref` | yes | The platform's own id for the challenge, as a string of 1 to 128 printable characters. `submit` is sent it back, and `solved` lists these. |
 | `name` | yes | The challenge's name. |
-| `category`, `points`, `description`, `solves`, `urls`, `max_attempts` | no | As in a board's [`challenge.json`](BOARDS.md#challengejson), and checked by the same rules. Left out, the category is `misc` and the points are 0. |
+| `category`, `points`, `description`, `solves`, `urls`, `max_attempts`, `instance` | no | As in a board's [`challenge.json`](BOARDS.md#challengejson), and checked by the same rules. Left out, the category is `misc` and the points are 0. `"instance": "on-demand"` says the platform starts the challenge's instance when asked; flightdeck starts none on a plugin's platform: start it on the site yourself, and its lane works from the files. |
 | `files` | no | The handout files you downloaded into the folder `files` names, each as a path relative to that folder. |
 
 Download each file into the `files` folder of the request and list where you put it. A file
@@ -314,6 +314,7 @@ address, and each folder's ref; leave it where it is.
 solved list, and says what it found:
 
 ```
+pulling the board through the myctf plugin...
 pulled into quals/board: 14 challenges (web 4, cry 3, misc 7), 2 listed as solved; nothing was submitted
 ```
 
@@ -363,7 +364,7 @@ Each of these names the plugin and says what to do.
   `plugin myctf: /home/you/ctf/myctf/plugin.toml: no such file`; `... unknown key comand
   (known: name, api, command, version, description, token)`; `... says another name than
   [plugins.myctf] in your config: the two must match`; `plugin myctf speaks plugin API 2, and
-  this flightdeck (0.5.0) speaks 1: update flightdeck, or use the plugin's release for API 1`;
+  this flightdeck (0.6.0) speaks 1: update flightdeck, or use the plugin's release for API 1`;
   `plugin myctf: command names a file outside the plugin's folder`; `plugin myctf: command's
   program is not in the plugin's folder and not on PATH`.
 - **The profile names no plugin of yours:** `event.platform is not "ctfd", "manual",

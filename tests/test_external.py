@@ -230,7 +230,7 @@ class Lab:
                  flag_format: str = FLAG, secrets: dict[str, str] | None = None, dollar_cap: float | None = None,
                  deck_class: type[Deck] = Deck, docker: FakeDocker | None = None,
                  urls: dict[str, tuple[str, ...]] | None = None, instance: str = "auto",
-                 lights: L.Lights | None = None, l1=None) -> None:
+                 lights: L.Lights | None = None, l1=None, max_lanes: int = 2, containerized: bool = False) -> None:
         self.tmp = tmp_path
         self.fake = Fake(tmp_path, script)
         self.handouts = handouts or {"note": handout(tmp_path)}
@@ -266,7 +266,8 @@ class Lab:
             lights=lights,
             l1=l1,
         )
-        config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=2, submit=submit)
+        config = DeckConfig(event="t", flag_format=flag_format, models=MODELS, max_lanes=max_lanes, submit=submit,
+                            containerized=containerized)
         self.deck = deck_class(config, self.driver, RunClock(), verify or (lambda cid, flag: flag == "t{note}"))
         self.token_cap = token_cap
         self.dollar_cap = dollar_cap
@@ -511,10 +512,10 @@ def test_a_docker_lane_whose_image_has_no_claude_gives_up_naming_the_missing_cli
 
 DOCKER_FAKE = r"""#!/bin/sh
 # A fake claude inside the lane's container (POSIX sh: the image has no python). It records
-# what it got, reports one tool step whose output is a flag, and works on (sleep). SIGINT
-# ends its turn with a result, then it reads the next message, as tests/fake_agent_cli.py does.
-RESULT='{"type":"result","subtype":"error_during_execution","is_error":true,"result":"interrupted","total_cost_usd":0.001}'
-trap 'echo "$RESULT"' INT
+# what it got, reports one tool step whose output is a flag, and works on (sleep). An
+# interrupt request ends its turn with a result, then it reads the next message, as
+# tests/fake_agent_cli.py does.
+RESULT='{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","total_cost_usd":0.001}'
 IFS= read -r line
 printf '%s\n' "$line" > /work/.flightdeck/fake-stdin.txt
 env > /work/.flightdeck/fake-env.txt
@@ -525,9 +526,13 @@ sleep 600 &
 echo "$!" > /work/.flightdeck/fake-child.txt
 # the flag last: the lane freezes this script as soon as it reads it, so what the test reads is written first
 echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"t{note}"}]}}'
-wait
-IFS= read -r line
-printf '%s\n' "$line" > /work/.flightdeck/fake-stdin-2.txt
+n=2
+while IFS= read -r line; do
+  case "$line" in
+    *'"control_request"'*) echo '{"type":"control_response","response":{"subtype":"success"}}'; echo "$RESULT" ;;
+    *) printf '%s\n' "$line" > "/work/.flightdeck/fake-stdin-$n.txt"; n=$((n + 1)) ;;
+  esac
+done
 wait
 """
 
@@ -603,7 +608,7 @@ def test_a_docker_claude_lane_runs_the_cli_in_the_container_with_its_key_by_name
             assert lab_apply(deck, iv.Decline(lane.id))
             told = await written(records / "fake-stdin-2.txt", "the answer passed on in the container")
             assert json.loads(told)["message"]["content"].startswith("Note from flightdeck: The player did not submit t{note}")
-            # running again: the shell goes back to sleep in `wait` once it has written the answer down
+            # running again: the shell goes back to sleep in `read` once it has written the answer down
             await until_async(lambda: state(pid), "S", "the CLI running again")
             await until_async(lambda: state(child), "S", "what it started running again")
             assert lab_apply(deck, iv.Kill(lane.id, requeue=False))
@@ -893,7 +898,9 @@ def test_unreadable_lines_become_notes_and_the_lane_carries_on(tmp_path):
 
 
 def test_a_failed_turn_ends_the_lane_with_claudes_reason(tmp_path):
-    script = {"turns": [{"calls": [], "is_error": True, "subtype": "success", "result": "Invalid API key · Please run /login"}]}
+    # as claude 2.1.325 reports a turn it could not make for want of a login (P86): subtype "success", is_error true
+    script = {"turns": [{"calls": [], "is_error": True, "subtype": "success", "terminal_reason": "api_error",
+                         "result": "Not logged in · Please run /login"}]}
 
     async def main():
         lab = Lab(tmp_path, script)
@@ -902,7 +909,145 @@ def test_a_failed_turn_ends_the_lane_with_claudes_reason(tmp_path):
             lane = lab.lane()
             await until(lambda: lane.finished, "the lane to end")
             assert lane.state is LaneState.GAVE_UP
-            assert lane.result == "claude's turn failed (success): Invalid API key · Please run /login"
+            assert lane.result == "claude's turn failed (api_error): Not logged in · Please run /login"
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def three_handouts(tmp_path: Path) -> dict[str, Path]:
+    return {cid: handout(tmp_path, cid) for cid in ("a", "b", "c")}
+
+
+OVERLOADED = {"status": 529, "error": "overloaded"}
+
+
+def test_two_claude_lanes_ending_on_an_overloaded_api_hold_the_queue_and_autopilot_lets_go(tmp_path):
+    """An outage with coding-agent lanes (P78): one lane at a time, and each lane's claude
+    retries a 529 until it gives up. The second lane to end so holds the queue, naming both,
+    so the third challenge is not started on an API that does not answer, and autopilot
+    disengages on that hold. Lifting the hold queues the two parked challenges again."""
+    from ctf_flightdeck.autopilot import Autopilot, Budget, State
+
+    script = {"turns": [{"api_error": OVERLOADED}, {"api_error": OVERLOADED}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, handouts=three_handouts(tmp_path), max_lanes=1, containerized=True)
+        pilot = Autopilot(lab.deck, Budget(dollars=5.0))
+        pilot.attach()
+        try:
+            assert pilot.engage().ok
+            lab.release()
+            await until(lambda: lab.deck.held and len([x for x in lab.deck.lanes.values() if x.finished]) == 2, "the hold")
+            first, second = sorted(lab.deck.lanes.values(), key=lambda lane: lane.id)
+            assert first.result.startswith("claude's turn failed (api_error): API Error: 529")
+            assert "the model API keeps failing: 2 lanes in a row ended on it" in lab.deck.held
+            assert first.id in lab.deck.held and second.id in lab.deck.held and "claude on small: HTTP 529" in lab.deck.held
+            assert len(lab.deck.lanes) == 2  # the third challenge waits on the queue
+            await until(lambda: pilot.state is State.DISENGAGED, "autopilot to disengage")
+            assert pilot.off().ok
+            assert lab.deck.release_hold().message.startswith("Lifted the hold on the queue: 2 parked challenges queued again")
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("failure, passing", [
+    (OVERLOADED, True),
+    ({"status": 429, "error": "rate_limit"}, True),
+    ({"status": None, "error": "server_error"}, True),  # no HTTP answer: the message's category says what it was
+    ({"status": 503, "error": "unknown", "result_status": False, "message_error": False}, True),  # the last retry's
+    ({"status": 401, "error": "authentication_failed"}, False),
+    ({"status": 400, "error": "invalid_request"}, False),
+    ({"status": None, "error": "unknown"}, False),
+])
+def test_only_a_claude_failure_that_may_pass_counts_toward_an_outage(tmp_path, failure, passing):
+    script = {"turns": [{"api_error": failure}, {"api_error": failure}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, handouts=three_handouts(tmp_path), max_lanes=1)
+        try:
+            lab.release()
+            await until(lambda: len([x for x in lab.deck.lanes.values() if x.finished]) >= 2, "two lanes to end")
+            if passing:
+                await until(lambda: lab.deck.held, "the hold")
+                assert len(lab.deck.lanes) == 2
+            else:
+                await until(lambda: len(lab.deck.lanes) == 3, "the third lane")  # the queue went on
+                assert lab.deck.held == ""
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_reply_from_the_api_between_two_claude_failures_means_no_outage_yet(tmp_path):
+    """L01 fails on a 529; L02 gets an answer, then fails on one: the API answered in between,
+    so the queue goes on. L03 fails too: two in a row (L02, L03), and the queue is held."""
+    script = {"turns": [
+        {"api_error": OVERLOADED},
+        {"calls": [{"text": "Looking at the handout first."}], "api_error": OVERLOADED},
+        {"api_error": OVERLOADED},
+    ]}
+
+    async def main():
+        lab = Lab(tmp_path, script, handouts=three_handouts(tmp_path), max_lanes=1)
+        try:
+            lab.release()
+            await until(lambda: len(lab.deck.lanes) == 3, "the third lane")
+            assert all(lane.state is LaneState.GAVE_UP for lane in list(lab.deck.lanes.values())[:2])
+            await until(lambda: lab.deck.held, "the hold")
+            assert "2 lanes in a row ended on it (L02, L03)" in lab.deck.held
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("message, passing", [
+    ("exceeded retry limit, last status: 503 Service Unavailable", True),
+    ("exceeded retry limit, last status: 429 Too Many Requests, request id: req_1", True),
+    ("stream disconnected before completion: connection reset", True),
+    ("Selected model is at capacity. Please try a different model.", True),
+    ("We’re currently experiencing high demand, which may cause temporary errors.", True),
+    ("unexpected status 401 Unauthorized: invalid key", False),
+    ("stream disconnected before completion: Incomplete response returned, reason: content_filter", False),
+    ("Quota exceeded. Check your plan and billing details.", False),
+])
+def test_two_codex_lanes_failing_on_an_api_failure_that_may_pass_hold_the_queue(tmp_path, message, passing):
+    script = {"turns": [{"fail": message}, {"fail": message}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", handouts=three_handouts(tmp_path), max_lanes=1)
+        try:
+            lab.release()
+            await until(lambda: len([x for x in lab.deck.lanes.values() if x.finished]) >= 2, "two lanes to end")
+            assert all(lane.result.startswith("codex's turn failed: ") for lane in lab.deck.lanes.values() if lane.finished)
+            if passing:
+                await until(lambda: lab.deck.held, "the hold")
+                assert "codex on small: " in lab.deck.held and len(lab.deck.lanes) == 2
+            else:
+                await until(lambda: len(lab.deck.lanes) == 3, "the third lane")
+                assert lab.deck.held == ""
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_a_codex_item_between_two_failures_means_the_api_answered(tmp_path):
+    fail = "exceeded retry limit, last status: 503 Service Unavailable"
+    script = {"turns": [{"fail": fail}, {"items": [{"message": "Reading the note."}], "fail": fail}, {"fail": fail}]}
+
+    async def main():
+        lab = Lab(tmp_path, script, kind="codex", handouts=three_handouts(tmp_path), max_lanes=1)
+        try:
+            lab.release()
+            await until(lambda: len(lab.deck.lanes) == 3, "the third lane")
+            await until(lambda: lab.deck.held, "the hold")
+            assert "2 lanes in a row ended on it (L02, L03)" in lab.deck.held
         finally:
             await lab.finish()
 
@@ -1047,6 +1192,34 @@ def test_what_claude_reports_when_a_turn_ends_is_logged_with_why_and_the_model_t
             # reported after the escalation, while the lane runs "big": still the small model's
             assert (cut["model"], cut["tokens"], cut["dollars"], cut["turn_end"]) == ("small", 33, pytest.approx(0.005), True)
             assert cut["why"] == external.CUT_TURN.format(kind="claude") and lane.model == "big"
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_output_tokens_claudes_events_left_out_of_a_turn_escalation_cut_still_count(tmp_path):
+    """The old model's last turn ends after the lane moved on: its result is not the lane's work
+    any more, but the output its assistant events had not reported yet (1 of 300 here) was spent,
+    and its modelUsage has it, so it counts on the lane as that model's."""
+    script = {"turns": [
+        {"calls": [{"tools": [bash("echo small")], "usage": [100, 10, 0, 0]}], "cost": 0.01},
+        {"calls": [{"text": "still thinking", "usage": [30, 300, 0, 0], "streamed": 1, "cost": 0.005}, {"think": 30.0}]},
+        {"calls": [{"tools": [bash("echo big")]}]},
+    ]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: len(lab.fake.messages()) == 2 and lab.run(lane).pending_tokens, "the second turn under way")
+            assert lab.deck.apply(iv.Escalate(lane.id)).ok
+            await until(lambda: "$ echo big" in steps(lane), "the stronger model's step")
+            await until(lambda: len(spends(lab.deck)) >= 2, "the cut turn's spend")
+            cut = spends(lab.deck)[1]
+            assert cut["why"] == external.CUT_TURN.format(kind="claude")
+            assert (cut["model"], cut["tokens"]) == ("small", 30 + 300)  # not 30 + 1
         finally:
             await lab.finish()
 
@@ -1624,7 +1797,7 @@ def test_under_auto_only_a_flag_the_agent_claims_is_submitted_and_a_rejection_go
             await until(lambda: lane.pending is not None, "t{two} for the player")
             assert flags_waiting(lane) == [(PendingKind.SUBMIT, "t{two}")]
             assert tried == ["t{one}"]
-            assert any(r["rec"] == "signal" and r["in_turn"] for r in lab.fake.records())
+            assert any(r["rec"] == "control" and r["subtype"] == "interrupt" and r["in_turn"] for r in lab.fake.records())
             assert lab.deck.apply(iv.Decline(lane.id)).ok
             await until(lambda: lane.finished, "the lane solved")
             assert lane.state is LaneState.SOLVED
@@ -2738,6 +2911,191 @@ def test_a_hint_ends_the_agents_turn_and_goes_in_as_its_next_message(tmp_path):
     run(main())
 
 
+# ====================================================================== claude: what a real run showed (P86)
+
+
+def test_an_interrupt_that_finds_claudes_turn_over_lets_that_turn_end_as_its_own(tmp_path):
+    """The hint's interrupt request reaches claude just as its turn ends: claude, waiting for a
+    message by then, does nothing with it, and its result is the turn's own end (subtype
+    success), so its last words are read for a flag as for any turn. A SIGINT then would have
+    ended claude itself."""
+    script = {"turns": [
+        {"calls": [{"tools": [bash("echo working")]}, {"think": 1.0}], "result": "FLAG: t{note}", "finishes": True},
+    ]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo working" in steps(lane), "the first step")
+            assert lab.deck.apply(iv.Hint(lane.id, "try xor")).ok
+            await until(lambda: lane.pending is not None, "the flag in the turn's last words")
+            assert lane.pending.flag == "t{note}"
+            assert [(r["subtype"], r["in_turn"]) for r in lab.fake.records("control")] == [("interrupt", True)]
+            assert lab.fake.records("signal") == [] and not any(r["rec"] == "exit" for r in lab.fake.records())
+            assert lane.hints == ["try xor"]  # it goes with the next message: the lane waits for the flag first
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_claude_is_noted_as_started_once_though_it_sends_an_init_event_every_turn(tmp_path):
+    script = {"turns": [{"calls": [{"tools": [bash("echo one")]}]}, {"calls": [{"tools": [bash("echo two")]}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo two" in steps(lane), "the second turn's step")
+            assert len(lab.fake.messages()) >= 2
+            assert len([n for n in notes(lane) if n.startswith("claude started on")]) == 1
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_output_tokens_claudes_assistant_events_leave_out_are_counted_when_its_turn_ends(tmp_path):
+    """An assistant event carries its call's output tokens only as far as they had come; the
+    result's modelUsage has them all."""
+    script = {"turns": [
+        {"calls": [{"tools": [bash("echo one")], "usage": [100, 50, 0, 0], "streamed": 1},
+                   {"text": "done", "usage": [10, 400, 20, 0], "streamed": 2}], "cost": 0.01},
+        {"calls": [{"think": 30.0}]},
+    ]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo one" in steps(lane), "the step")
+            await until(lambda: len(lab.fake.messages()) == 2, "the turn's end")
+            await until(lambda: lane.dollars is not None and lane.dollars > 0, "the turn's cost")
+            assert lane.tokens == 100 + 50 + 10 + 20 + 400  # not 100 + 1 + 10 + 20 + 2
+            assert lane.cached_tokens == 20
+            assert lane.dollars == pytest.approx(0.01)
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+@pytest.mark.parametrize("priced", [True, False])
+def test_a_call_an_interrupt_cuts_short_is_charged_at_the_config_price_since_claude_charges_it_nowhere(tmp_path, priced):
+    script = {"turns": [
+        {"calls": [{"tools": [bash("echo one")], "usage": [100, 10, 0, 0], "cost": 0.01},
+                   {"think": 30.0, "streaming": True, "usage": [1000, 200, 0, 0], "streamed": 5, "text": "partial answer"}]},
+        {"calls": [{"tools": [bash("echo after")]}]},
+    ]}
+    prices = {"small": Price(input=2.0, output=10.0)} if priced else {}
+
+    async def main():
+        lab = Lab(tmp_path, script, prices=prices)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo one" in steps(lane), "the first step")
+            assert lab.deck.apply(iv.Hint(lane.id, "look again")).ok
+            await until(lambda: "$ echo after" in steps(lane), "the step after the hint")
+            assert lane.tokens == 110 + 1005  # the cut call: its input, and the output it had sent
+            cut = "claude leaves a model call cut short out of its cost"
+            if priced:
+                assert lane.dollars == pytest.approx(0.01 + (1000 * 2.0 + 5 * 10.0) / 1e6)
+                assert not any(n.startswith(cut) for n in notes(lane))
+            else:
+                assert lane.dollars == pytest.approx(0.01)
+                assert [n for n in notes(lane) if n.startswith(cut)] == [
+                    f"{cut}, and the config has no price for small: such a call's cost is not in the lane's dollars"]
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_claudes_rate_limit_events_become_notes_once_per_state_and_its_control_answers_are_known(tmp_path):
+    resets = 1794729600
+    limit = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed_warning", "resetsAt": resets,
+                                                             "rateLimitType": "seven_day", "utilization": 0.78}}
+    fine = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour"}}
+    hit = {"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": resets, "rateLimitType": "seven_day"}}
+    refused = {"type": "control_response", "response": {"subtype": "error", "request_id": "x", "error": "no turn to interrupt"}}
+    accepted = {"type": "control_response", "response": {"subtype": "success", "request_id": "y"}}
+    lines = [json.dumps(e) for e in (limit, fine, limit, accepted, refused, hit, hit)]
+    script = {"turns": [{"calls": [{"raw": lines, "tools": [bash("echo one")]}]}]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: "$ echo one" in steps(lane), "the step after the events")
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(resets))
+            said = [n for n in notes(lane) if n.startswith("claude says") or n.startswith("claude refused")]
+            assert said == [
+                f"claude says 78% of its seven_day limit is used; it resets at {when}",
+                "claude refused flightdeck's interrupt: no turn to interrupt",
+                f"claude says its seven_day limit is reached; it resets at {when}: its model calls are refused until then",
+            ]
+            assert not any("does not know" in n for n in notes(lane))
+        finally:
+            await lab.finish()
+
+    run(main())
+
+
+def test_the_fake_claude_plays_what_a_real_claude_did(tmp_path):
+    """The stand-in the other tests use keeps to what Claude Code 2.1.325 did in a real run
+    (P86): an init event every turn, an interrupt request that finds it waiting answered and
+    nothing more, an interrupted turn's result, and its exit on a SIGINT while it waits."""
+    fake = Fake(tmp_path, {"turns": [
+        {"calls": [{"text": "hi", "usage": [2, 6, 0, 3289]}], "cost": 0.0007},
+        {"calls": [{"text": "bye"}]},
+        {"calls": [{"think": 30.0}]},
+    ]})
+    proc = subprocess.Popen([str(fake.bin / "claude"), "-p", "--input-format", "stream-json", "--output-format",
+                             "stream-json", "--verbose"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, cwd=tmp_path)
+    try:
+        def send(obj: dict) -> None:
+            proc.stdin.write((json.dumps(obj) + "\n").encode())
+            proc.stdin.flush()
+
+        def until_event(kind: str) -> list[dict]:
+            seen = []
+            while True:
+                line = proc.stdout.readline()
+                assert line, f"the fake ended before a {kind} event: {seen}"
+                seen.append(json.loads(line))
+                if seen[-1]["type"] == kind:
+                    return seen
+
+        user = {"type": "user", "message": {"role": "user", "content": "say hi"}, "parent_tool_use_id": None}
+        send(user)
+        first = until_event("result")
+        assert [e["type"] for e in first] == ["system", "assistant", "result"]
+        assert first[-1]["modelUsage"]["claude-default"]["outputTokens"] == 6 and first[-1]["total_cost_usd"] == 0.0007
+        send(user)
+        assert until_event("result")[0]["type"] == "system"  # an init event each turn
+        send({"type": "control_request", "request_id": "idle", "request": {"subtype": "interrupt"}})
+        assert until_event("control_response")[-1]["response"]["request_id"] == "idle"
+        assert proc.poll() is None  # an interrupt request that finds it waiting does nothing more
+        send(user)
+        assert until_event("system")
+        send({"type": "control_request", "request_id": "busy", "request": {"subtype": "interrupt"}})
+        cut = until_event("result")
+        assert [e["type"] for e in cut] == ["control_response", "user", "result"]
+        assert (cut[-1]["subtype"], cut[-1]["result"], cut[-1]["total_cost_usd"]) == ("error_during_execution", "", 0.0007)
+        proc.send_signal(signal.SIGINT)  # waiting for a message: it exits
+        assert proc.wait(10) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+
+
 def test_pause_freezes_the_cli_and_resume_lets_it_go_on(tmp_path):
     gate = tmp_path / "answer"
     script = {"turns": [{"calls": [{"tools": [bash("echo one")]}, {"until": str(gate), "tools": [bash("echo two")]}]}]}
@@ -3035,11 +3393,11 @@ def held_up_at_sigcont(monkeypatch, fake: Fake, step: Path) -> None:
     real_killpg = os.killpg
 
     def held_up(pgid, sig):
-        taken = len(fake.records("signal"))
+        taken = len(fake.records("signal")) + len(fake.records("control"))
         real_killpg(pgid, sig)
         if sig == signal.SIGCONT:
             end = time.monotonic() + 10
-            while len(fake.records("signal")) == taken and not step.exists() and time.monotonic() < end:
+            while len(fake.records("signal")) + len(fake.records("control")) == taken and not step.exists() and time.monotonic() < end:
                 time.sleep(0.01)
 
     monkeypatch.setattr(os, "killpg", held_up)
@@ -3078,7 +3436,8 @@ def test_a_hand_back_interrupts_the_frozen_cli_before_it_runs_again(tmp_path, mo
             assert lab.deck.apply(iv.HandBack(lane.id, session.finish())).ok
             await until(lambda: "$ echo next" in steps(lane), "the step after the hand-back")
             assert not (work / "lane-b.txt").exists()  # the step it had chosen before was cut off
-            assert [(r["sig"], r["in_turn"]) for r in lab.fake.records("signal")] == [("SIGINT", True)]  # woke with it
+            assert [(r["subtype"], r["in_turn"]) for r in lab.fake.records("control")] == [("interrupt", True)]  # woke with it
+            assert lab.fake.records("signal") == []  # never SIGINT: claude exits on one that finds it waiting
         finally:
             await lab.finish()
 
@@ -3280,6 +3639,7 @@ def test_a_docker_cli_lanes_brief_names_the_debugger_and_decompiler_only_when_it
             await until(lambda: lab.fake.messages(), "the CLI's first message")
             first = lab.fake.messages()[0]
             assert (said in first.splitlines()) is named and ("Your shell has" in first) is named, first
+            assert "session" not in first  # P87: a CLI lane has no session tools, so it is not told of them
         finally:
             await lab.finish()
 

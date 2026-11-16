@@ -55,6 +55,16 @@ def test_unknown_command_fails_loudly():
         parse("/nope now")
 
 
+def test_a_slash_alone_and_a_slash_with_a_stray_space_are_told_apart():
+    for alone in ("/", "/   "):
+        with pytest.raises(CommandError, match="^/ alone is no command: type / and a command's name, the list shows them$"):
+            parse(alone)
+    with pytest.raises(CommandError, match="^No space after the /: /hint$"):
+        parse("/ hint try the cookie")
+    with pytest.raises(CommandError, match="^No space after the /: /L02$"):
+        parse("/ L02")
+
+
 def test_lane_ids_are_normalised():
     assert [lane_id(t) for t in ("L1", "l07", "L123", "x7", "L", "7")] == ["L01", "L07", "L123", None, None, None]
 
@@ -196,21 +206,36 @@ def state() -> State:
 
 
 def test_the_aliases_are_the_ones_decided_and_approve_has_none():
-    assert {alias: command.name for alias, command in BY_ALIAS.items()} == {"q": "quit", "exit": "quit", "settings": "config", "lanes": "back"}
+    assert {alias: command.name for alias, command in BY_ALIAS.items()} == {"q": "quit", "exit": "quit", "lanes": "back"}
     assert BY_NAME["approve"].aliases == ()  # the one command that spends a try is typed whole
     with pytest.raises(CommandError, match="Unknown command /a: type / to see the list"):
         parse("/a")
 
 
-@pytest.mark.parametrize(("typed", "name"), [("/q", "quit"), ("/exit", "quit"), ("/EXIT", "quit"), ("/settings", "config"), ("/lanes", "back")])
+@pytest.mark.parametrize(("typed", "name"), [("/q", "quit"), ("/exit", "quit"), ("/EXIT", "quit"), ("/lanes", "back")])
 def test_an_alias_typed_whole_is_its_command(typed, name):
     parsed = parse(typed)
     assert (parsed.command.name, parsed.lane, parsed.arg) == (name, None, "")
     assert parsed.command is BY_NAME[name] is find(typed[1:])
 
 
+def test_settings_is_a_command_of_its_own_since_p90_and_config_keeps_its_arguments():
+    parsed = parse("/settings")
+    assert (parsed.command.name, parsed.lane, parsed.arg) == ("settings", None, "") and not needs_lane(parsed)
+    assert BY_NAME["settings"].aliases == () and BY_NAME["config"].aliases == ()
+    assert parse("/config lanes 8").arg == "lanes 8"
+    # what /settings took as /config's alias is refused with where it went, never run as something else
+    for typed, said in (("/settings lanes 8", "/config lanes 8"), ("/SETTINGS Submit auto", "/config Submit auto"),
+                        ("/settings file", "/config file")):
+        with pytest.raises(CommandError, match=rf"^/settings takes no argument: {said} changes this run's$"):
+            parse(typed)
+    with pytest.raises(CommandError, match=r"^/settings takes no argument$"):
+        parse("/settings nord")
+    names = [c.name for c in COMMANDS]
+    assert names.index("settings") + 1 == names.index("config")  # beside the run's other settings
+
+
 def test_an_alias_takes_what_its_command_takes_and_is_refused_as_its_command_is():
-    assert parse("/settings lanes 8").arg == "lanes 8" and parse("/settings lanes 8").command.name == "config"
     with pytest.raises(CommandError, match=r"^/quit takes no argument$"):
         parse("/q now")
     with pytest.raises(CommandError, match=r"^/back takes no argument$"):
@@ -236,13 +261,13 @@ def test_the_menu_finds_a_command_from_the_second_word_of_its_name():
 
 
 def test_the_menu_finds_a_command_from_an_alias_and_shows_the_aliases_beside_the_name():
-    assert texts("/set") == ["/config "] and texts("/ex") == ["/quit "] and texts("/lan") == ["/back "]
+    assert texts("/set") == ["/settings "] and texts("/ex") == ["/quit "] and texts("/lan") == ["/back "]
     assert texts("/la") == ["/layout ", "/back "]  # a name before an alias
     assert texts("/q") == ["/quit ", "/queue "]  # /q is /quit, whole: it leads the name that only starts with q
     assert texts("/lanes") == ["/back "] and texts("/EXIT") == ["/quit "]
     shown = {c.text.strip(): c.also for c in complete("/")}
-    assert shown["/quit"] == "/q, /exit" and shown["/config"] == "/settings" and shown["/back"] == "/lanes"
-    assert [name for name, aliases in shown.items() if aliases] == ["/config", "/back", "/quit"]  # no other command has one
+    assert shown["/quit"] == "/q, /exit" and shown["/config"] == "" and shown["/back"] == "/lanes"
+    assert [name for name, aliases in shown.items() if aliases] == ["/back", "/quit"]  # no other command has one
     assert texts("/", lane=False)[:4] == ["/new ", "/help ", "/config ", "/queue "]  # nothing typed: the order as it was
 
 
@@ -267,6 +292,16 @@ def test_after_its_name_a_command_lists_the_words_it_takes():
     assert by_text["/layout deck"].help == "the board and every column (in use)"
     assert by_text["/layout simple"].help == "the lanes and what needs you" and by_text["/layout simple"].label == "/layout simple"
     assert not any(c.suggested or c.also for c in by_text.values())
+
+
+def test_copy_lists_what_it_copies_each_with_what_it_is():
+    listed = complete("/copy ")
+    assert [c.text for c in listed] == ["/copy output", "/copy command", "/copy flag", "/copy all"]
+    assert all(c.help and not (c.suggested or c.also) for c in listed)
+    assert listed[0].help == "the last output (also /copy alone)"
+    assert texts("/copy f") == ["/copy flag"] and texts("/copy C") == ["/copy command"]
+    assert texts("/copy flag") == [] and texts("/copy x") == []
+    assert texts("/co") == ["/copy ", "/config "]  # the name first: the words only after the space
 
 
 def test_a_word_typed_whole_is_not_listed_since_tab_would_change_nothing():
@@ -313,7 +348,7 @@ def test_the_console_is_asked_for_its_state_only_by_a_command_whose_words_follow
 def test_a_command_without_words_of_its_own_lists_nothing_after_its_name():
     for typed in ("/hint ", "/kill ", "/kill p", "/approve ", "/config ", "/settings ", "/new ", "/attach ", "/note ", "/filter ", "/diff "):
         assert complete(typed, state=state) == [], typed
-    assert [name for name, command in BY_NAME.items() if command.words] == ["open", "theme", "layout", "queue", "autopilot", "sort"]
+    assert [name for name, command in BY_NAME.items() if command.words] == ["copy", "open", "theme", "layout", "queue", "autopilot", "sort"]
 
 
 def test_suggestions_still_lead_the_words_after_a_name():

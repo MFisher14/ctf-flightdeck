@@ -66,7 +66,7 @@ def run_until(w: FakeWorld, cond: Callable[[], object], limit: int, max_lanes: i
             return
         w.tick()
         if max_lanes is not None:
-            active = len(w.deck.active_lanes())
+            active = len(w.deck.slotted_lanes())
             assert active <= max_lanes, f"{active} lanes active at tick {w.ticks}, over the cap of {max_lanes}"
     assert cond(), f"condition not met within {limit} ticks (world at tick {w.ticks})"
 
@@ -140,10 +140,10 @@ def test_every_scenario_runs_200_ticks_without_exceeding_its_lane_cap(name, cap)
     limit = w.config.max_lanes
     assert limit == (w.scenario.max_lanes if cap is None else cap)
     workable = sum(1 for s in w.scenario.specs if s.status is ChallengeStatus.NEW)
-    start, peak = w.ticks, len(w.deck.active_lanes())
+    start, peak = w.ticks, len(w.deck.slotted_lanes())
     for _ in range(200):
         w.tick()
-        active = len(w.deck.active_lanes())
+        active = len(w.deck.slotted_lanes())  # a lane waiting for a live-box answer holds none (P83)
         assert active <= limit, f"{active} lanes active at tick {w.ticks}, over the cap of {limit}"
         assert not w.deck.queue or active == limit, (
             f"tick {w.ticks}: {len(w.deck.queue)} queued while only {active} of {limit} lanes are busy"

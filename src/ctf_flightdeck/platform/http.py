@@ -39,6 +39,12 @@ teammate's profile too. What keeps that safe is in this module:
   back to the player and is never recorded as wrong.
 - One request per flag, never sent again from here (a second send could spend a try); the
   resend of a rate-limited flag is the run's (platform/plugin_run.py), as for a plugin.
+- A platform can say it wants something of a flag this engine cannot give (GZCTF's encrypted
+  submissions): [http.refuse] names a request, made without the token, and a path whose
+  value means "do not send". It is asked before every flag, and a value there, or no answer
+  to read, keeps the flag back with the table's reason. A pull and the dry run say so too.
+- A cookie's value may be pasted with the cookie's name in front of it (NAME=value, as a
+  browser's tools copy it): the name is taken off, so the platform is not sent NAME=NAME=value.
 
 parse_config() checks the table (ValueError naming the key; a string value of the profile is
 never shown). HttpCaller is the engine: the same three calls a plugin answers (pull, submit,
@@ -78,21 +84,31 @@ import httpx
 from .. import __version__
 from ..plugins.call import MAX_CHALLENGES, MAX_SHOWN, TOKEN_MARK, VERDICTS, CallFailed, PullReply, Verdict, valid_ref
 from ..text import untrusted
-from .ctfd import CONNECT_TIMEOUT, MAX_FILE_BYTES, MAX_REDIRECTS, _message, _retry_after
+from .ctfd import API, CONNECT_TIMEOUT, MAX_FILE_BYTES, MAX_REDIRECTS, _message, _retry_after
+from .instances import (
+    ON_DEMAND, InstanceBusy, InstanceClient, InstanceError, InstanceFailed, InstancePending, InstancesConfig,
+)
 
 NAME = "http"  # event.platform, and the name on the board's record (plugin.json): no plugin can take it (config.RESERVED_PLATFORMS)
 LABEL = "the http adapter"  # how messages name it, where a plugin's say "the NAME plugin"
 PULL_COMMAND = "flightdeck http pull"
-PRESETS = ("rctf",)  # http_presets/NAME.toml
+PRESETS = ("rctf", "rctf2", "noctf", "gzctf")  # http_presets/NAME.toml
+PRESET_CHOICE = "preset = " + " or ".join(f'"{name}"' for name in PRESETS)  # for messages: preset = "rctf" or "rctf2" or "noctf" or "gzctf"
+GAME_HINTS = {"gzctf": " (GZCTF: the game's number, as its address shows it: https://.../games/3)"}
 PRESET_DIR = "platform/http_presets"
 TOKEN_VARIABLE = "HTTP_TOKEN"  # event.token_env of a profile with no preset: this, or this and _NAME (HttpConfig.names_token)
 
 AUTH_KINDS = ("bearer", "token", "header", "cookie", "exchange")
 SCHEMES = ("Bearer", "Token")
 UNITS = {"s": 1.0, "ms": 0.001}
-FIELDS = ("name", "category", "points", "solves", "description", "max_attempts", "file_urls", "file_names")
+FIELDS = ("name", "category", "points", "solves", "description", "max_attempts", "file_urls", "file_names", "instance")
 """A challenge's fields a list item or a detail answer may give, each by a path. `name` is
-required of the list; the rest are optional, as in a plugin's pull."""
+required of the list; the rest are optional, as in a plugin's pull. `instance` marks the
+challenge as one whose instance the platform starts when asked (challenge.json's "instance":
+"on-demand"): a value there that is not null, false, 0 or "" (rCTF v2's instancerLifetime), or,
+when the table gives `instance_values`, one of those (GZCTF's type: StaticContainer or
+DynamicContainer)."""
+MAX_INSTANCE_VALUES = 16
 
 MAX_LIST_BYTES = 8_000_000  # the list of challenges (a plugin's pull answer has the same room)
 MAX_ANSWER_BYTES = 1_000_000  # any other answer
@@ -104,6 +120,7 @@ MAX_BODY_DEPTH = 4
 MAX_TABLE_KEYS = 64  # keys of a body or a verdict table
 MAX_PROBLEMS = 20  # challenges a pull names as left out; the rest are counted
 MAX_VALUE = 200  # characters of a verdict value, a game or a pending word
+MAX_REASON = 300  # characters of [http.refuse]'s reason
 TIMEOUT = 20.0  # seconds a request may wait for a connection, and for each part of its answer
 DEADLINE = 30.0  # seconds a request and its whole answer may take (a plugin's submit has as long)
 FILE_SECONDS = 600.0  # seconds one file's download may take
@@ -129,10 +146,10 @@ _HEADERS_REFUSED = frozenset({
     "accept-encoding", "upgrade", "te", "trailer", "expect", "proxy-authorization",
 })
 _PATH_PLACEHOLDERS = {"list": ("game",), "solved": ("game",), "detail": ("ref", "game"), "submit": ("ref", "game"),
-                      "poll": ("ref", "game", "submission"), "auth": ("game",)}
+                      "poll": ("ref", "game", "submission"), "auth": ("game",), "refuse": ("game",)}
 _BODY_PLACEHOLDERS = {"auth": ("token", "game"), "submit": ("ref", "flag", "game")}
 _METHODS = {"list": ("GET",), "solved": ("GET",), "detail": ("GET",), "poll": ("GET",), "submit": ("POST", "PUT", "PATCH"),
-            "auth": ("POST",)}
+            "auth": ("POST",), "refuse": ("GET",)}
 _NOT_JSON = object()
 _ALL = "*"  # a step that takes every child
 
@@ -259,6 +276,7 @@ class Listing:
     items: JsonPath  # one match per challenge
     ref: JsonPath  # from here on, paths are relative to one item
     fields: Mapping[str, JsonPath] = field(hash=False)  # FIELDS -> path; `name` is always there
+    instance_values: tuple[str, ...] | None = None  # the values at `instance` that mark it on-demand; None: any but an empty one
 
 
 @dataclass(frozen=True)
@@ -267,6 +285,7 @@ class Detail:
 
     request: Route
     fields: Mapping[str, JsonPath] = field(hash=False)  # relative to the answer; a field here wins over the list's
+    instance_values: tuple[str, ...] | None = None  # as Listing's
 
 
 @dataclass(frozen=True)
@@ -306,6 +325,17 @@ class Solved:
 
 
 @dataclass(frozen=True)
+class Refuse:
+    """[http.refuse]: how the platform says it wants something of a flag that flightdeck
+    cannot give. The request is made without the token; a value at `path` (anything but
+    null, false, or an empty string, list or object) means no flag is sent, for `reason`."""
+
+    request: Route
+    path: JsonPath
+    reason: str
+
+
+@dataclass(frozen=True)
 class HttpConfig:
     """An event profile's [http] table, checked."""
 
@@ -317,12 +347,13 @@ class HttpConfig:
     game: str | None = None  # the value of {game}
     files_auth: bool = False  # whether a file on event.url's origin is asked for with the token
     preset: str | None = None  # the preset it started from, for messages
+    refuse: Refuse | None = None  # asked before each flag: whether the platform wants what flightdeck cannot send
 
     @property
     def variable_prefix(self) -> str | None:
         """With a preset, what the name of the event's token variable may start with: the
-        preset's name in capitals and a _ (RCTF_)."""
-        return self.preset.upper().replace("-", "_") + "_" if self.preset else None
+        preset's name in capitals and a _ (RCTF_), with no version number: rctf2's is RCTF_ too."""
+        return variable_prefix(self.preset) if self.preset else None
 
     def names_token(self, name: str) -> bool:
         """Whether `name` is a variable named for an event's token on this platform:
@@ -340,14 +371,15 @@ class HttpConfig:
         return f"{prefix}TOKEN" if prefix else TOKEN_VARIABLE
 
 
-_TOP = ("preset", "game", "files_auth", "auth", "list", "detail", "submit", "solved")
+_TOP = ("preset", "game", "files_auth", "auth", "list", "detail", "submit", "solved", "refuse")
 _AUTH = ("kind", "header", "cookie", "request", "body", "token_path", "scheme", "link_param")
-_LIST = ("request", "items", "ref", *FIELDS)
-_DETAIL = ("request", *FIELDS)
+_LIST = ("request", "items", "ref", *FIELDS, "instance_values")
+_DETAIL = ("request", *FIELDS, "instance_values")
 _SUBMIT = ("request", "body", "verdict_path", "detail_path", "retry_after_path", "retry_after_unit", "tries_left_path",
            "verdicts", "status", "poll")
 _POLL = ("request", "id_path", "pending", "every", "at_most", "verdict_path")
 _SOLVED = ("request", "refs")
+_REFUSE = ("request", "path", "reason")
 NOT_BUILT = {
     "list.next_path": "pages of a listing", "list.page_param": "pages of a listing", "files": "a download route per challenge",
     "submit.form": "a form-encoded body", "auth.csrf_cookie": "a CSRF header", "auth.csrf_header": "a CSRF header",
@@ -355,6 +387,12 @@ NOT_BUILT = {
 }
 """Keys a table for another platform may want, which this engine does not have: named, with
 what they stand for, so the answer is never "unknown key" alone."""
+
+
+def variable_prefix(preset: str) -> str:
+    """What the name of a token variable for `preset` may start with: its name in capitals
+    and a _, with no version number (RCTF_ for rctf and rctf2)."""
+    return re.sub(r"[0-9]+$", "", preset).upper().replace("-", "_") + "_"
 
 
 def preset_text(name: str) -> str:
@@ -384,7 +422,7 @@ def parse_config(table: object) -> HttpConfig:
         raise ValueError("http.files_auth must be true or false: whether a file on the event's own address is asked for with the token")
     missing = [f"[http.{name}]" for name in ("auth", "list", "solved") if name not in table]
     if missing:
-        raise ValueError(f"http needs {', '.join(missing)}" + ("" if preset else ' (or preset = "rctf", which has them)'))
+        raise ValueError(f"http needs {', '.join(missing)}" + ("" if preset else f" (or {PRESET_CHOICE}, which have them)"))
     config = HttpConfig(
         auth=_auth(_sub(table, "auth")),
         list=_listing(_sub(table, "list")),
@@ -392,11 +430,13 @@ def parse_config(table: object) -> HttpConfig:
         submit=_submit(_sub(table, "submit")) if "submit" in table else None,
         detail=_detail(_sub(table, "detail")) if "detail" in table else None,
         game=game, files_auth=files_auth, preset=preset,
+        refuse=_refuse(_sub(table, "refuse")) if "refuse" in table else None,
     )
     if game is None:
         for name, route in config_routes(config):
             if "{game}" in route.path:
-                raise ValueError(f"http.{name}.request has {{game}} in its path, and the table has no game: set http.game")
+                raise ValueError(f"http.{name}.request has {{game}} in its path, and the table has no game: set http.game"
+                                 + GAME_HINTS.get(preset or "", ""))
         for name, body in (("auth", config.auth.body), ("submit", config.submit.body if config.submit is not None else None)):
             if body is not None and "{game}" in json.dumps(body):
                 raise ValueError(f"http.{name}.body has {{game}} in it, and the table has no game: set http.game")
@@ -409,6 +449,8 @@ def config_routes(config: HttpConfig) -> list[tuple[str, Route]]:
     if config.auth.request is not None:
         routes.append(("auth", config.auth.request))
     routes.append(("list", config.list.request))
+    if config.refuse is not None:
+        routes.append(("refuse", config.refuse.request))
     if config.detail is not None:
         routes.append(("detail", config.detail.request))
     if config.submit is not None:
@@ -545,7 +587,7 @@ def _listing(table: Mapping) -> Listing:
         if key not in table:
             raise ValueError(f"http.list.{key} is required")
     return Listing(_route("http.list.request", "list", table["request"]), parse_path("http.list.items", table["items"]),
-                   parse_path("http.list.ref", table["ref"]), _fields("http.list", table))
+                   parse_path("http.list.ref", table["ref"]), _fields("http.list", table), _instance_values("http.list", table))
 
 
 def _detail(table: Mapping) -> Detail:
@@ -558,7 +600,22 @@ def _detail(table: Mapping) -> Detail:
     fields = _fields("http.detail", table)
     if not fields:
         raise ValueError(f"http.detail names no field to read from its answer (one of {', '.join(FIELDS)})")
-    return Detail(route, fields)
+    return Detail(route, fields, _instance_values("http.detail", table))
+
+
+def _instance_values(where: str, table: Mapping) -> tuple[str, ...] | None:
+    """`instance_values`: the values at `instance` that mark a challenge on-demand, when not
+    every value does (GZCTF's type names its attachments too)."""
+    if "instance_values" not in table:
+        return None
+    if "instance" not in table:
+        raise ValueError(f"{where}.instance_values names values of {where}.instance, which is missing")
+    values = table["instance_values"]
+    if not isinstance(values, list) or not values or len(values) > MAX_INSTANCE_VALUES or len(set(values)) != len(values) \
+            or not all(isinstance(v, str) and v and len(v) <= MAX_VALUE and untrusted(v, one_line=True) == v for v in values):
+        raise ValueError(f'{where}.instance_values must be a list of 1 to {MAX_INSTANCE_VALUES} distinct strings, such as '
+                         '["StaticContainer", "DynamicContainer"]: the values at instance that mean the platform starts one')
+    return tuple(values)
 
 
 def _verdict_table(where: str, value: object, *, numbers: bool) -> dict:
@@ -636,6 +693,18 @@ def _poll(table: object, has_verdict_path: bool) -> Poll:
     return Poll(route, parse_path("http.submit.poll.id_path", table["id_path"]), tuple(pending), float(every), at_most, verdict_path)
 
 
+def _refuse(table: Mapping) -> Refuse:
+    _keys("http.refuse", table, _REFUSE)
+    for key in _REFUSE:
+        if key not in table:
+            raise ValueError(f"http.refuse.{key} is required")
+    reason = table["reason"]
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > MAX_REASON or untrusted(reason, one_line=True) != reason:
+        raise ValueError(f"http.refuse.reason must be one line of at most {MAX_REASON} printable characters: what the player is "
+                         "told when no flag is sent")
+    return Refuse(_route("http.refuse.request", "refuse", table["request"]), parse_path("http.refuse.path", table["path"]), reason)
+
+
 def _solved(table: Mapping) -> Solved:
     _keys("http.solved", table, _SOLVED)
     for key in ("request", "refs"):
@@ -647,10 +716,11 @@ def _solved(table: Mapping) -> Solved:
 # ---------------------------------------------------------------------- what a run will send
 
 
-def plan(config: HttpConfig) -> list[str]:
+def plan(config: HttpConfig, instances: InstancesConfig | None = None) -> list[str]:
     """What the table makes flightdeck send, a line for each request: the method, the route
     under event.url, and where the token goes. Shown before anything runs (pre-flight), so a
-    table from someone else is read first. Every string here passed parse_config's checks."""
+    table from someone else is read first. Every string here passed parse_config's checks.
+    `instances`: the profile's [instances] table, whose routes are asked the same way."""
     auth = config.auth
     if auth.kind == "exchange":
         carried = f"with the session token (Authorization: {auth.scheme})"
@@ -672,6 +742,9 @@ def plan(config: HttpConfig) -> list[str]:
         lines.append(f"sign in   {auth.request}: your token in the request's body; the answer's {auth.token_path.text} is the "
                      "session token")
     lines.append(f"list      {config.list.request}, {carried}")
+    if config.refuse is not None:
+        lines.append(f"refuse    {config.refuse.request}, without your token: before each flag; a value at {config.refuse.path.text} "
+                     "means no flag is sent")
     if config.detail is not None:
         lines.append(f"detail    {config.detail.request}, {carried}: once for each new challenge")
     urls = (config.detail.fields.get("file_urls") if config.detail is not None else None) or config.list.fields.get("file_urls")
@@ -689,6 +762,12 @@ def plan(config: HttpConfig) -> list[str]:
     else:
         lines.append("submit    no route: flightdeck sends no flag (the submit policy must be manual or off)")
     lines.append(f"solved    {config.solved.request}, {carried}")
+    if instances is not None:  # the [instances] table's routes go the same way, with the same token
+        under = API if instances.routes.api else ""  # InstanceClient asks these paths under /api/v1 when `api` is true
+        for action in ("status", "start", "renew", "stop"):
+            method, path = getattr(instances.routes, action)
+            path = under + path
+            lines.append(f"instance  {action} {method} {path}, {carried}: only for an on-demand challenge of the board")
     return lines
 
 
@@ -718,6 +797,7 @@ class Checked:
 
     lines: list[str]  # what was asked and what each path matched, made safe to show
     problems: int  # paths that matched nothing or the wrong thing
+    instance: int = 0  # what the [instances] table's status found that a run could not use (counted apart: no path of the table)
 
 
 class HttpCaller:
@@ -748,6 +828,11 @@ class HttpCaller:
         if not token:
             raise ValueError("the http platform needs the event's token: the variable event.token_env names is empty")
         self.token = token if link is None else _token_from(token, link, self._base)
+        if kind == "cookie" and self.token.startswith(f"{config.auth.cookie}="):  # NAME=value, as a browser's tools copy a cookie
+            self.token = self.token.removeprefix(f"{config.auth.cookie}=").strip()
+            if not self.token:
+                raise ValueError(f"the variable event.token_env names holds the cookie's name ({config.auth.cookie}=) and no value "
+                                 "after it: put the cookie's value in it")
         written = quote(self.token, safe="")  # as a link of the platform's would write it: cut out of what is shown, too
         self._written = written if link is not None and written != self.token else None
         if (kind in ("bearer", "token", "header") and not _HEADER_VALUE.fullmatch(self.token)) or \
@@ -793,11 +878,20 @@ class HttpCaller:
                         problems.append(f"{self._label(item)}: {self._scrub(exc, limit=2 * MAX_SHOWN)}")
                     continue
                 challenges.append(found)
+            notes: tuple[str, ...] = ()
+            if self.config.refuse is not None:
+                try:
+                    reason = await self._refusal(http)
+                except CallFailed as exc:
+                    notes = (f"{exc}; each flag asks again before it is sent",)
+                else:
+                    if reason is not None:
+                        notes = (f"no flag is sent from here: {reason}",)
         if left > MAX_PROBLEMS:
             more = left - MAX_PROBLEMS
             problems.append(f"{more:,} more challenge{' was' if more == 1 else 's were'} left out too: the first {MAX_PROBLEMS} "
                             "are named, and they may share a cause")
-        return PullReply(tuple(challenges), (), tuple(problems))
+        return PullReply(tuple(challenges), notes, tuple(problems))
 
     async def submit(self, ref: str, flag: str) -> Verdict:
         """Send one flag, once, and read the platform's word by the table's rules. CallFailed
@@ -808,6 +902,10 @@ class HttpCaller:
         values = {"ref": ref, "flag": flag}
         path = cfg.verdict_path
         async with self._clients() as (http, _):
+            if self.config.refuse is not None:
+                reason = await self._refusal(http)
+                if reason is not None:
+                    raise CallFailed(f"flightdeck did not send the flag: {reason}")
             answer = await self._send(http, cfg.request, values, body=cfg.body, sends_flag=True)
             try:
                 self._refuse_page(answer)
@@ -828,6 +926,17 @@ class HttpCaller:
         retry_after = self._retry_after(cfg, answer) if word == "rate_limited" else None
         return Verdict(word, self._scrub(detail), self._count(cfg.tries_left_path, answer.doc), retry_after)
 
+    def instance_wire(self) -> InstanceWire:
+        """How the event's [instances] table reaches this platform (platform/instances.py): the
+        same address and the same auth as the three calls, a sign-in's session included."""
+        return InstanceWire(self)
+
+    def session_refused(self) -> None:
+        """The platform answered 401 to the exchanged session: it is forgotten, so the next
+        request signs in again (at most every RELOGIN_SECONDS)."""
+        if self._session is not None and time.monotonic() - self._signed_in >= RELOGIN_SECONDS:
+            self._session = None
+
     async def solved(self) -> set[str]:
         """The refs of the challenges the platform lists as solved for this account."""
         cfg = self.config.solved
@@ -837,11 +946,14 @@ class HttpCaller:
 
     # ------------------------------------------------------------------ the dry run
 
-    async def check(self, show: int = 2) -> Checked:
+    async def check(self, show: int = 2, instances: InstancesConfig | None = None) -> Checked:
         """`flightdeck http check`: the sign-in, the list and the solved list, and what each
         path matched for the first `show` challenges. Nothing is submitted and no file is
-        downloaded. CallFailed when a request gets no answer to read."""
+        downloaded. With `instances` (the profile's [instances] table) the instancer's status
+        is asked for the first challenge marked on-demand, when that route is a GET: nothing
+        is ever started, renewed or stopped. CallFailed when a request gets no answer to read."""
         cfg, lines, problems = self.config, [], 0
+        marked: list[str] = []  # the refs of the challenges the table marks on-demand, in the list's order
         async with self._clients() as (http, _):
             if cfg.auth.request is not None:
                 await self._auth(http)
@@ -857,6 +969,8 @@ class HttpCaller:
                 ref = self._scalar(cfg.list.ref, item)
                 if ref is not None and valid_ref(ref):
                     listed.append(ref)
+                    if self._marked("list", cfg.list.fields, item):
+                        marked.append(ref)
                 if n >= show:
                     try:
                         self._challenge(item)
@@ -878,10 +992,24 @@ class HttpCaller:
                         continue
                     lines.append(f"    detail  {cfg.detail.request}: HTTP {detail.status}")
                     problems += self._show_fields(lines, "detail", cfg.detail.fields, detail.doc, required=())
+                    if ref not in marked and self._marked("detail", cfg.detail.fields, detail.doc):
+                        marked.append(ref)
             if len(items) > show:
                 lines.append(f"  the other {len(items) - show:,}: " + ("each has a ref and a name" if not unreadable else
                              f"{unreadable:,} cannot be read (a pull names each, with the reason)"))
                 problems += unreadable
+            if cfg.refuse is not None:
+                try:
+                    reason = await self._refusal(http)
+                except CallFailed as exc:
+                    lines.append(f"refuse   {exc}: a run sends no flag while this lasts")
+                    problems += 1
+                else:
+                    if reason is None:
+                        lines.append(f"refuse   {cfg.refuse.request}: nothing at {cfg.refuse.path.text}, so flags can be sent")
+                    else:
+                        lines.append(f"refuse   no flag would be sent: {reason}")
+                        problems += 1
             answer = await self._read(http, cfg.solved.request, {})
             refs = self._refs(cfg.solved.refs, answer)
             on_list = len(set(refs) & set(listed))
@@ -890,7 +1018,63 @@ class HttpCaller:
             if refs and not on_list and listed:
                 lines.append("  none of the solved refs is a ref on the list: is solved.refs the same id as list.ref?")
                 problems += 1
-        return Checked(lines, problems)
+        instance = 0
+        if instances is not None:  # after the clients are closed: the instancer is asked from a worker thread, on its own loop
+            instance = await self._check_instance(lines, instances, marked)
+        return Checked(lines, problems, instance)
+
+    def _marked(self, where: str, fields: Mapping[str, JsonPath], node: object) -> bool:
+        """Whether the table's `instance` path marks this challenge on-demand."""
+        if "instance" not in fields:
+            return False
+        try:
+            return "instance" in self._read_fields(where, {"instance": fields["instance"]}, node)
+        except _Skip:
+            return False
+
+    async def _check_instance(self, lines: list[str], instances: InstancesConfig, marked: Sequence[str]) -> int:
+        """The [instances] table's status route, asked once for the first challenge marked
+        on-demand, as a run asks it (InstanceClient, through instance_wire). Only a GET is
+        sent: a status route of another method is named and not asked, since nothing here may
+        change anything. How many problems it found."""
+        method, path = instances.routes.status
+        route = f"{method} {(API if instances.routes.api else '') + path}"
+        if method != "GET":
+            lines.append(f"instance {route}: not asked: the status route is a {method}, and check sends only requests that "
+                         "change nothing (a GET)")
+            return 0
+        if not marked:
+            paths = [where for where, table in (("list", self.config.list.fields),
+                     ("detail", self.config.detail.fields if self.config.detail is not None else {})) if "instance" in table]
+            if not paths:
+                lines.append(f"instance {route}: not asked: the [http] table has no list.instance or detail.instance path, so a "
+                             "run marks no challenge on-demand and starts no instance")
+                return 1
+            lines.append(f"instance {route}: not asked: no challenge is marked on-demand ({', '.join(f'{w}.instance' for w in paths)} "
+                         "matched no value)")
+            return 0
+        ref = marked[0]
+        shown = untrusted(ref, one_line=True)
+        how = f"for {shown}, the first of {len(marked):,} on-demand"
+        client = InstanceClient(None, None, {ref: ref}, instances, wire=self.instance_wire(), timeout=self.timeout)
+        try:
+            got = await asyncio.to_thread(client.status, ref)
+        except (InstancePending, InstanceFailed, InstanceBusy) as exc:  # the platform answered, and said what its instance does
+            lines.append(f"instance {route} {how}: {exc}")
+            return 0
+        except InstanceError as exc:  # a refusal, an answer the table does not read, no answer
+            lines.append(f"instance {route} {how}: {exc}")
+            return 1
+        finally:
+            client.close()
+        if got is None:
+            lines.append(f"instance {route} {how}: no instance runs for it, and none was started (a 400 or a 404 reads so too: "
+                         "if one runs on the site, the status route is wrong)")
+            return 0
+        ends = f", ends in {max(0, round(got.expires_at - time.time())):,} s" if got.expires_at is not None else ""
+        left = f"; left out: {'; '.join(got.left_out)}" if got.left_out else ""
+        lines.append(f"instance {route} {how}: running at {untrusted(', '.join(got.urls(web=False)), one_line=True)}{ends}{left}")
+        return 0
 
     def _show_fields(self, lines: list[str], where: str, fields: Mapping[str, JsonPath], node: object, *, required: Sequence[str]) -> int:
         """A line for each field's path and what it matched in `node`; how many are problems."""
@@ -975,6 +1159,14 @@ class HttpCaller:
                 if not all(isinstance(value, str) for value in found):
                     raise _Skip(f"{label} ({path.text}) matched a value that is not a string")
                 out[name] = found
+            elif name == "instance":  # one value or none; any value but null, false, 0 and "" means it has an instancer
+                found = [value for value in path.find(node) if value not in (None, False, 0, "")]
+                if len(found) > 1:
+                    raise _Skip(f"{label} ({path.text}) matched {len(found)} values, and one is wanted")
+                table = self.config.list if where == "list" else self.config.detail
+                wanted = table.instance_values if table is not None else None
+                if found and (wanted is None or (isinstance(found[0], str) and found[0] in wanted)):
+                    out[name] = ON_DEMAND
             elif name in ("name", "category", "description"):
                 value = self._one(label, path, node, (str,), "a string", required=name == "name" and where == "list")
                 if value is not None:
@@ -1058,6 +1250,24 @@ class HttpCaller:
         raise CallFailed(f"the flag was sent, and the platform had not judged it after {poll.at_most} looks, "
                          f"{poll.every:g} s apart ({path.text} is {json.dumps(self._scrub(value), ensure_ascii=False)})", timed_out=True)
 
+    async def _refusal(self, http: httpx.AsyncClient) -> str | None:
+        """[http.refuse]'s reason when the platform's answer says it wants what flightdeck
+        cannot send, else None. Asked without the token, each time, so a setting the site
+        changes is seen at the next flag. CallFailed when there is no answer to read: then
+        nobody knows, and no flag goes."""
+        refuse = self.config.refuse
+        assert refuse is not None
+        why = "flightdeck could not tell whether the platform takes a flag as flightdeck sends it"
+        try:
+            answer = await self._request(http, refuse.request, {}, None, auth=False)
+        except CallFailed as exc:
+            raise CallFailed(f"{why}: {exc}") from None
+        if answer.page or answer.doc is _NOT_JSON or not 200 <= answer.status < 300:
+            raise CallFailed(f"{why}: {answer.endpoint} was answered with HTTP {answer.status}{_phrase(answer.status)}"
+                             + ("" if answer.doc is not _NOT_JSON else ", not JSON"))
+        found = [value for value in refuse.path.find(answer.doc) if value is not None and value is not False and value not in ("", [], {})]
+        return f"{_show(refuse.reason)} ({refuse.request}: {refuse.path.text} has a value)" if found else None
+
     def _refuse_page(self, answer: _Answer) -> None:
         """A web page where JSON is expected is a stop for a human: never read as an answer, never worked around."""
         if answer.page:
@@ -1073,7 +1283,18 @@ class HttpCaller:
         self._refuse_page(answer)
         if not 200 <= answer.status < 300:
             said = self._scrub(_message(answer.doc)) if answer.doc is not _NOT_JSON else ""
-            raise CallFailed(f"{answer.endpoint} was answered with HTTP {answer.status}{_phrase(answer.status)}" + (f": {said}" if said else ""))
+            # A token sent as it is (not exchanged for a session first) and refused: the player's to fix.
+            # An exchanged session's 401 comes after a sign-in that worked, so it says nothing of the token.
+            hint = ""
+            if answer.status in (401, 403) and self.config.auth.kind != "exchange":
+                hint = " (is the token the right one for this event, and still valid?)"
+            elif answer.status == 404 and "{game}" in route.path and "{ref}" not in route.path and self.config.game is not None:
+                # a route of the game alone (the list, the solved one): one challenge's 404 is that
+                # challenge gone, on a game the list has just read
+                hint = (f" (is game = {json.dumps(self.config.game, ensure_ascii=False)} under [http] this event's game? "
+                        "It is the number in the game's address on the site)")
+            raise CallFailed(f"{answer.endpoint} was answered with HTTP {answer.status}{_phrase(answer.status)}"
+                             + (f": {said}" if said else "") + hint)
         if answer.doc is _NOT_JSON:
             raise CallFailed(f"{answer.endpoint} was answered with something that is not JSON (HTTP {answer.status})")
         return answer
@@ -1120,7 +1341,9 @@ class HttpCaller:
         if auth.kind == "cookie":
             return {"Cookie": f"{auth.cookie}={self.token}"}
         if self._session is None:
-            self._session = await self._sign_in(http)
+            session = await self._sign_in(http)
+            if self._session is None:  # another sign-in (the instancer's thread, another call) may have ended first
+                self._session = session
         return {"Authorization": f"{auth.scheme} {self._session}"}
 
     async def _sign_in(self, http: httpx.AsyncClient) -> str:
@@ -1139,6 +1362,9 @@ class HttpCaller:
                              + (f": {said}" if said else "") + " (is the token the right one for this event?)")
         found = auth.token_path.find(answer.doc)
         session = found[0] if len(found) == 1 else None
+        if session == TOKEN_MARK and self._session is not None:
+            # the answer was cut (_cut) of the session another sign-in got meanwhile: the platform gave that one again
+            return self._session
         if not isinstance(session, str) or not _HEADER_VALUE.fullmatch(session) or len(session) > MAX_SESSION:
             raise CallFailed(f"could not sign in: {answer.endpoint} answered, but auth.token_path ({auth.token_path.text}) "
                              "matched no session token in its answer")
@@ -1158,8 +1384,8 @@ class HttpCaller:
             except ValueError as exc:
                 raise CallFailed(str(exc)) from None
         answer = await self._request(http, route, values, content, auth=True, limit=limit, sends_flag=sends_flag)
-        if answer.status == 401 and self._session is not None and time.monotonic() - self._signed_in >= RELOGIN_SECONDS:
-            self._session = None
+        if answer.status == 401:
+            self.session_refused()
         return answer
 
     async def _request(self, http: httpx.AsyncClient, route: Route, values: Mapping[str, str], content: object, *, auth: bool,
@@ -1322,6 +1548,40 @@ class HttpCaller:
             if len(found) == 1 and isinstance(found[0], (str, int)) and not isinstance(found[0], bool) and str(found[0]).strip():
                 return self._scrub(str(found[0]).strip(), limit=80)
         return "a challenge with no name and no ref"
+
+
+class InstanceWire:
+    """The http platform as platform/instances.InstanceClient reaches it: event.url's address,
+    and the header that carries the token as the [http] table's auth sends it. With auth.kind
+    "exchange" that is the session the sign-in gives, asked for when there is none yet: the
+    same session as the three calls'. Called from a worker thread (a run's instances are asked
+    there), so the sign-in runs on a loop of its own in that thread. Nothing of the token is
+    ever in a message (short())."""
+
+    def __init__(self, caller: HttpCaller) -> None:
+        self._caller = caller
+        self.root = str(caller._base).rstrip("/")
+        self.game = caller.config.game  # {game} in an [instances] route (GZCTF's)
+
+    def __repr__(self) -> str:
+        return f"InstanceWire({self.root!r}, token=set)"
+
+    def headers(self) -> dict[str, str]:
+        try:
+            carried = asyncio.run(self._carried())
+        except CallFailed as exc:
+            raise InstanceError(self._caller._scrub(exc)) from None
+        return {"User-Agent": f"ctf-flightdeck/{__version__}", "Accept": "application/json", **carried}
+
+    async def _carried(self) -> dict[str, str]:
+        async with self._caller._clients() as (http, _):
+            return await self._caller._auth(http)
+
+    def short(self, text: str) -> str:
+        return self._caller._scrub(text)
+
+    def unauthorized(self) -> None:
+        self._caller.session_refused()
 
 
 CHECK_COMMAND = "flightdeck http check"

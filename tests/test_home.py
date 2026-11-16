@@ -93,7 +93,7 @@ def test_the_home_menu_puts_the_last_event_first_and_offers_the_pack_only_when_i
     root, _ = home
     event(root / "ctf" / "example", "Example CTF")
     menu = homes.items(have_config=True, events=events.known(), pack_installed=False)
-    assert [item.choice[0] for item in menu] == ["resume", "new", "practice", "mock", "pack"]
+    assert [item.choice[0] for item in menu] == ["resume", "new", "practice", "mock", "pack", "health"]
     assert menu[0].title == "Resume Example CTF" and "0 challenges" in menu[0].detail
     assert "pack" not in [item.choice[0] for item in homes.items(have_config=True, pack_installed=True)]
     # no config yet: setup that leads to the practice set first, starting an event one below (setup first too), the demo
@@ -267,6 +267,83 @@ def test_the_new_ctf_form_never_takes_another_sites_token_for_this_event(home, t
     assert keys.load_keys(tmp_path / "keys.env") == {"CTFD_TOKEN_EXAMPLE_CTF": "ctfd_old_synthetic", "CTFD_TOKEN_EXAMPLE_CTF_2": "ctfd_new_synthetic"}
     assert "flightdeck: token: CTFD_TOKEN_EXAMPLE_CTF is the token for old.example.org" in result.output
     assert "ctfd_new_synthetic" not in result.output and "ctfd_old_synthetic" not in result.output
+
+
+def test_the_new_ctf_form_sets_up_an_event_on_a_json_api_platform_and_says_where_its_token_is(home, tmp_path, monkeypatch):
+    """rCTF, noCTF and GZCTF are a choice in the form as in `flightdeck start` (P95): the
+    preset, the address (a GZCTF game's page gives the game), and the token, whose question
+    says where that platform keeps it. Answers that do not fit are said while the form is open."""
+    from ctf_flightdeck import keys
+    from ctf_flightdeck.console import home as homes
+    from ctf_flightdeck.preflight import load_profile
+
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(tmp_path / "keys.env"))
+
+    async def script(app, pilot):
+        await pilot.press("enter")
+        await pilot.pause()
+        form = app.screen
+        problem = lambda: str(form.query_one("#problem").render())  # noqa: E731
+        asked = lambda: str(form.query_one("#tokenq").render())  # noqa: E731
+        assert "CTFd access token" in asked()
+        fill(form, platform="http", preset="noctf")
+        await pilot.pause()
+        assert "noctf-session-token" in asked() and "CTFd" not in asked()
+        fill(form, preset="gzctf")
+        await pilot.pause()
+        assert "GZCTF_Token cookie" in asked()
+        fill(form, name="Example CTF", url="ctf.example.org", ai="yes", folder=str(tmp_path / "example"), token="synthetic-cookie")
+        await pilot.press("ctrl+s")
+        assert "Game: give the game's number" in problem() and app.return_value is None
+        kept = lambda: str(form.query_one("#urlread").render())  # noqa: E731
+        assert kept() == ""  # a site's root is taken as typed, and nothing is said
+        fill(form, url="https://ctf.example.org/games/3/challenges", game="4")
+        await pilot.pause()
+        assert kept() == ("GZCTF's routes are under the site's root, so the address is https://ctf.example.org, "
+                          "and the game is 3, from its page's address")
+        await pilot.press("ctrl+s")
+        assert "Game: 4, and the address names game 3" in problem() and app.return_value is None
+        fill(form, preset="rctf", game="3")
+        await pilot.pause()
+        assert kept() == "rCTF's routes are under the site's root, so the address is https://ctf.example.org"
+        await pilot.press("ctrl+s")
+        assert "only GZCTF's routes name a game" in problem() and app.return_value is None
+        fill(form, preset="noctf")
+        await pilot.pause()
+        assert kept() == ""  # noCTF's address is its API's, taken as typed
+        fill(form, platform="ctfd")
+        await pilot.pause()
+        assert kept() == ""  # CTFd's is taken as typed too
+        await pilot.press("ctrl+s")  # the game typed for rCTF is still there
+        assert "Game: only GZCTF's routes name a game, and it is a json api platform" in problem() and app.return_value is None
+        fill(form, platform="http", preset="gzctf", game="")
+        await pilot.pause()
+        await pilot.press("ctrl+s")
+
+    kind, new = drive_home(homes.items(have_config=True), script)
+    assert kind == "new"
+    assert (new.answers.platform, new.answers.preset, new.answers.game, new.answers.url, new.answers.token_env) == (
+        "http", "gzctf", "3", "https://ctf.example.org", "GZCTF_TOKEN_EXAMPLE_CTF")
+    choose(monkeypatch, (kind, new))
+    result = CliRunner().invoke(cli.app, [])
+    assert result.exit_code == 0, result.output
+    assert keys.load_keys(tmp_path / "keys.env") == {"GZCTF_TOKEN_EXAMPLE_CTF": "synthetic-cookie"}
+    assert "synthetic-cookie" not in result.output
+    profile, _ = load_profile(tmp_path / "example" / "event.toml")
+    assert (profile.platform, profile.http.preset, profile.http.game) == ("http", "gzctf", "3")
+
+
+def test_a_json_api_event_from_the_form_with_no_token_says_which_platforms_token_to_put_where(home, tmp_path, monkeypatch):
+    from ctf_flightdeck.console import home as homes
+
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(tmp_path / "keys.env"))
+    answers = start.EventAnswers(name="Example CTF", platform="http", url="https://ctf.example.org", token_env="NOCTF_TOKEN_EXAMPLE_CTF",
+                                 preset="noctf")
+    choose(monkeypatch, ("new", homes.NewEvent(answers, tmp_path / "example", "", None)))
+    result = CliRunner().invoke(cli.app, [])
+    assert result.exit_code == 2
+    assert "no token yet: put NOCTF_TOKEN_EXAMPLE_CTF=<your noCTF token> in" in result.output
+    assert (tmp_path / "example" / "event.toml").is_file() and home[1] == []  # set up, not played without its token
 
 
 def test_no_token_is_kept_for_an_event_from_the_form_that_could_not_be_set_up(home, tmp_path, monkeypatch):
@@ -520,6 +597,38 @@ def test_the_setup_form_says_what_is_missing_and_ends_with_the_config_and_the_ke
     assert (done.provider, done.key, done.then) == ("openrouter", SETUP_KEY, "practice")
     assert SETUP_KEY not in repr(done)  # the key is in no text made of what the form ended with
     assert not fresh.exists() and not (tmp_path / "fresh" / "keys.env").exists()  # the form itself writes nothing
+
+
+def test_on_a_terminal_the_setup_form_says_at_once_that_there_is_no_docker_and_offers_host(tmp_path):
+    """The real command on a pty, on a machine with no docker on PATH: `docker not found` comes
+    back before the form has finished mounting, and the form still shows it. It once kept
+    "Looking for Docker…" and "not decided yet" for good, and ctrl+s refused to save."""
+    import os
+    import re
+    import time
+
+    from test_play_signals import Terminal, env_for, wait_for
+
+    env = env_for(tmp_path, PATH=str(tmp_path / "no-docker-here"), XDG_CONFIG_HOME=str(tmp_path / "xdg"),
+                  FLIGHTDECK_CONFIG=str(tmp_path / "fresh" / "config.toml"))
+    term = Terminal([], env, tmp_path)
+
+    def shown() -> str:
+        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", term.text())
+
+    try:
+        wait_for(lambda: "Get started" in shown(), "the home screen", term)
+        os.write(term.master, b"\r")
+        wait_for(lambda: "Set flightdeck up" in shown(), "the setup form", term)
+        wait_for(lambda: "Docker cannot run lanes here (docker not found on PATH), so host is offered" in shown(),
+                 "what the form found of Docker", term, timeout=10.0)
+        time.sleep(0.2)
+        os.write(term.master, b"\x1b")  # back to the home screen, and q leaves
+        time.sleep(0.5)
+        os.write(term.master, b"q")
+        assert term.proc.wait(timeout=30) == 0, term.text()[-2000:]
+    finally:
+        term.close()
 
 
 def test_the_setup_form_offers_docker_where_docker_runs_and_host_where_it_does_not_and_the_players_choice_stands(fresh, tmp_path, monkeypatch):
@@ -796,7 +905,7 @@ def test_setup_from_the_home_screen_is_written_with_its_key_out_of_sight_and_the
     assert ready.notes[0] == f"Your config: {fresh}"
     assert ready.notes[1] == f"Your key: kept in {keys_file} as OPENROUTER_API_KEY, which only you can read (never shown, never in the config)"
     assert ready.notes[2].startswith("Lanes run on this machine (runtime host)") and len(ready.notes) == 3  # what host means
-    assert [item.choice[0] for item in second["menu"]] == ["new", "practice", "mock", "pack"]  # set up now: the menu behind it
+    assert [item.choice[0] for item in second["menu"]] == ["new", "practice", "mock", "pack", "health"]  # set up now: the menu behind it
     assert f"flightdeck: Your config: {fresh}" in result.output  # said in the terminal too, for after the home screen
     assert launched == [("practice", None)]
     assert third["ready"] is None and third["status"].startswith("Back from your run.")
@@ -887,6 +996,22 @@ def test_after_setup_the_wait_for_docker_is_said_before_it_and_a_docker_that_is_
     capsys.readouterr()
     cli._set_up(Setup(setup.answers_for("local", ("m",), "host"), "local", "", "practice"))  # lanes on this machine: Docker is not asked
     assert len(heard) == 2 and not (folder / "asked").exists() and "asking Docker" not in capsys.readouterr().err
+
+
+def test_after_setup_for_a_custom_server_here_the_notes_say_it_has_no_dollar_cap(home, fresh):
+    """P92: the home screen's setup writes no dollar cap for a custom server on this machine, and
+    its notes carry the one line for a local proxy to a paid API; a remote one hears nothing of it."""
+    from ctf_flightdeck import setup
+    from ctf_flightdeck.config import load_config
+    from ctf_flightdeck.console.home import Setup
+
+    here = setup.answers_for("custom", ("m",), "host", base_url="http://127.0.0.1:8000/v1", key_env="")
+    ready = cli._set_up(Setup(here, "custom", "", "practice"))
+    assert setup.LOCAL_PROXY_NOTE in ready.notes and load_config(fresh).lanes.dollar_cap is None
+    fresh.unlink()
+    away = setup.answers_for("custom", ("m",), "host", base_url="https://models.example.test/v1", key_env="")
+    ready = cli._set_up(Setup(away, "custom", "", "practice"))
+    assert setup.LOCAL_PROXY_NOTE not in ready.notes and load_config(fresh).lanes.dollar_cap == 2.0
 
 
 def test_a_setup_that_cannot_be_kept_stops_with_nothing_written_and_never_shows_the_key(home, fresh, tmp_path, monkeypatch):

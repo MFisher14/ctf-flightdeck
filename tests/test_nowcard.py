@@ -358,6 +358,18 @@ def test_the_full_card_starts_with_the_approval_and_its_two_answers_then_every_a
     assert compact[:3] == [ASKS, "1  /approve   more budget", "0  /decline   stop the lane"] and compact[-1] == "a number answers (chat box empty)"
 
 
+def test_a_budget_question_about_no_price_answers_go_on_without_the_dollar_cap_not_more_budget():
+    """A model with no price: approving drops the dollar cap, which "more budget" did not say."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=4))
+    deck.release([Challenge("c", "Crab Walk", "cry", 50)], [QueueEntry("c", "glm", token_cap=400_000, dollar_cap=2.0)])
+    (lane,) = deck.lanes_on("c")
+    deck.report(lane.id, TurnReport(action="ls", tokens=120, dollars=None))
+    assert lane.pending is not None and lane.pending.kind is PendingKind.BUDGET
+    assert [answer.label for answer in views.quick_answers(lane)] == ["carry on with no dollar cap", "stop the lane"]
+    assert calm(deck, lane)[1] == "  1 carry on with no dollar cap   0 stop the lane"
+    assert full(deck, lane)[1:3] == ["1  /approve   carry on with no dollar cap", "0  /decline   stop the lane"]
+
+
 def test_the_full_card_keeps_further_approvals_under_the_first_and_messages_last():
     deck, app, lane = one_lane()
     deck.report("L01", TurnReport(action="ls", pending=Pending(PendingKind.LIVE_BOX, "connect to the live instance")))
@@ -428,7 +440,7 @@ def test_in_the_simple_layout_four_things_at_once_are_a_card_of_five_rows(size):
         row = view.query_one("#now").region.y
         budget = theme.alert_colors(AlertKind.BUDGET)[1].lower()
         assert color_of(app, "needs you now", row) == budget and color_of(app, "╭", row) == budget  # the most urgent alert's, as on the full card
-        assert footer_line(app).strip().startswith("1-9 answer  esc lanes")  # the key line says a number answers: the card has no row for it
+        assert footer_line(app).strip().startswith("1 0 answer  esc lanes")  # the key line says which numbers answer (a budget wait: 1 and 0): the card has no row for it
 
     drive(app, script, size)
 

@@ -67,7 +67,7 @@ CONFIRM_ON_HOST = (
 EVENT_CTFD = {
     "name": '"Harbour Lights CTF"',
     "platform": '"ctfd"',
-    "url": '"https://ctf.example.org/"',
+    "url": '"https://ctf.example.net/"',
     "token_env": f'"{TOKEN_ENV}"',
     "flag_format": r"'hl\{[^}]+\}'",
     "team": "true",
@@ -103,7 +103,7 @@ def profile(**fields) -> EventProfile:
     base = dict(
         name="Harbour Lights CTF",
         platform="ctfd",
-        url="https://ctf.example.org",
+        url="https://ctf.example.net",
         token_env=TOKEN_ENV,
         flag_format=r"hl\{[^}]+\}",
         ai_allowed=True,
@@ -167,7 +167,7 @@ def test_a_ctfd_profile_reads_every_key(tmp_path):
     assert loaded == EventProfile(
         name="Harbour Lights CTF",
         platform="ctfd",
-        url="https://ctf.example.org",  # the trailing / is dropped
+        url="https://ctf.example.net",  # the trailing / is dropped
         token_env=TOKEN_ENV,
         board=None,
         flag_format=r"hl\{[^}]+\}",
@@ -447,7 +447,7 @@ def test_a_token_variable_named_like_another_services_key_is_refused(name, suffi
     problems = check(profile(token_env=name), policies(), max_lanes=4, environ={name: FAKE_KEY})
     assert refusals(problems) == [
         f"event.token_env names {name}, a name ending in {suffix} like other services' key variables (a name with "
-        "CTFD in it is fine), not a CTFd token: flightdeck would send its value to https://ctf.example.org. Name the "
+        "CTFD in it is fine), not a CTFd token: flightdeck would send its value to https://ctf.example.net. Name the "
         "variable that holds your CTFd token, like CTFD_TOKEN"
     ]
 
@@ -564,9 +564,9 @@ def test_check_and_describe_only_learn_whether_the_token_is_set():
     lines = describe(profile(), policies(), environ=env)
     assert problems == []
     assert set(env.asked) == {TOKEN_ENV}
-    assert f"token     ${TOKEN_ENV} (set), sent only to https://ctf.example.org" in lines
+    assert f"token     ${TOKEN_ENV} (set), sent only to https://ctf.example.net" in lines
     assert FAKE_TOKEN not in "\n".join(lines)
-    assert describe(profile(), policies(), environ={})[2] == f"token     ${TOKEN_ENV} (NOT set), sent only to https://ctf.example.org"
+    assert describe(profile(), policies(), environ={})[2] == f"token     ${TOKEN_ENV} (NOT set), sent only to https://ctf.example.net"
 
 
 def test_the_profile_keeps_the_variables_name_never_its_value(tmp_path, monkeypatch):
@@ -625,9 +625,9 @@ def test_agents_whose_api_key_variable_is_unset_warn_naming_it(tmp_path, agents)
 @pytest.mark.parametrize(
     "url, warned",
     [
-        ("http://ctf.example.org", True),
+        ("http://ctf.example.net", True),
         ("http://10.0.0.7:8000", True),
-        ("https://ctf.example.org", False),
+        ("https://ctf.example.net", False),
         ("http://127.0.0.1:8000", False),
         ("http://localhost:8000", False),
         ("http://ctf.localhost:8000", False),  # *.localhost is loopback too (RFC 6761)
@@ -642,7 +642,7 @@ def test_plain_http_to_another_machine_warns_that_the_token_would_travel_in_clea
 
 
 def test_keys_for_the_other_platform_are_reported_as_unused(tmp_path):
-    problems = check(manual(tmp_path, url="https://ctf.example.org"), policies(), max_lanes=4, environ={})
+    problems = check(manual(tmp_path, url="https://ctf.example.net"), policies(), max_lanes=4, environ={})
     assert problems == [Problem(False, 'event.url is only for platform "ctfd", "gamemaster" or "http", so this manual profile does not use it')]
     problems = check(profile(board=tmp_path), policies(), max_lanes=4, environ=TOKEN_SET)
     assert problems == [Problem(False, 'event.board is only for platform "manual", "gamemaster" or "http", so this ctfd profile does not use it')]
@@ -714,18 +714,18 @@ BAD_VALUES = [
     ("event", "name", '""', "event.name must not be empty"),
     ("event", "name", "[1]", "event.name must be a string (got a list)"),
     ("event", "flag_format", "'hl\\{('", 'event.flag_format does not compile as a regular expression (missing ), unterminated subpattern at position 4): "hl\\{("'),
-    ("event", "url", '"ftp://ctf.example.org"', "event.url must start with https:// (or http://) and name a host"),
+    ("event", "url", '"ftp://ctf.example.net"', "event.url must start with https:// (or http://) and name a host"),
     ("event", "url", '"https://"', "event.url must start with https:// (or http://) and name a host"),
-    ("event", "url", '"https://ctf.example.org:99999"', "event.url must start with https:// (or http://) and name a host"),
-    ("event", "url", '"https://player:hunter2@ctf.example.org"', "event.url must not carry a user name or password"),
-    ("event", "url", '"https://ctf.example.org/?team=1"', "event.url must be the site's address, with no query"),
-    ("event", "url", '"https://ctf.example.org/#top"', "event.url must be the site's address, with no query"),
-    ("event", "url", '"https://ctf.example.org/?"', "event.url must be the site's address, with no query"),
+    ("event", "url", '"https://ctf.example.net:99999"', "event.url must start with https:// (or http://) and name a host"),
+    ("event", "url", '"https://player:hunter2@ctf.example.net"', "event.url must not carry a user name or password"),
+    ("event", "url", '"https://ctf.example.net/?team=1"', "event.url must be the site's address, with no query"),
+    ("event", "url", '"https://ctf.example.net/#top"', "event.url must be the site's address, with no query"),
+    ("event", "url", '"https://ctf.example.net/?"', "event.url must be the site's address, with no query"),
     ("event", "url", '"https://ctf example.org"', "event.url must not contain spaces or control characters"),
     # urlsplit drops tabs and newlines without a word, so they must be refused before it sees them
     ("event", "url", '"https://ctf.exa\\tmple.org"', "event.url must not contain spaces or control characters"),
-    ("event", "url", '"https://ctf.example.org/\\u001b[2J"', "event.url must not contain spaces or control characters"),
-    ("event", "url", '"https://ctf.example.org/\\u202e"', "event.url must not contain spaces or control characters"),
+    ("event", "url", '"https://ctf.example.net/\\u001b[2J"', "event.url must not contain spaces or control characters"),
+    ("event", "url", '"https://ctf.example.net/\\u202e"', "event.url must not contain spaces or control characters"),
     ("event", "token_env", '"my token"', "event.token_env must be the name of an environment variable"),
     ("event", "token_env", '"9LIVES"', "event.token_env must be the name of an environment variable"),
     (
@@ -754,7 +754,7 @@ def test_a_platform_that_is_not_built_in_loads_as_a_plugins_and_is_never_played_
     has the checks with a config)."""
     board = tmp_path / "board"
     board.mkdir()
-    event = {"name": '"Quals"', "platform": '"harbourctf"', "url": '"https://ctf.example.org"', "token_env": '"HARBOUR_TOKEN"',
+    event = {"name": '"Quals"', "platform": '"harbourctf"', "url": '"https://ctf.example.net"', "token_env": '"HARBOUR_TOKEN"',
              "board": '"board"'}
     loaded, chosen = load_profile(write(tmp_path, toml(event, RULES_OPEN)))
     assert (loaded.platform, loaded.plugin) == ("harbourctf", True)
@@ -774,10 +774,10 @@ def test_an_instances_table_on_a_plugins_platform_is_said_to_do_nothing_without_
     """check() tells every profile with an [instances] table why it starts no instance. For a
     plugin's platform that reason must not quote event.platform: the profile may be a
     teammate's, and only the player's config makes the word a plugin's name."""
-    event = {"name": '"Quals"', "platform": '"harbourctf"', "url": '"https://ctf.example.org"', "token_env": '"HARBOUR_TOKEN"'}
+    event = {"name": '"Quals"', "platform": '"harbourctf"', "url": '"https://ctf.example.net"', "token_env": '"HARBOUR_TOKEN"'}
     loaded, chosen = load_profile(write(tmp_path, toml(event, RULES_OPEN, extra=INSTANCES)))
     assert loaded.plugin and loaded.instances is not None
-    why = "the event is on a plugin's platform, and flightdeck starts instances only on CTFd"
+    why = "the event is on a plugin's platform, and flightdeck starts instances only on CTFd and the http platform"
     assert instances_off(loaded, chosen) == why
     problems = check(loaded, chosen, max_lanes=4, environ={})
     assert [p.message for p in problems if not p.refuse and "[instances]" in p.message] == [
@@ -787,7 +787,24 @@ def test_an_instances_table_on_a_plugins_platform_is_said_to_do_nothing_without_
     assert "harbourctf" not in "\n".join([p.message for p in problems] + describe(loaded, chosen, environ={}))
     # a platform flightdeck has built in is its own word, and is still named
     by_hand, policies = load_profile(write(tmp_path, toml({"name": '"Practice"', "platform": '"manual"'}, RULES_OPEN, extra=INSTANCES)))
-    assert instances_off(by_hand, policies) == 'the platform is "manual", and only CTFd has a container plugin flightdeck knows'
+    assert instances_off(by_hand, policies) == 'the platform is "manual", and flightdeck starts instances only on CTFd and the http platform'
+
+
+def test_an_instancer_of_another_platform_is_said_to_do_nothing_and_rctfs_runs_on_the_http_platform(tmp_path):
+    """A named shape is for one platform: a CTFd plugin's routes are not rCTF's, nor the other way."""
+    ctfd = {"name": '"Quals"', "platform": '"ctfd"', "url": '"https://ctf.example.net"', "token_env": '"CTFD_TOKEN"'}
+    loaded, chosen = load_profile(write(tmp_path, toml(ctfd, RULES_OPEN, extra='\n[instances]\nplugin = "rctf"\n')))
+    assert instances_off(loaded, chosen) == 'instances.plugin rctf is for platform "http", and this event\'s is "ctfd"'
+    http = {"name": '"Quals"', "platform": '"http"', "url": '"https://ctf.example.net"', "token_env": '"RCTF_TOKEN"'}
+    owl, chosen = load_profile(write(tmp_path, toml(http, RULES_OPEN, extra='\n[http]\npreset = "rctf2"\n\n[instances]\nplugin = "ctfd_owl"\n')))
+    assert instances_off(owl, chosen) == ('instances.plugin ctfd_owl is for platform "ctfd", and this event\'s is "http" '
+                                          '(rCTF v2\'s instancer: plugin = "rctf"; GZCTF\'s: plugin = "gzctf")')
+    rctf, chosen = load_profile(write(tmp_path, toml(http, RULES_OPEN, extra='\n[http]\npreset = "rctf2"\n\n[instances]\nplugin = "rctf"\n')))
+    assert instances_off(rctf, chosen) == ""
+    own = '\n[http]\npreset = "rctf2"\n\n[instances]\n' + "".join(
+        f'{action} = ["GET", "/x/{{id}}"]\n' for action in ("start", "stop", "renew", "status"))
+    mine, chosen = load_profile(write(tmp_path, toml(http, RULES_OPEN, extra=own)))
+    assert mine.instances.platform is None and instances_off(mine, chosen) == ""  # routes of the profile's own: either platform
 
 
 def test_a_board_under_a_home_that_does_not_exist_is_an_error(tmp_path):
@@ -1059,7 +1076,7 @@ def test_submit_manual_and_off_never_reach_the_platform_and_ask_the_player_at_on
 def test_describe_shows_every_stage_with_its_meaning_and_what_the_rules_would_allow(tmp_path):
     event = profile(max_lanes=8, team=True, live_targets="confirm")
     lines = describe(event, policies(l1=OFF, instance=CONFIRM), environ=TOKEN_SET)
-    assert lines[0] == "event     Harbour Lights CTF · ctfd at https://ctf.example.org · team"
+    assert lines[0] == "event     Harbour Lights CTF · ctfd at https://ctf.example.net · team"
     assert lines[1] == "rules     AI allowed · platform automation allowed · live targets confirm · at most 8 lanes"
     assert "flags     hl\\{[^}]+\\}" in lines
     assert "l1        off      no L1 solvers (the rules allow auto)" in lines
@@ -1216,7 +1233,7 @@ def test_preflight_prints_the_event_and_every_stage_and_exits_0(tmp_path, env):
     assert result.exit_code == 0, result.output
     out = result.stdout.splitlines()
     assert out[0] == f"profile   {path}"
-    assert "event     Harbour Lights CTF · ctfd at https://ctf.example.org · team" in out
+    assert "event     Harbour Lights CTF · ctfd at https://ctf.example.net · team" in out
     for stage, policy in [("pull", "auto"), ("l1", "auto"), ("agents", "auto"), ("submit", "confirm"), ("instance", "auto")]:
         assert any(line.startswith(f"{stage:<10}{policy:<9}") for line in out), stage
     assert f"lanes     4 at a time · runtime docker · config {tmp_path / 'config.toml'}" in out
@@ -1293,14 +1310,14 @@ def test_preflight_reads_whether_the_token_is_set_from_the_keys_file_too(tmp_pat
     monkeypatch.delenv(TOKEN_ENV)
     path = write(tmp_path, toml(EVENT_CTFD, RULES_OPEN))
     absent = invoke(str(path), "--config", str(config_file(tmp_path)))
-    assert f"token     ${TOKEN_ENV} (NOT set), sent only to https://ctf.example.org" in absent.stdout
+    assert f"token     ${TOKEN_ENV} (NOT set), sent only to https://ctf.example.net" in absent.stdout
     keys = tmp_path / "keys.env"
     keys.write_text(f"{TOKEN_ENV}={FAKE_TOKEN}\n", encoding="utf-8")
     keys.chmod(0o600)
     monkeypatch.setenv("FLIGHTDECK_KEYS", str(keys))
     result = invoke(str(path), "--config", str(config_file(tmp_path)))
     assert result.exit_code == 0, result.output
-    assert f"token     ${TOKEN_ENV} (set), sent only to https://ctf.example.org" in result.stdout
+    assert f"token     ${TOKEN_ENV} (set), sent only to https://ctf.example.net" in result.stdout
     assert "is not set or is empty" not in result.stdout and FAKE_TOKEN not in result.output
 
 
@@ -1349,16 +1366,20 @@ def test_preflight_without_a_profile_is_a_usage_error(env):
     assert "name the event profile to check, or use --example to print one" in flat(result.output)
 
 
-def test_the_example_profile_loads_and_passes_warning_only_of_the_unset_token(tmp_path, env, monkeypatch):
+def test_the_example_profile_loads_and_is_refused_only_for_its_placeholder_address_and_warned_of_the_unset_token(tmp_path, env, monkeypatch):
     result = invoke("--example")
     assert result.exit_code == 0 and result.stdout == example_profile()
     loaded, chosen = load_profile(write(tmp_path, result.stdout))
     assert (loaded.name, loaded.platform, loaded.token_env) == ("Example CTF", "ctfd", "CTFD_TOKEN")
     assert re.fullmatch(loaded.flag_format, "example{x}")
     assert as_tuple(chosen) == ("auto", "auto", "auto", "confirm", "confirm")
-    assert check(loaded, chosen, max_lanes=4, environ={"CTFD_TOKEN": FAKE_TOKEN}) == []
+    from ctf_flightdeck.preflight import placeholder_url
+
+    unedited = [placeholder_url("https://ctf.example.org")]  # play refuses it too: the token would go to the example's host
+    assert refusals(check(loaded, chosen, max_lanes=4, environ={"CTFD_TOKEN": FAKE_TOKEN})) == unedited
+    assert warnings(check(loaded, chosen, max_lanes=4, environ={"CTFD_TOKEN": FAKE_TOKEN})) == []
     unset = check(loaded, chosen, max_lanes=4, environ={})
-    assert refusals(unset) == [] and len(warnings(unset)) == 1  # the unset token
+    assert refusals(unset) == unedited and len(warnings(unset)) == 1  # the unset token
     assert warnings(unset)[0].startswith("the CTFd token variable CTFD_TOKEN (event.token_env) is not set")
 
 

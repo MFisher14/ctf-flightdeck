@@ -45,7 +45,11 @@ own cost (TurnReport.turn_end), with why and the model that spent it (an escalat
 old model too), also when it comes after the lane has ended (solved or killed mid-turn). A
 run of the CLI that ends in a turn it never reported settles it: the config price of the
 turn's tokens, or unknown. Each lane says at its start that its caps are checked only when
-a turn ends.
+a turn ends. Claude's assistant events carry each call's output tokens only as far as they
+had come; its result's modelUsage has them all, and the tokens the events missed are counted
+then (reconcile). A call an interrupt cuts short is in neither claude's cost nor its
+modelUsage: flightdeck charges the tokens its events showed at the config price, or says it
+cannot.
 
 How the player's controls reach the CLI:
 - pause: SIGSTOP to the CLI's process group; resume: SIGCONT. A take-over first lets the
@@ -56,18 +60,21 @@ How the player's controls reach the CLI:
   rule "a waiting lane spends nothing" holds. So is a lane that gave up while a flag of it
   still waits (for the player, or for the platform's answer): it gets no more messages and
   no new CLI, and ends when the deck ends it.
-- a hint, a new plan, a verdict on a flag or a hand-back while the agent works: SIGINT
-  ends the agent's turn (Claude Code ends the turn and waits for input; Codex exits), and
-  the message goes in as the next turn. Notes that can wait (budget approved) go with the
-  next message.
+- a hint, a new plan, a verdict on a flag or a hand-back while the agent works: the
+  agent's turn is ended, and the message goes in as the next turn. Claude Code gets an
+  interrupt request on its stdin (the stream-json control request), ends the turn and waits
+  for input; never SIGINT, on which it exits when it is already waiting for a message (its
+  turn can end just before a signal lands). Codex gets SIGINT and exits. Notes that can wait
+  (budget approved) go with the next message.
 - stop: stdin closed, then SIGINT, SIGTERM after a grace period, then SIGKILL, to the
   process group and to every process the CLI started.
 - escalation: the CLI is stopped and started again on the stronger model, in a fresh
   context, with the brief and prompts.escalation(lane summary).
 - whatever thaws a frozen CLI to interrupt or stop it (a message, a hand-back, a kill, an
-  escalation) sends the SIGINT before the SIGCONT: the CLI wakes with the interrupt there,
-  never going on first with a step it had chosen before (one whose wait ran out while it
-  was frozen).
+  escalation) sends the interrupt (claude's request, codex's SIGINT; a stop's SIGINT) before
+  the SIGCONT: the CLI wakes with the interrupt there, never going on first with a step it
+  had chosen before (one whose wait ran out while it was frozen). In a docker lane claude's
+  request travels with its stdin, and the SIGCONT by a `docker exec` of its own after it.
 
 Security. The CLI is the player's own tool and holds the player's credential for its model
 API, so the agent's own API key (or login token) is in the CLI's environment and the
@@ -103,9 +110,19 @@ makes before every start, owner-only (a symlink or a file of that name is remove
 followed; a folder another user owns stops the CLI, saying why), and keeps for the lane's
 later starts (codex's resume finds its thread there).
 
+A model API outage (P78). A CLI retries a failed call by itself; a turn that fails once its
+retries ran out ends the lane. When it failed on something that may pass (a rate limit, a 5xx,
+an overload: claude_passing, codex_passing), it counts toward the run's outage as AgentDriver's
+lanes do (Outage in agent/driver.py): OUTAGE_LANES lanes in a row ending so, with no answer from
+the API in between, hold the deck's queue before the last of them ends, so autopilot disengages,
+and their challenges go back on the queue when the player lifts the hold.
+
 What this module assumes about the CLIs is listed in tests/fake_agent_cli.py, which plays
-them in the tests (a real run spends the player's money). Nothing here has been checked
-against a real run yet; claude_argv() and codex_argv() hold every flag in one place.
+them in the tests (a real run spends the player's money). Claude Code's stream (events,
+cost, interrupt, signals, configuration folder) was compared with a real run of 2.1.325
+(P86), with no tools; the fake marks what that run settled as CHECKED and the rest as
+ASSUMED (its tool calls among it). Codex has not been checked against a real run.
+claude_argv() and codex_argv() hold every flag in one place.
 """
 
 from __future__ import annotations
@@ -147,7 +164,7 @@ from ..light import Lights
 from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import owntext, prompts, sharing
-from .driver import MAX_IDLE_TURNS, Takeover, WorkspaceFactory
+from .driver import MAX_IDLE_TURNS, Outage, Takeover, WorkspaceFactory, _may_pass, outage_hold
 from .flaggate import CLAIMED_ONLY, FlagGate, Outputs
 from .held import Secrets as _Secrets
 from .facts import FirstLooks, Look
@@ -155,6 +172,7 @@ from .l1stage import L1Stage, StageLane, run_stage
 from .workspace import (
     CONTAINER_ROOT,
     PRIVATE,
+    SIGNAL_TREE as _SIGNAL_SCRIPT,
     DockerWorkspace,
     Snapshot,
     Workspace,
@@ -209,6 +227,24 @@ HELD_SUFFIX = ".held"  # added to each held name: a CLI that looks under .flight
 STDERR_LOG = "agent-stderr.log"  # in root/.flightdeck
 PID_LINE = "flightdeck-agent-pid "
 
+# A model API's failure that may pass, as each CLI reports a turn that failed on it once its own retries ran out
+# (P78): claude in structured fields (the result's api_error_status, an assistant message's or an api_retry event's
+# error category); codex only in turn.failed's message, its own words for its errors (codex-rs: CodexErr's Display).
+CLAUDE_PASSING = frozenset({"rate_limit", "overloaded", "server_error"})
+CODEX_STATUS = re.compile(r"(?:exceeded retry limit, last status:|unexpected status) (\d{3})\b")
+CODEX_PASSING = (
+    "stream disconnected before completion",
+    "rate limit exceeded",
+    "Selected model is at capacity",
+    "Policy-restricted capacity is unavailable",
+    "Flex capacity unavailable",
+    "Connection failed",
+    "request timed out",
+    "We\u2019re currently experiencing high demand",
+    "We're currently experiencing high demand",
+)
+CODEX_NOT_PASSING = "reason: content_filter"  # a stream that ends on the content filter is about the request
+
 NUDGE = (
     "Note from flightdeck: your turn ended. Carry on with the challenge; when you have the flag, "
     "write it in your reply on a line of its own as FLAG: <the flag>."
@@ -245,28 +281,6 @@ _DOCKER_WRAPPER = (
 made, or kept from the lane's last start, owner-only (mode 700); one that is not the
 user's own stops the CLI with the reason on stderr. Then it says the CLI's pid in the
 container, and becomes the CLI."""
-_SIGNAL_SCRIPT = r"""
-sig=$1; root=$2; tree=$3
-pids=$root
-if [ "$tree" = 1 ]; then
-  more=1
-  while [ "$more" = 1 ]; do
-    more=0
-    for f in /proc/[0-9]*/stat; do
-      s=$(cat "$f" 2>/dev/null) || continue
-      pid=${s%% *}
-      rest=${s##*) }
-      set -- $rest
-      case " $pids " in *" $pid "*) continue ;; esac
-      case " $pids " in *" $2 "*) pids="$pids $pid"; more=1 ;; esac
-    done
-  done
-fi
-kill -s "$sig" $pids 2>/dev/null
-exit 0
-"""
-"""Signals a process and (tree=1) everything under it, inside a lane's container: `docker
-exec` does not pass a signal on to the process it started."""
 _SIGNAMES = {
     signal.SIGSTOP: "STOP", signal.SIGCONT: "CONT", signal.SIGINT: "INT", signal.SIGTERM: "TERM", signal.SIGKILL: "KILL",
 }
@@ -687,6 +701,41 @@ def _status(code: int | None) -> int | None:
     return code if code >= 0 else 128 - code
 
 
+def claude_passing(result: dict, retry: tuple[int | None, str] | None, category: str) -> str:
+    """Why a claude turn that failed did so on a model API failure that may pass (a rate
+    limit, a 5xx, an overload: P78), or "" when it did not or claude does not say. From its
+    structured fields only, never from the text of the turn: the result's api_error_status;
+    else the error category of the turn's assistant message that claude made of the failure
+    (`category`); else the last api_retry event of the turn (`retry`: its error_status and
+    error category), the failure claude was retrying when its retries ran out."""
+    status = result.get("api_error_status")
+    if isinstance(status, int) and not isinstance(status, bool):
+        return f"HTTP {status}" if _may_pass(status) else ""
+    if category:
+        return category if category in CLAUDE_PASSING else ""
+    if retry is not None:
+        code, kind = retry
+        if code is not None:
+            return f"HTTP {code}" if _may_pass(code) else ""
+        return kind if kind in CLAUDE_PASSING else ""
+    return ""
+
+
+def codex_passing(message: str) -> str:
+    """Why a codex turn that failed (turn.failed's message) did so on a model API failure
+    that may pass (P78), or "": a status codex gave up on (exceeded retry limit, unexpected
+    status) that may pass, or one of codex's own words for an overload, a rate limit, a
+    stream or a connection that broke, a request that timed out. Each is codex's own text at
+    the start of its message; the content filter is not one."""
+    found = CODEX_STATUS.match(message)
+    if found:
+        status = int(found.group(1))
+        return f"HTTP {status}" if _may_pass(status) else ""
+    if CODEX_NOT_PASSING in message:
+        return ""
+    return next((_one_line(message, 80) for words in CODEX_PASSING if message.startswith(words)), "")
+
+
 def _shell_command(command: Any) -> str:
     """The command a codex command_execution ran, without the shell wrapper codex adds
     (`bash -lc '<command>'`)."""
@@ -875,10 +924,14 @@ class _Proc:
         if container is None:
             self.inner.set_result(process.pid)
         self.frozen = False
-        self.interrupted = False  # we sent SIGINT to end a turn
+        self.interrupted = False  # we asked it to end its turn (claude: an interrupt request; codex: SIGINT)
         self.ending: asyncio.Future[None] | None = None
         self.stderr: asyncio.Future[None] | None = None  # the task reading its stderr
         self.cost = 0.0  # claude: total_cost_usd so far
+        self.usage = (0, 0, 0, 0)  # claude: its modelUsage so far, summed over models (fresh, written, read, output)
+        self.requests = 0  # claude: control requests sent
+        self.announced = False  # claude: its start noted (it sends an init event every turn)
+        self.limits: set[tuple[str, str]] = set()  # claude: the rate-limit states noted, (status, which limit)
         self.thread: str | None = None  # codex: the thread this turn ran in
         self.completed = False  # codex: turn.completed seen
         self.failed: str | None = None  # codex: turn.failed's message
@@ -1049,6 +1102,8 @@ class _Run:
         self.shares = sharing.attach(driver.deck, challenge, workspace, driver.root_of)
         self.handover = ""
         self._delivering = False
+        self.retry: tuple[int | None, str] | None = None  # claude: the turn's last api_retry (status, error category)
+        self.api_error = ""  # claude: the error category of the message it made of a failed call this turn
 
     # ------------------------------------------------------------------ the deck's view
 
@@ -1091,6 +1146,26 @@ class _Run:
     def note(self, text: str) -> None:
         if not self.over():
             self.driver.deck.note(self.lane_id, self.driver.redact(text))
+
+    def api_answered(self) -> None:
+        """The model API answered this lane's CLI: whatever lanes ended on failures before
+        it, they were no outage that still lasts (Outage)."""
+        self.retry, self.api_error = None, ""
+        self.driver.outage.answered()
+
+    def failed_turn(self, gave_up: str, passing: str) -> None:
+        """The CLI's turn failed and the lane ends with `gave_up`. When it failed on a model
+        API failure that may pass (`passing` says which), it counts toward an outage as
+        AgentDriver's lanes do (Outage, P78): once OUTAGE_LANES lanes end so in a row, the
+        deck's queue is held before this lane ends, so autopilot disengages and the next
+        challenges wait, and the challenges those lanes park go back on the queue when the
+        player lifts the hold."""
+        if passing:
+            ended = self.driver.outage.ended(self.lane_id, self.driver.deck)
+            if ended:
+                self.driver.deck.hold_queue(outage_hold(ended, f"{self.lane_id}'s {self.kind} on {self.model}: {passing}"),
+                                            ended=ended)
+        self.report(TurnReport(turn=False, gave_up=gave_up))
 
     def track(self, future: asyncio.Future[Any]) -> None:
         self.tasks.add(future)
@@ -1919,6 +1994,7 @@ class _ClaudeRun(_Run):
         super().__init__(*args, **kwargs)
         self.busy = False  # a turn runs: claude reads the next message only when it ends
         self.usage_seen: dict[str, tuple[int, int, int, int]] = {}
+        self.uncharged = False  # said once: a call cut short has no price here
 
     async def session(self) -> None:
         while await self.until_running():
@@ -1962,6 +2038,22 @@ class _ClaudeRun(_Run):
         stdin.write(line.encode("utf-8") + b"\n")
         proc.sent = sent
         self.busy = True
+        self.retry, self.api_error = None, ""  # a new turn: what claude retried before is not this turn's
+
+    def interrupt(self, proc: _Proc) -> None:
+        """End claude's turn: an interrupt request on its stdin (the stream-json control
+        request the Agent SDK sends), never SIGINT. claude exits on a SIGINT that finds it
+        waiting for a message, and its turn can end just before a signal would land; an
+        interrupt request that finds it waiting does nothing. The request is written before
+        a frozen CLI is woken (sync), so it is there when the CLI runs again."""
+        stdin = proc.process.stdin
+        if stdin is None or stdin.is_closing() or not proc.alive or proc.ending is not None:
+            return
+        proc.requests += 1
+        line = json.dumps({"type": "control_request", "request_id": f"flightdeck-{proc.requests}",
+                           "request": {"subtype": "interrupt"}})
+        stdin.write(line.encode("utf-8") + b"\n")
+        proc.interrupted = True
 
     def deliver(self) -> None:
         lane = self.lane()
@@ -1970,8 +2062,7 @@ class _ClaudeRun(_Run):
             return  # not started yet: the first message carries everything
         if self.busy:
             if (lane.hints or self.notes) and not proc.interrupted:
-                proc.interrupted = True
-                proc.send(signal.SIGINT, tree=False)  # claude ends the turn; the message goes when it has
+                self.interrupt(proc)  # claude ends the turn; the message goes when it has
             return
         hints = list(lane.hints)
         extra = self.compose(hints)
@@ -1988,6 +2079,12 @@ class _ClaudeRun(_Run):
                 self.problem(proc, "an assistant event with no message")
                 return
             self.count(message)
+            error = event.get("error")
+            if isinstance(error, str) and error:  # the message claude made of a failed call: no answer from the API
+                if current:
+                    self.api_error = error
+            elif message.get("model") != "<synthetic>":
+                self.api_answered()
             if not current:
                 return
             for block in _blocks(message.get("content")):
@@ -2009,10 +2106,43 @@ class _ClaudeRun(_Run):
         elif kind == "result":
             await self.result(proc, event, current)
         elif kind == "system":
-            if event.get("subtype") == "init" and current:
+            if event.get("subtype") == "init" and current and not proc.announced:  # it sends one every turn
+                proc.announced = True
                 self.init(event)
+            elif event.get("subtype") == "api_retry" and current:
+                status = event.get("error_status")
+                code = status if isinstance(status, int) and not isinstance(status, bool) else None
+                self.retry = (code, _str(event.get("error")))
+        elif kind == "rate_limit_event":
+            if current:
+                self.rate_limit(proc, event.get("rate_limit_info"))
+        elif kind == "control_response":
+            response = event.get("response")
+            if current and isinstance(response, dict) and response.get("subtype") == "error":
+                self.note(f"claude refused flightdeck's interrupt: {_one_line(_str(response.get('error')), 200) or 'no reason given'}")
         elif kind != "stream_event":
             self.unknown_event(proc, _str(kind))
+
+    def rate_limit(self, proc: _Proc, info: Any) -> None:
+        """claude's word on its plan's usage limits (a subscription login): a note when a limit
+        is near, or reached, once per state and limit."""
+        if not isinstance(info, dict):
+            return
+        status = _one_line(_str(info.get("status")), 40)
+        which = _one_line(_str(info.get("rateLimitType")), 40) or "usage"
+        if status not in ("allowed_warning", "rejected") or (status, which) in proc.limits:
+            return
+        proc.limits.add((status, which))
+        resets = info.get("resetsAt")
+        when = ""
+        if isinstance(resets, (int, float)) and not isinstance(resets, bool) and 0 < resets < 1e11:
+            when = f"; it resets at {time.strftime('%Y-%m-%d %H:%M', time.localtime(resets))}"
+        if status == "rejected":
+            self.note(f"claude says its {which} limit is reached{when}: its model calls are refused until then")
+            return
+        used = info.get("utilization")
+        share = f"{used:.0%} of " if isinstance(used, (int, float)) and not isinstance(used, bool) and 0 <= used <= 1 else ""
+        self.note(f"claude says {share}its {which} limit is used{when}")
 
     def count(self, message: dict) -> None:
         """An assistant message's usage. claude sends one event per content block, each with
@@ -2031,6 +2161,35 @@ class _ClaudeRun(_Run):
         self.usage_seen[key] = new
         fresh, created, read, out = (n - o for n, o in zip(new, old))
         self.add_tokens(prompt=fresh + created + read, completion=out, cached=read, written=created)
+
+    def reconcile(self, proc: _Proc, event: dict) -> tuple[int, int, int, int]:
+        """A turn's tokens, by claude's own count. An assistant event carries its call's usage
+        as it stood when the block was sent: the input and cache counts are the call's, the
+        output often only what had come by then. The result's modelUsage (per model, from the
+        process's start) has the whole of each call, so what the turn's assistant events
+        missed is counted now. Returned: what they saw that modelUsage leaves out (fresh,
+        written, read, output), a call cut short, which claude neither counts nor charges. A
+        result with no modelUsage leaves the counts as they are."""
+        models = event.get("modelUsage")
+        if not isinstance(models, dict):
+            return (0, 0, 0, 0)
+        now = [0, 0, 0, 0]
+        for entry in models.values():
+            if isinstance(entry, dict):
+                now[0] += _count(entry.get("inputTokens"))
+                now[1] += _count(entry.get("cacheCreationInputTokens"))
+                now[2] += _count(entry.get("cacheReadInputTokens"))
+                now[3] += _count(entry.get("outputTokens"))
+        grew = [max(n - o, 0) for n, o in zip(now, proc.usage)]
+        proc.usage = (max(now[0], proc.usage[0]), max(now[1], proc.usage[1]), max(now[2], proc.usage[2]),
+                      max(now[3], proc.usage[3]))
+        prompt, completion, cached, written = self.turn_tokens
+        seen = [max(prompt - cached - written, 0), written, cached, completion]
+        fresh, created, read, out = (max(g - s, 0) for g, s in zip(grew, seen))
+        if fresh or created or read or out:
+            self.add_tokens(prompt=fresh + created + read, completion=out, cached=read, written=created)
+        left = tuple(max(s - g, 0) for g, s in zip(grew, seen))
+        return left[0], left[1], left[2], left[3]
 
     def action(self, name: str, args: dict) -> str:
         if name == "Bash":
@@ -2058,22 +2217,38 @@ class _ClaudeRun(_Run):
         """A turn ended: its cost, and what the lane does next."""
         text = _str(event.get("result"))
         subtype = _str(event.get("subtype"))
-        interrupted = proc.interrupted
+        # an interrupt that came as the turn ended finds claude waiting and does nothing: then the turn ended by itself
+        interrupted = proc.interrupted and subtype == "error_during_execution"
         failed = not interrupted and (event.get("is_error") is True or subtype != "success")
+        # the tokens claude's events missed count on the lane whoever's turn it was (an old model's, one being stopped),
+        # and before the search below, so a stop during it cannot leave them out
+        cut = self.reconcile(proc, event)
         last: tuple[list[str], list[str]] = ([], [])
         if current and not failed and not interrupted:
             last = await self.search(text, own=True)  # its last words, should they hold a flag its text blocks did not
             await self.vet(last[1])  # a flag they claim, looked for in the challenge's own text
             current = self.current(proc)  # stopped or escalated while they were searched
         # from here on nothing waits: the turn is accounted for before anything goes to claude
+        uncounted = cut if current else (0, 0, 0, 0)
         total = _dollars(event.get("total_cost_usd"))
+        price = self.driver.prices.get(proc.model)
         if total is None:
-            price = self.driver.prices.get(proc.model)
             prompt, completion, cached, written = self.turn_tokens
             dollars = call_cost(None, price, prompt, completion, cached, written)
         else:  # total_cost_usd counts from the start of this process
             dollars = total - proc.cost if total >= proc.cost else total
             proc.cost = total
+            if any(uncounted):  # a call cut short: claude charges it nowhere, so the config price does
+                fresh, written, read, out = uncounted
+                extra = call_cost(None, price, fresh + written + read, out, read, written)
+                if extra is not None:
+                    dollars += extra
+                elif not self.uncharged:
+                    self.uncharged = True
+                    self.note(
+                        f"claude leaves a model call cut short out of its cost, and the config has no price for "
+                        f"{proc.model}: such a call's cost is not in the lane's dollars"
+                    )
         self.turn_tokens = [0, 0, 0, 0]
         self.cost_due = False
         tokens, cached = self.take_tokens()
@@ -2100,8 +2275,12 @@ class _ClaudeRun(_Run):
                 self.report(TurnReport(turn=False, action=f"says: {_one_line(said, 200)}"))
             if failed:
                 why = _one_line(text, 300)
-                self.report(TurnReport(turn=False, gave_up=f"claude's turn failed ({_one_line(subtype or 'no subtype', 60)})"
-                                                           + (f": {why}" if why else "")))
+                passing = claude_passing(event, self.retry, self.api_error)
+                self.retry, self.api_error = None, ""
+                # an error claude reports as subtype "success" (not logged in, a refused key) names itself in terminal_reason
+                kind = subtype if subtype and subtype != "success" else _str(event.get("terminal_reason")) or subtype
+                self.failed_turn(f"claude's turn failed ({_one_line(kind or 'no subtype', 60)})" + (f": {why}" if why else ""),
+                                 passing)
                 return
             if interrupted:
                 self.steps = 0
@@ -2179,7 +2358,7 @@ class _CodexRun(_Run):
                     self.carry = proc.sent  # its turn was cut short: the stronger model hears them too
                 continue  # escalated: a fresh thread on the stronger model
             if proc.failed is not None:
-                self.report(TurnReport(turn=False, gave_up=f"codex's turn failed: {proc.failed}"))
+                self.failed_turn(f"codex's turn failed: {proc.failed}", codex_passing(proc.failed))
                 return
             if proc.completed:
                 if self.idle_turn():
@@ -2223,10 +2402,14 @@ class _CodexRun(_Run):
             item = event.get("item")
             if not isinstance(item, dict):
                 self.problem(proc, f"an {kind} event with no item")
-            elif current:
+                return
+            if item.get("type") != "error":
+                self.api_answered()  # the model's own item: the API answered
+            if current:
                 await self.item(proc, kind, item)
         elif kind == "turn.completed":
             proc.completed = True
+            self.api_answered()
             self.usage(proc, event.get("usage"))
         elif kind == "turn.failed":
             error = event.get("error")
@@ -2378,6 +2561,8 @@ class ExternalDriver:
         self.looks = FirstLooks(self.errors)
         self.instance = instance
         self.l1 = l1
+        # lanes that ended in a row on a model API failure that may pass: the CLIs share the player's model API (P78)
+        self.outage = Outage()
 
     # ------------------------------------------------------------------ LaneDriver
 

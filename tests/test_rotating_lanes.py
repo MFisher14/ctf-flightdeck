@@ -45,7 +45,7 @@ def test_a_lane_of_flightdecks_own_loop_reads_the_rule_in_its_brief_and_hears_wh
             lane = release_rotating(lab, wall)
             await loop.until(lambda: lane.pending is not None, "the candidate flag")
             first = [m["content"] for m in server.requests[0]["json"]["messages"] if m["role"] == "user"][0]
-            assert first.split(prompts.FENCE_CLOSE)[1].strip() == prompts.rotates(300)
+            assert first.split(prompts.FENCE_CLOSE)[1].strip() == prompts.rotates(300) + "\n" + prompts.SESSIONS
             wall.t += 400  # the approval comes in a later window
             assert not lab.deck.apply(iv.Approve(lane.id)).ok
             await loop.until(lambda: len(server.requests) >= 2, "the next model call")

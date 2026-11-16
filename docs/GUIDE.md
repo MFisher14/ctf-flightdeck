@@ -63,6 +63,25 @@ are in the terminal under the home screen, and `q` shows them. The practice set 
 back to it too. `q` on the home screen leaves, and a run that stops with an error leaves with its
 reason showing.
 
+**Settings and health.** The last choice on the home screen shows your setup in one place. At the
+top are your main settings: the config file, your model API, whether its API key is set (`set` or
+`not set`, and where; never the key itself), your models, where lanes run, and the console's
+layout, theme, bell, title and mouse. Under each is where it comes from, a line of your config or
+the default, and for the look how to change it (`/layout` or `/theme` in a run, then `s`). Below
+them are the checks `flightdeck doctor` runs, in its words: `ok`, `FAIL` for what stops a run and
+`warn` for what does not, with the fix under each problem and one line on top that counts them. A long path or detail
+wraps under its own column, so the names and the marks stay a column you can read down.
+The checks take a few seconds; Docker or a server that does not answer can hold them up to 2
+minutes, and then they stop and say so. The settings show at once, `esc` goes back at any time
+and stops the checks, and `r` runs them again. The screen only reads: in a run, `/config` changes that run's settings.
+
+The same screen opens in a running console: type `/settings`. On top it adds this run's own
+settings (lanes at once, what happens to a flag, the layout and the theme) with the command that
+changes each, and `c` opens `/config`'s dialog for them. A line under the title says how many
+lanes need you; they keep running while you look. The checks run beside the console at a lower
+priority, so they do not slow it, and what they found is kept for the run: open the screen again
+and it shows them with their age, until `r` checks again.
+
 **The same by command.** Each step has a command of its own, for a script, or when you would rather
 answer at the prompt:
 
@@ -87,7 +106,7 @@ In a script or a pipe `flightdeck` alone asks nothing and prints these commands 
 
 **Your first console.** The first console you open, and the mock, start on a welcome screen: what
 the board, the lanes and the command bar are, and the keys you need; Enter goes on (on an empty
-board, to adding your first challenge). With challenges on the board it names three keys to begin
+board, to adding your first challenge, and there `esc` shows the console with nothing added). With challenges on the board it names three keys to begin
 with: Enter to open a lane to watch it and talk to it, `a` to approve a flag an agent found, and `?`
 for every key, any time ([The console](#the-console)).
 
@@ -95,7 +114,8 @@ for every key, any time ([The console](#the-console)).
 hold your API keys, a local model server and its models, the light model, Docker, the lane image and
 your terminal's size. Each problem has a line of its own with its fix under it, and the last line is
 the one to act on: how many things there are to fix before a run (the `FAIL` lines; a `warn` line is
-something a run does not wait for), or `Ready` with the next command. Before the console opens,
+something a run does not wait for), or `Ready` with the next command. The home screen's "Settings and health"
+shows the same checks. Before the console opens,
 `play` and `practice` ask the model API whether it takes your API key and serves every model in your
 ladder, and stop with what to fix if not. `ctfdeck` and `ctf-flightdeck` are other names for the
 `flightdeck` command.
@@ -141,8 +161,9 @@ is what a CTF platform gives you; **tokens** alone are what a model counts its w
 a model API charges for. A **setting** is a line of your config.
 
 - **Board**: the event's challenges. To flightdeck it is a folder of challenge folders, each with
-  a `challenge.json` and its handout files ([Boards](BOARDS.md)). With CTFd, flightdeck pulls
-  one into a folder.
+  a `challenge.json` and its handout files ([Boards](BOARDS.md)). From a platform (CTFd, rCTF,
+  noCTF, GZCTF, or one a [plugin](PLUGINS.md) of yours talks to), flightdeck pulls one into a
+  folder.
 - **Wave**: challenges an event releases together, sometimes dozens at once, when it opens or
   while it runs. flightdeck pulls each new wave into the board, starts lanes on as many of its
   challenges as `max_lanes` allows and queues the rest.
@@ -162,7 +183,9 @@ a model API charges for. A **setting** is a line of your config.
 - **Ladder**: your models, weakest first (`[models] ladder`). Lanes start on the first.
   **Escalate** (`e`) restarts a lane on the next one, with a summary of what it did.
 - **Fork** (`f`): a second lane on the same challenge. **Take over** (`t`): the lane's shell is
-  yours; exit it to hand the lane back.
+  yours; exit it to hand the lane back. When the shell cannot open (Docker is not running, the
+  lane's container is gone), you are back in the console at once, the lane carries on as it
+  was, and the status line says what went wrong.
 - **Park**: set a challenge aside. A parked challenge is not queued and no lane works it, but it
   can still be solved: `/queue` puts it back in the queue. `/kill park` parks a lane's challenge
   when it kills the lane, and Autopilot parks one it gave up on for now.
@@ -193,8 +216,10 @@ tokens or $2 (`token_cap` and `dollar_cap` under `[lanes]` in your config, with 
 four lanes run at a time by default, and nothing caps a whole run. With
 `init --provider anthropic` every lane starts on Claude Haiku 5.5 ($0.10 / $0.50 per million input
 / output tokens). It moves up to Sonnet or Opus 5.5, at 20 to 40 times that, only when you
-escalate it. A model on your own machine costs nothing (`init` writes no dollar cap for Ollama or
-an MLX server), and `flightdeck mock` spends nothing.
+escalate it. A model on your own machine costs nothing (`init` writes no dollar cap for Ollama, an
+MLX server or a custom server at `127.0.0.1` or `localhost`; the token cap stays), and
+`flightdeck mock` spends nothing. If that custom server is a proxy to a paid API, set
+`dollar_cap` and `[prices]` yourself.
 
 ## The mock
 
@@ -220,8 +245,16 @@ solvers run in containers too. `flightdeck image build` builds the image once, a
 `flightdeck image dockerfile` prints what it builds ([what a lane's shell
 has](#what-a-lanes-shell-has) lists it). A lane of flightdeck's own loop gets no
 network unless its challenge has a live instance it may reach: a web origin, or a TCP service like
-`nc host port` (`tcp://host:port` in the challenge's `urls`). Under an event whose instance policy
-is `confirm`, the lane asks you first.
+`nc host port` (`tcp://host:port` in the challenge's `urls`), or a TLS endpoint an instance
+plugin started for it (`tls://host:port`: ctfd-whale's, or rCTF's `tcp-ssl`). Under an event
+whose instance policy is `confirm`, the lane asks you first. While it waits for your answer it
+gives its slot to the next queued challenge; once you answer, it takes the next free slot
+before anything queued, and its state reads `queued` until it has one. A lane waiting for your
+answer to a flag or to more budget does the same once it has waited a minute, so the queue does
+not stand still while you are away, and a quick answer keeps the lane where it is. Each lane
+without a slot keeps its workspace (its container), so `max_waiting` under `[lanes]` (4 by
+default) says how many may be without one at once; one more keeps its slot, and so does a lane
+with a session still open, since its program runs on. `max_waiting = 0` keeps every slot.
 
 The network it then gets reaches **that instance and nothing else**: each host and port its
 challenge's `urls` name, and for a coding-agent lane (`--agent`) its CLI's API too
@@ -304,6 +337,22 @@ github.com, for amd64 and arm64, and refuses an archive whose SHA-256 is not the
 Dockerfile. On the host runtime a lane's shell has whatever your machine has, and its brief
 names nothing.
 
+A lane can also keep a program running across its turns: flightdeck's own lanes have
+**sessions**. `session_start` starts a command in the lane's workspace (`gdb -q ./chall`,
+`python3 -u -i`, `nc` to the challenge's instance), `session_send` writes a line to it and reads
+what it writes back, and `session_close` stops it with everything it started. You see each as a
+step in the lane: `session s1 start: gdb -q ./chall`, `session s1 < break main`. A session gets
+pipes, not a terminal, so a program that prints a prompt only at a terminal prints none; a lane
+that needs one asks for a terminal (`session s1 start (terminal): python3`), and what the
+program writes still reaches the lane and your console as plain text, with no colours or other
+escapes. A program on such a terminal cannot be stopped with ctrl+c: the lane closes it. What the lane
+sends it arrives as sent, ctrl+c and other control bytes included, except ctrl+d, which a
+terminal takes as the end of the input, so a send that holds it is refused. A lane
+has at most three open at once; one it has not used for ten minutes is closed; and every session
+is closed when the lane ends and when you take it over, so nothing it started runs on beside your
+shell (the lane hears which were closed when you hand back). What a session writes is handled
+like any command's output: held secrets taken out, long output cut and saved to a file.
+
 ## Models and keys
 
 Your config names the environment variable that holds each key, never the key; flightdeck reads
@@ -381,6 +430,7 @@ first, and the line under the list says why and numbers the answers: one key ans
 **Space** peeks at the selected lane without leaving the list: a panel opens under the list
 with the lane's last six steps, each on one row cut at the edge (a command and the first line
 of its output, the model's own words, your messages, an alert, the question it waits on). The
+same command run several times in a row is one row, with how many times first (`×7`). The
 line that says why the lane is flagged, and its numbered answers, stay under it. Move through
 the list and the peek follows; what you type in the command bar still goes to the lane the
 peek names, so you can read what a lane did, then hint or redirect it, and never open it.
@@ -402,7 +452,8 @@ the box it is a question mark.
 
 A lane's view is calm: each thing the lane did is one row, cut at the edge of the pane. A run
 of tool calls is two rows, how many and the last one (`⏺ 12 tool calls`, then what it is doing
-now); a long command, output or note from flightdeck (your L1 engines' intake too) shows its
+now, with `×7` before it when it is the seventh time in a row the lane made that same call: a
+lane that loops shows it at a glance); a long command, output or note from flightdeck (your L1 engines' intake too) shows its
 first line and ` …+6 lines`; an alert is its name and turn (`▲ Loop alert · turn 11`), and why
 it fired is in the box below; the model's own words are the one thing that wraps. `ctrl+o` (or
 `/details`) shows every line of every command and output, and again hides them; it works while
@@ -431,7 +482,8 @@ status line: what you dragged over is copied when you let go, and the status lin
 triple-click the whole transcript on screen. `ctrl+c` copies the selection again and `esc`
 takes it down. With no mouse, `/copy` copies the lane's last output with its line breaks,
 `/copy command` the command that printed it, `/copy flag` the lane's flag, and `/copy all` the
-whole transcript. A copy shows a credential's name and never its value, as the screen does.
+whole transcript; `/copy ` with a space lists the four, each with what it copies. A copy shows
+a credential's name and never its value, as the screen does.
 
 flightdeck copies through your system's clipboard tool (`pbcopy` on macOS; `wl-copy`, `xclip`
 or `xsel` on Linux) and through the terminal (OSC 52), which is what reaches your machine over
@@ -440,8 +492,9 @@ SSH. If neither can be shown to have worked, the status line says so and what to
 (iTerm2) or Shift while you drag. That selection is also the way to copy from the full
 needs-you card, the diff and the lane list, which flightdeck's own selection does not reach.
 
-`t` takes over a lane's shell (its container in Docker): exit it to hand the lane back, and the
-lane hears what you changed. The shell starts clean: it reads no startup file, and with `--host`
+`t` takes over a lane's shell (its container in Docker), under a line that names the lane and
+its folder: exit it (or `ctrl+d`) to hand the lane back, and the lane hears what you changed.
+The shell starts clean: it reads no startup file, and with `--host`
 its HOME is a new folder only you can read, outside the workspace, so nothing the lane wrote runs
 before you type. `e` escalates a lane to the next model in your ladder with a summary of what it
 did, and `f` forks it.
@@ -454,7 +507,10 @@ The queue is held too when the model API keeps failing in a way that may pass (a
 5xx, an overload): two lanes in a row end on it within a few minutes, with no reply in between.
 The challenges still queued stay queued instead of each being parked in turn. Once the API answers
 again, `/unhold` puts the challenges that outage parked back in front of the queue and starts lanes
-again. With a `[fallback]` API, a lane moves to it instead of ending.
+again. With a `[fallback]` API, a lane moves to it instead of ending. Coding-agent lanes
+(`--agent claude` or `--agent codex`) hold the queue on an outage the same way, once the CLI has
+retried and given up on its turn; with them, a failure that hits every lane (a refused key, say)
+ends each lane with the CLI's own words, and the queue is not held for it.
 
 When several lanes wait with a flag each, `A` (or `/approve all`) answers them together: a prompt
 lists each flag by lane and challenge, and `y` approves them, each as `a` would. The flags of one
@@ -482,8 +538,20 @@ lane starts to need you, the terminal's bell marks the tmux window
 The lane list's keys act on the selected lane: `p` pause, `h` hint, `r` redirect, `f` fork, `k` kill,
 `e` escalate, `t` take over, `a` approve, `d` decline, `x` dismiss, `1`-`9`/`0` quick answers,
 `c` claim (team), `/` commands, `s` sort, `?` help, `q` quit; `A`
-approves every waiting flag; **Space** peeks at the lane and **Enter** opens it full screen. They act in both layouts; the
-simple layout's key line shows only the ones that apply now. The whole design is in the
+approves every waiting flag; `ctrl+o` opens your system's file window to attach files to the
+lane's challenge, on a board you fill yourself ([Events and teams](#events-and-teams)); **Space** peeks at the lane and
+**Enter** opens it full screen. They act in both layouts; the
+simple layout's key line shows only the ones that apply now.
+
+The selected lane is the highlighted row. A filter you set that hides it selects the row the
+cursor is on instead, so the keys act on the lane you see highlighted; a filter that leaves no
+lane at all refuses every key until `esc` clears it. A lane that drops out of the filter by
+itself, from what it did, stays selected and the keys refuse it: the selection never jumps
+to a lane you did not pick. When you approve, decline or kill a lane
+from the list and it ends, folding into `N finished`, the selection moves on to the next lane
+that needs you (as `ctrl+n` does in a lane's view), or to the row under it when none does. A
+lane that ends on its own, with no answer of yours, stays selected, so you see what happened;
+so does one that went on after your answer (a rejected flag, a decline) and ends later. The whole design is in the
 [console spec](CONSOLE-SPEC.md).
 
 **Help.** `?` opens help for where you are: in the lane list, and in a lane while its chat box
@@ -516,12 +584,14 @@ name to find it:
 
 - A few letters from the start of the name, or of the second word in it: `/over` finds
   `/takeover`, `/hold` finds `/unhold`, `/pilot` finds `/autopilot`.
-- An alias: `/q` and `/exit` are `/quit`, `/settings` is `/config`, `/lanes` is `/back`. The
-  menu shows them beside the name.
+- An alias: `/q` and `/exit` are `/quit`, `/lanes` is `/back`. The menu shows them beside
+  the name. (`/settings` is not `/config`: it opens Settings and health, as on the home
+  screen.)
 - After the name and a space, the menu lists what the command takes: the lanes with their
   challenge and state after `/open` (type `l2`, or part of the challenge's name), the parked
   and new challenges after `/queue`, your themes after `/theme`, `simple` and `deck` after
-  `/layout`, the sort modes after `/sort`, `on` and `off` after `/autopilot`.
+  `/layout`, the sort modes after `/sort`, `on` and `off` after `/autopilot`, and `output`,
+  `command`, `flag` and `all` after `/copy`.
 - When nothing matches, the menu says `No commands match "/x"` and stays open, so you can
   correct what you typed.
 
@@ -533,6 +603,20 @@ The menu never runs anything for you. A command runs only when its whole name or
 the bar and you press Enter: `/over` sent as it is gets `Unknown command /over`, and
 `/approve 2` is refused instead of approving lane 2 (write `/approve L02`). `/approve` has no
 short form, because approving a flag can spend one of a challenge's tries.
+
+**Up and down** bring back what you sent, newest first, as in a shell: messages and commands,
+from either view, for this run only (nothing is saved to a file). Down past the newest gives
+back what you were typing. Change a line you brought back and press Enter to send it; nothing
+is sent while you walk. While the `/` menu is open the arrows move in the menu instead: `esc`
+closes it.
+
+**`ctrl+g`** opens what is in the box in your editor, for a long redirect or a hint you want to
+think over. flightdeck uses `$VISUAL`, or `$EDITOR` when that is not set (`export
+EDITOR=nano`, or `EDITOR="code --wait"` for an editor that opens a window). The console steps
+aside while you write and your lanes keep working. When you save and quit, the text is back in
+the box, the lines joined by spaces since the box is one line, and nothing is sent until you
+press Enter. Quit without saving, with an error (`:cq` in vim), or with the file emptied, and
+the box keeps what it had. With neither variable set, the status line says so and nothing opens.
 
 ### Layouts
 
@@ -552,9 +636,10 @@ The console has two layouts.
   the challenges that wait and the ones solved;
 - under the list, why the selected lane is flagged and its numbered answers; nothing for a lane
   that needs nothing;
-- a key line of the keys that apply to the selected lane now: `a approve` and `d decline` while
-  it waits for you, `1-9 answer` and `x dismiss` for an alert, then `enter open`, `/ commands`,
-  `? help` and `q quit`. Every other key still acts, and `?` lists them all.
+- a key line of the keys that apply to the selected lane now: `1 0 answer` while it waits for
+  you (the line above it says what 1 and 0 do, for instance `1 more budget  0 stop the lane`;
+  `a` and `d` do the same), `1-9 answer` and `x dismiss` for an alert, then `enter open`,
+  `/ commands`, `? help` and `q quit`. Every other key still acts, and `?` lists them all.
 
 A lane's own view shows a part only when it has something in it: the files pane once the lane
 has changed a file, the strip of other lanes while one of them needs you. Its title has the
@@ -715,7 +800,8 @@ The console tells you that a lane needs you when you are looking at another wind
 - **The bell.** The terminal's bell rings once each time that count goes up. It does not ring
   for what already waits when the console opens, while the count stays, when it falls, or when
   the queue is held. What a bell does is your terminal's own setting: a sound, a mark on the
-  tab, a badge, or nothing.
+  tab, a badge, or nothing. `flightdeck mock` rings it only when your config says `bell = true`:
+  its lanes are scripted and need no one, so trying it out does not keep calling you.
 
 When the console leaves, the title you had comes back: flightdeck asks the terminal to save its
 title before it writes one, and to take it back at the end. The same happens while you are in a
@@ -738,7 +824,7 @@ Either can be turned off under `[console]` in your config:
 ```toml
 [console]
 title = false   # leave the terminal's title alone
-bell = false    # never ring the bell
+bell = false    # never ring the bell (true: ring it in flightdeck mock too)
 ```
 
 This is tested by reading what a pseudo-terminal is sent, byte for byte. It has not yet been
@@ -887,7 +973,7 @@ until jq -e '.closed' status.json > /dev/null; do sleep 5; done   # wait for the
 | `event` | The event's name. |
 | `runtime_seconds` | Seconds since the run started. |
 | `closed` | `true` in the last write, once the run has shut down. |
-| `lanes` | Each lane, by number: `id`, `challenge` (`id`, `name`), `state` (`run`, `wait`, `paused`, `takeover`, `solved`, `killed`, `stopped`, `gave up`), `model`, `turns`, `tokens`, `dollars` (what is known), `unpriced` (some of its spend had no price), `needs_you`, `pending` (null, or the approval it waits for: `kind`, `detail`, `flag`), `waiting` (further approvals behind that one), `alerts` (each `kind` and `reason`), `result` (one line, once it ended). |
+| `lanes` | Each lane, by number: `id`, `challenge` (`id`, `name`), `state` (`run`, `wait`, `queued` (answered after it gave its slot up while it waited for you: it waits for a free one), `paused`, `takeover`, `solved`, `killed`, `stopped`, `gave up`), `model`, `turns`, `tokens`, `dollars` (what is known), `unpriced` (some of its spend had no price), `needs_you`, `pending` (null, or the approval it waits for: `kind`, `detail`, `flag`), `waiting` (further approvals behind that one), `alerts` (each `kind` and `reason`), `result` (one line, once it ended). |
 | `needs_you` | The lanes that need you, most urgent first, in the console's attention order: `lane`, `challenge` (its name), `pending` (the approval's kind, or null), `alerts` (the kinds that want an answer). |
 | `queue` | `length`, `held`, and `held_reason` (null unless held). |
 | `totals` | `tokens`, `dollars` and `unpriced` over all lanes: the console's header. |
@@ -1013,11 +1099,27 @@ challenge's text and files given to a model (a lane does both, and flightdeck do
 event that forbids either: a rule that allows asking a model about a concept and forbids
 giving it the challenge is a no); the label your team declared to the event for its AI use, if
 the event asks for one (Enter for none); how the challenges arrive (**ctfd**: the site runs CTFd, and flightdeck pulls the board
-and submits flags; **by hand**: any other site); the site's address; what a flag looks like
+and submits flags; **by hand**: any other site; **json api**: the site runs rCTF, rCTF v2, noCTF or GZCTF, and flightdeck
+pulls and submits there as on CTFd); the site's address; what a flag looks like
 (`PP` for `PP{...}`); whether a flag waits for you or goes at once; and your CTFd access token
 (on the site: Settings, Access Tokens, Generate). The token goes into your keys file under a
 variable of this event's own, never into the event's folder, and is never shown. Then it says
 whether the solver pack is installed (and offers to install it), and launches.
+
+**rCTF, noCTF and GZCTF.** The json api choice asks which of the four the site runs, then its
+address. On rCTF and GZCTF the address can be any page of the site, pasted from the browser:
+their routes are under the site's root, so start keeps only the site's part and says so; a GZCTF
+game's page (`https://ctf.example.org/games/3`) also gives the game's number, which is asked for
+otherwise. On noCTF the address is its API's, which may not be the page's: the browser's network
+tab shows the host the requests to `/challenges` go to. The token question says where that
+platform keeps it: rCTF's is your team's login link (the profile page, Team Invite), pasted whole;
+noCTF's is the session token the page keeps once you sign in (the browser's storage for the site,
+`noctf-session-token`); GZCTF's is the value of its `GZCTF_Token` cookie. It goes into your keys
+file as `RCTF_TOKEN_<NAME>`, `NOCTF_TOKEN_<NAME>` or `GZCTF_TOKEN_<NAME>`, bound to the site as a
+CTFd token is. The event file is the one `flightdeck http example --preset NAME` prints, with your
+answers in it, so `flightdeck http check ~/ctf/example-ctf/event.toml` tries it before you play:
+it signs in and lists the challenges, and submits nothing. Away from a terminal: `--preset NAME`
+(rctf, rctf2, noctf or gzctf; it means `--platform http`), `--url`, and `--game NUMBER` for GZCTF.
 
 For the flag format you can also paste an example flag from the rules: `CTF{s0me_t3xt}` is read
 as `CTF{...}` (any text between the braces), and start says what it understood. Anything with a
@@ -1065,7 +1167,8 @@ if it was accepted or `d` if not.
 
 `ctrl+o` in the form opens your system's file window (Finder's on macOS) to choose the
 challenge's files, for a terminal where a drop does not arrive; `/attach <challenge>` with no
-file opens the same window. Files dropped on the console are taken wherever the focus is: into
+file opens the same window, and so does `ctrl+o` in the lane list, for the selected lane's
+challenge. Files dropped on the console are taken wherever the focus is: into
 the form when it is open, otherwise onto the command bar as an `/attach` that names the selected
 challenge, to finish with Enter. A drop is a paste that is nothing but the paths of files that
 exist; any other paste is text, and text you typed on the command bar is never replaced. A
@@ -1083,7 +1186,9 @@ name. A dropped file is copied into the run's folder the moment it lands, and th
 what gets attached: the file behind a drop can be a temporary one, so it may be gone by the
 time you press `ctrl+s` or Enter, and the challenge has it all the same. That is why the
 `/attach` on the command bar names a path under `dropped/` in the run's folder. The copy is
-removed once the challenge has the file.
+removed once the challenge has the file. It is also removed when a `/new` with a screenshot was
+answered (`reading 1 image...`) and the challenge then could not be written: the form is closed
+by then, so the warning says the copies are gone and you drop the files again with `/new`.
 
 On macOS, drag the saved screenshot (from the Desktop or a Finder window), not the thumbnail
 that floats in the corner right after you take it: the thumbnail's file may be gone before
@@ -1093,7 +1198,7 @@ on this machine, the console says so and pastes it as the text it is. The line s
 `no such file:` or `not on this machine:` and says the likely reason for where you are:
 
 - **A temporary file that is gone.** Drag the saved file, or choose it: `ctrl+o` in the
-  form, `/attach` with no file elsewhere.
+  form or the lane list, `/attach` with no file in a lane.
 - **Over SSH.** A file you drop is on the machine your terminal runs on, not the one
   flightdeck runs on. Copy it over first (`scp`), then `/attach` its path.
 - **Windows Terminal with WSL.** A path that starts `C:\` is a Windows path. A WSL profile
@@ -1101,12 +1206,36 @@ on this machine, the console says so and pastes it as the text it is. The line s
   set `"pathTranslationStyle": "wsl"`, or `/attach` the `/mnt/c/...` path.
 - **VS Code's terminal.** It takes `` ` $ | & > ~ # ! ^ * ; < `` out of a dropped file's
   name, so a file with one of those in its name arrives as a path that names nothing. Choose
-  that file instead: `ctrl+o` in the form, `/attach` with no file elsewhere.
+  that file instead: `ctrl+o` in the form or the lane list, `/attach` with no file in a lane.
 
 If you drag a file in and nothing at all happens (no text, no line), your terminal kept the
 drop to itself; flightdeck was sent nothing. Choose the file instead: `ctrl+o` in the `/new`
-form; anywhere else, `/attach <challenge>` with no file opens the file window. (`ctrl+o` is
-only the form's file window: in a lane's view it turns details on or off.) A terminal may hold drops back while a program has the mouse, as the console does
+form, or in the lane list for the selected lane's challenge; in a lane's own view,
+`/attach` with no file opens the file window (`ctrl+o` there turns details on or off). The `/new` form (in a few words) and help (under "Files, in this terminal") say this
+for where flightdeck runs. It picks that sentence from `SSH_CONNECTION`, `SSH_TTY`, `TMUX`,
+`TERM_PROGRAM` and `XDG_SESSION_TYPE`; the `no such file:` line above picks its reason from
+`SSH_CONNECTION`, `SSH_TTY`, `WSL_DISTRO_NAME`, `WSL_INTEROP` and `TERM_PROGRAM`. Only the
+choice of sentence depends on them, never how a drop is read:
+
+- **Over SSH:** the file you drop stays on your own machine; copy it over first (`scp`), then
+  `/attach` its path.
+- **Inside tmux:** drop the file on the terminal tmux runs in, which hands its path on to
+  flightdeck as a paste. tmux gives every pane its own `TERM_PROGRAM`, so flightdeck cannot
+  tell which terminal that is and names none.
+- **VS Code's terminal:** it types the first file of a drop and no more, and leaves some
+  characters out of its name: drop one file at a time, or choose it (`ctrl+o` in the form,
+  `/attach` with no file elsewhere).
+- **iTerm2:** drag with no key held. With Option held iTerm2 offers to upload the file or
+  takes nothing, and with Command it types a `cd` line instead of the path.
+- **WezTerm on X11** (`XDG_SESSION_TYPE=x11`): its documentation lists drops on X11 for
+  nightly builds only, so choose the file (`ctrl+o` in the form, `/attach` with no file
+  elsewhere).
+- **Every other terminal** (Terminal.app, Ghostty, kitty, GNOME Terminal, Alacritty, Warp and
+  any not known) gets the general sentence: drag the file onto the window, and if nothing
+  lands, choose it (`ctrl+o` in the form, `/attach` with no file elsewhere). Nothing in those terminals' own documentation or source gives a reason to
+  say more.
+
+A terminal may hold drops back while a program has the mouse, as the console does
 by default. `mouse = false` under `[console]` in your config leaves the mouse to the terminal:
 you then select and copy text the terminal's own way, clicks and the wheel do nothing in the
 console, and every key works as before.
@@ -1199,15 +1328,33 @@ flightdeck play ~/ctf/event-board --event event.toml
 flightdeck talks to CTFd and to a Game Master. For any other platform there are three ways. By
 hand: a folder board (`platform = "manual"` in `event.toml`), and you submit the flags on the
 site. By a table of routes, when the platform's own web page talks JSON to the site:
-`platform = "http"` and an `[http]` table in `event.toml`, with rCTF as a ready preset
-([Boards](BOARDS.md#a-board-from-a-platform-with-a-json-api)); no code runs, and `flightdeck
-preflight` shows every request and where your token goes:
+`platform = "http"` and an `[http]` table in `event.toml`, with rCTF, noCTF and GZCTF as ready
+presets ([Boards](BOARDS.md#a-board-from-a-platform-with-a-json-api)), which `flightdeck start`
+writes for you when you choose json api ([Events and teams](#events-and-teams)); no code runs, and
+`flightdeck preflight` shows every request and where your token goes. On GZCTF your token is the
+`GZCTF_Token` cookie your browser holds once you have signed in, and a site that encrypts its
+flags gets none from flightdeck: each comes back to you, to submit on the site.
 
 ```sh
-flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset, to edit
-flightdeck http check ~/ctf/quals/event.toml       # tries it: signs in, lists, reads the solved list; submits nothing
+mkdir -p ~/ctf/quals
+flightdeck http example > ~/ctf/quals/event.toml   # a profile with the rctf preset, to edit (--preset rctf2 for rCTF v2, noctf for noCTF)
+flightdeck http example --preset gzctf > ~/ctf/quals/event.toml   # or with the gzctf preset
+# edit event.toml: event.url (the site's address) and [rules]; then put your token in the variable token_env names
+flightdeck http check ~/ctf/quals/event.toml       # tries it: signs in, lists, reads the solved list (and an instance's status); submits nothing
 flightdeck play --event ~/ctf/quals/event.toml
 ```
+
+On rCTF v2, `preset = "rctf2"` also marks the challenges that have an instance the site starts
+for your team, and an `[instances]` table with `plugin = "rctf"` lets flightdeck start each one
+before a lane works it, as on CTFd ([Instances on demand](BOARDS.md#instances-on-demand)). If
+the site asks for a CAPTCHA to start one, flightdeck says so and leaves it to you: start it on
+the site, and the lane gets its address once it is up. If the site says an instance failed
+("errored"), flightdeck says so and sends no start until you stop it or start it again there.
+`http check` asks the status of one instance, so you see the table reaches the instancer
+before a run starts anything. On GZCTF, `preset = "gzctf"` marks the
+container challenges and `plugin = "gzctf"` under `[instances]` starts their containers the
+same way, with your cookie; a site that serves its containers through its own WebSocket proxy
+gives no address a lane can reach, so open those on the site.
 
 Or through a **plugin**: a small adapter of your own, which flightdeck runs to pull the
 board, submit the flags you approve and read the solved list:
@@ -1291,7 +1438,7 @@ as quitting does. Under the pull policy `auto`, new waves are pulled on the usua
 |---|---|
 | A lane stalls | escalates it one rung; at the top rung, kills it and parks the challenge |
 | A lane loops | kills it and parks the challenge for the next round |
-| A lane ignores the hint, or goes the wrong way on a web challenge | redirects it to the alert's suggestion, once per lane |
+| A lane ignores the hint, or goes the wrong way on a web challenge | redirects it to the alert's suggestion, once per lane; if the same alert comes back, escalates it one rung, and at the top rung kills it and parks the challenge |
 | A lane's effort is out of proportion to the challenge | kills it and parks the challenge for the next round |
 | A lane asks for more budget (its own cap) | approves it while the run budget has room: the lane's caps go up a step and it carries on (a lane whose spend has no price waits for you) |
 | The queue is dry and no lane runs | queues each unsolved challenge a lane gave up on, on the next model up, lowest points first, once per rung |
@@ -1342,6 +1489,13 @@ the same controls. Each uses its own models (`[agents]` in your config: claude d
   `CLAUDE_CODE_OAUTH_TOKEN` (your Claude subscription; `claude setup-token` makes one).
 - **codex** takes `CODEX_API_KEY` or, on the host only, a saved `codex login`.
 
+A claude lane does not see the login `claude` itself uses on your machine (`/login`): its CLI
+keeps its own configuration folder, away from yours and from the challenge's files, and a login
+saved there is not found from it. So a subscription needs `CLAUDE_CODE_OAUTH_TOKEN`. When both
+it and `ANTHROPIC_API_KEY` are set, the key is the one claude uses unless you pick the token
+with `--agent-auth oauth-token`; `flightdeck doctor --agent claude` says which one a lane gets
+and how it is billed.
+
 Put the credential in your keys file or your environment; `--agent-auth` picks one when both are
 set. In Docker the lane image needs the CLI, and the image `flightdeck image build` makes has
 neither: build an image `FROM ctf-flightdeck-lane:1` that installs it and set `[lanes] image` to
@@ -1357,6 +1511,23 @@ does not ask before it reaches its instance, so an event whose instance policy i
 refuses agent lanes. A CLI says what a
 turn cost only when the turn ends, so its lane's cost ends in `…` until then; codex reports no
 cost at all, so give its models a `[prices."<model>"]` table for their lanes to show dollars.
+
+What a claude lane does has been compared with a real Claude Code (2.1.325, on a prompt that
+used no tools): the events it writes, its cost and token counts, how a turn is ended for your
+message, and pause and resume. Its tool calls, the Docker fence and codex have not been checked
+with the real CLIs yet. What that run settled, and what a lane does about it:
+
+- A message you send mid-turn ends claude's turn with an interrupt request on its input, never
+  a signal: claude quits on Ctrl-C when it is already waiting, and a turn can end just as you
+  send. An interrupt that comes as the turn ends does nothing, and the turn counts as finished.
+- claude's step-by-step events undercount what a model call wrote; the lane's tokens are put
+  right when the turn ends. A turn claude never reports (it crashed or was stopped) is counted
+  from those events, so its output tokens are low.
+- claude leaves a model call cut short by your message out of its cost. The lane charges that
+  call at your `[prices."<model>"]` rate, for the tokens claude had shown, and says so once when
+  the model has no price.
+- With a subscription, claude says when a usage limit is near or reached; the lane notes it,
+  with the time it resets.
 
 With a pack ([Your solvers first](#your-solvers-first-l1)), a coding-agent lane runs your L1
 engines before its CLI is started, by the same rules as flightdeck's own lanes. While a flag an
@@ -1455,7 +1626,14 @@ anywhere.
 `flightdeck init` writes `~/.config/ctf-flightdeck/config.toml` (or the file `$FLIGHTDECK_CONFIG`
 names). `flightdeck config` checks it, and `flightdeck config --example` prints every setting with
 its default. API keys and access tokens come from your environment, else from
-`~/.config/ctf-flightdeck/keys.env` (or the file `$FLIGHTDECK_KEYS` names). Each run writes a
+`~/.config/ctf-flightdeck/keys.env` (or the file `$FLIGHTDECK_KEYS` names). When
+`$XDG_CONFIG_HOME` is set to an absolute path, the config folder is
+`$XDG_CONFIG_HOME/ctf-flightdeck` instead: the config, the keys file and your themes all go
+there. If you set it after flightdeck had already written files in `~/.config/ctf-flightdeck`,
+nothing is lost: a file found only at the old place is still read from there, and a file at both
+places is read from the new one. Either way every command says which, once, on stderr (doctor
+says it in its `config folder` line), until you move or remove the old file. A command you give
+`--config` (or `--path`) reads that file and says nothing of the config folder's. Each run writes a
 folder under
 `~/.local/share/ctf-flightdeck/runs/` (`[run] dir`, or `--run-dir`). flightdeck keeps notes of its
 own in `~/.local/state/ctf-flightdeck/` (or under `$XDG_STATE_HOME`). `l1 import` writes manifests
@@ -1488,7 +1666,8 @@ lane starts:
 
 The lanes at work carry on: the governor never stops or pauses one, and the queue keeps its
 order. One warning says when starts begin to be held and which limit it is, with the reading,
-and one says when they start again; that happens by itself (the machine is read every 15
+and while challenges wait for it the header says `lanes wait` and why; one warning says when
+they start again; that happens by itself (the machine is read every 15
 seconds), with nothing for you to lift, and autopilot stays engaged. With no lane at work, one
 lane always starts. A limit of 0 is off, and `enabled = false` turns the governor off. A reading
 flightdeck cannot take (it reads macOS and Linux) holds nothing back, and the run says so before

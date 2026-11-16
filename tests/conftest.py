@@ -25,6 +25,13 @@ def no_real_keys_file(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_player_config_home(monkeypatch):
+    """No test depends on the player's $XDG_CONFIG_HOME (confighome.py): a test that wants
+    one sets its own."""
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def own_state_folder(tmp_path_factory, monkeypatch):
     """Each test has a state folder of its own (XDG_STATE_HOME), never the player's: what a
     run notes there, and the containers a sweep may remove (leftovers.py), are the test's
@@ -97,6 +104,26 @@ def no_real_clipboard(monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(clipboard, "copy_text", guarded)
+
+
+@pytest.fixture(autouse=True)
+def pause_waits_for_the_screen(monkeypatch):
+    """`await pilot.pause()` with no delay waits until the screen has done everything it was
+    asked to (settling.py), not until the process looks idle, which on a loaded machine it
+    does before the screen is drawn. A pause with a delay is left as Textual has it."""
+    from textual.pilot import Pilot
+
+    from settling import settle
+
+    real = Pilot.pause
+
+    async def pause(self, delay: float | None = None) -> None:
+        if delay is not None:
+            await real(self, delay)
+        else:
+            await settle(self, real)
+
+    monkeypatch.setattr(Pilot, "pause", pause)
 
 
 @pytest.fixture(autouse=True)

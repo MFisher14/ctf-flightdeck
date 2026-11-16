@@ -153,15 +153,15 @@ def test_a_checked_table_can_be_hashed_and_compared_as_the_rest_of_a_profile_is(
 
 def test_a_preset_flightdeck_does_not_have_is_refused_and_its_name_is_not_shown():
     said = refused({"preset": "s3cr3t-pasted-here"})
-    assert said.startswith("http.preset is not a preset flightdeck has (known: rctf)") and "s3cr3t" not in said
+    assert said.startswith("http.preset is not a preset flightdeck has (known: rctf, rctf2, noctf, gzctf)") and "s3cr3t" not in said
 
 
 @pytest.mark.parametrize("config, said", [
     ("routes", "http must be a table ([http])"),
-    ({}, 'http needs [http.auth], [http.list], [http.solved] (or preset = "rctf", which has them)'),
-    (table(solved=None), 'http needs [http.solved] (or preset = "rctf", which has them)'),
+    ({}, 'http needs [http.auth], [http.list], [http.solved] (or preset = "rctf" or "rctf2" or "noctf" or "gzctf", which have them)'),
+    (table(solved=None), 'http needs [http.solved] (or preset = "rctf" or "rctf2" or "noctf" or "gzctf", which have them)'),
     ({**table(), "headers": {"X-Evil": "1"}}, "http.headers is not a key flightdeck knows (known in [http]: preset, game, files_auth, auth, "
-                                              "list, detail, submit, solved)"),
+                                              "list, detail, submit, solved, refuse)"),
     (table(**{"list.next_path": "$.next"}), "http.list.next_path: pages of a listing is not something the http platform does yet; a plugin "
                                             "can (docs/PLUGINS.md)"),
     (table(**{"submit.form": {"flag": "{flag}"}}), "http.submit.form: a form-encoded body is not something the http platform does yet; a "
@@ -414,6 +414,22 @@ def test_a_pull_signs_in_once_lists_with_the_session_and_fetches_a_file_without_
          "description": "A synthetic challenge.", "files": []},
     )
     assert (tmp_path / "0000" / "note.txt").read_bytes() == b"a synthetic handout\n"
+
+
+def test_two_sign_ins_at_once_both_end_with_the_platforms_session():
+    """Two calls that find no session both sign in. The second answer holds the session the
+    first one got, which every answer has cut out of it: it must not become the session."""
+    with FakeRCTF(sample()) as fake:
+        caller = rctf(fake)
+
+        async def both():
+            return await asyncio.gather(caller.solved(), caller.solved())
+
+        assert run(both()) == [{"done-a4d0"}, {"done-a4d0"}]
+        # Both find no session before either answer is back; which answer comes first is the
+        # server's and the scheduler's, so the order of the four calls is not asserted.
+        assert sorted(fake.kinds()) == ["login", "login", "me", "me"] and caller._session == AUTH_TOKEN
+        assert {r.headers["authorization"] for r in fake.of("me")} == {f"Bearer {AUTH_TOKEN}"}
 
 
 def test_a_challenge_on_the_board_already_gets_no_second_download(tmp_path):

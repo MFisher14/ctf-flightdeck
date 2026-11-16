@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from ctf_flightdeck.agent.prompts import (
-    FENCE_CLOSE, FENCE_OPEN, MAX_BRIEF_FILES, OFF_LIMITS, TOOLKIT, VIEW_IMAGE, brief, shell_tools, system_prompt,
+    FENCE_CLOSE, FENCE_OPEN, MAX_BRIEF_FILES, OFF_LIMITS, SESSIONS, TOOLKIT, VIEW_IMAGE, brief, shell_tools, system_prompt,
 )
 from ctf_flightdeck.core.model import Challenge
 
@@ -89,6 +89,13 @@ def test_the_brief_names_a_tcp_service_with_the_nc_command_that_reaches_it():
         "Live instance: http://127.0.0.1:8080, tcp://127.0.0.1:1337 (nc 127.0.0.1 1337), tcp://[::1]:31337 (nc ::1 31337), "
         "tcp://chall.example.org:9001 (nc chall.example.org 9001)"
     )
+
+
+def test_the_brief_names_a_tls_endpoint_with_the_commands_that_speak_tls_to_it():
+    text = brief(Challenge("c", "Echo", "pwn", 100), [], ["tls://5eed0001.trp.example.test:1443"])
+    line = next(x for x in text.splitlines() if x.startswith("Live instance:"))
+    assert line == ("Live instance: tls://5eed0001.trp.example.test:1443 (TLS, not plain TCP: nc will not do; Python's ssl "
+                    'module, or pwntools remote("5eed0001.trp.example.test", 1443, ssl=True))')
 
 
 def test_a_handout_with_many_files_lists_the_first_ones_and_says_how_many_more():
@@ -211,3 +218,25 @@ def test_a_challenge_given_nothing_is_told_after_the_fence_to_say_what_is_missin
     assert bare.endswith(FENCE_CLOSE + "\n" + NOTHING_GIVEN)
     for files, urls in ((["gate.py"], []), ([], ["http://127.0.0.1:8080"])):
         assert NOTHING_GIVEN not in brief(Challenge("c", "Gate", "web", 100), files, urls)
+
+
+def test_the_brief_tells_a_lane_of_its_sessions_only_when_it_has_them_and_something_to_drive():
+    ch = Challenge("c", "Lantern", "rev", 200, description="Which word lights it?")
+    text = brief(ch, ["lantern"], [], sessions=True)
+    lines = text.splitlines()
+    assert SESSIONS in lines and lines.index(FENCE_CLOSE) < lines.index(SESSIONS)  # flightdeck's own line, after the fence
+    assert "session_start" in SESSIONS and "terminal: true" in SESSIONS and len(SESSIONS) < 300  # every turn's context
+    assert SESSIONS in brief(ch, [], ["tcp://10.0.0.5:31337"], sessions=True).splitlines()  # an instance to connect to
+    assert "session" not in brief(ch, ["lantern"], [])  # a coding-agent lane: it has no such tool
+    assert "session" not in brief(ch, [], [], sessions=True)  # nothing to drive
+    assert "session" not in brief(ch, [], ["tcp://10.0.0.5:31337"], instance="off", sessions=True)  # kept off the instance
+    with_images = brief(ch, ["lantern", "pic.png"], [], sessions=True, view_image=True).splitlines()
+    assert with_images[-1] == VIEW_IMAGE and SESSIONS in with_images
+
+
+def test_the_debugger_line_says_a_session_can_drive_it_only_to_a_lane_with_sessions():
+    found = ("gdb", "r2")
+    assert shell_tools(found).endswith("give each program its commands on the command line, as shown.")
+    assert shell_tools(found, sessions=True).endswith("give each program its commands on the command line, as shown, "
+                                                      "or drive it in a session.")
+    assert shell_tools((), sessions=True) == ""

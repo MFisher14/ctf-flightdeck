@@ -496,7 +496,10 @@ def test_on_a_terminal_the_mock_saves_the_theme_picked_in_the_config_it_opened_i
 
     try:
         wait_for(lambda: "Welcome to flightdeck" in shown(), "the welcome screen", term)
-        keys(b"\x1b")
+        # q closes it, as esc does. Not esc: a terminal's esc is also the start of a key's
+        # sequence, and a loaded machine that read the `/` typed after it within the escape
+        # delay took the two for one key; `/theme` was never typed
+        keys(b"q")
         keys(*(letter.encode() for letter in "/theme"), b"\r")
         wait_for(lambda: "keep it, and save it in your config" in shown(), "the list of themes, with its save key", term)
         keys(b"\x1b[B", b"s")  # down to `light`, and save
@@ -526,7 +529,7 @@ def test_layout_alone_lists_both_layouts_tries_the_one_under_the_cursor_and_esc_
         assert region_text(app, "#picker-title").strip() == "Layout"
         assert rows(app) == ["simple  the lanes and what needs you, in use", "deck  the board and every column"]
         assert keys(app) == [key.replace("theme", "layout") for key in ALL_KEYS]
-        assert not app.screen.query("#picker-note")  # a config file, and a terminal with the room: nothing to add
+        assert not app.screen.query_one("#picker-note").display  # a config file, and a terminal with the room: nothing to add
         assert cursor(app) == "simple" and app.layout == "simple" and columns(app, "lanes") == SIMPLE_COLUMNS
         await press(pilot, "down")
         await pilot.pause()
@@ -625,6 +628,56 @@ def test_on_a_narrow_terminal_the_layout_list_says_the_compact_layout_shows_in_b
         await pilot.pause()
         assert app.layout == "deck" and app._status[0] == (
             "layout deck for this run (this console has no config file); this terminal is narrow, so the compact layout shows")
+
+    drive(app, script, (60, 30))
+
+
+def test_the_layout_lists_narrow_note_goes_when_the_terminal_is_made_wide_and_comes_back_when_narrow(tmp_path):
+    deck, app = three_lanes("simple", config_path=str(a_config(tmp_path)))
+
+    async def script(pilot):
+        await typed(pilot, app, "/layout")
+        assert note(app) == "Thisterminalisnarrow,sothecompactlayoutshowsinboth."
+        await pilot.resize_terminal(*SIZE)
+        await pilot.pause()
+        assert isinstance(app.screen, Picker) and not app.screen.query_one("#picker-note").display
+        assert "narrow" not in said_in(app)
+        await pilot.resize_terminal(60, 30)
+        await pilot.pause()
+        assert "This terminal is narrow, so the compact layout shows in both." in said_in(app)
+
+    drive(app, script, (60, 30))
+
+
+def test_the_layout_list_without_a_config_keeps_that_note_when_the_narrow_one_goes():
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        await typed(pilot, app, "/layout")
+        assert "narrow" in said_in(app)
+        await pilot.resize_terminal(*SIZE)
+        await pilot.pause()
+        assert "narrow" not in said_in(app)
+        assert "This console has no config file, so a layout lasts for this run." in said_in(app)
+
+    drive(app, script, (60, 30))
+
+
+def test_a_status_line_said_on_a_narrow_terminal_drops_narrow_once_it_is_made_wide():
+    deck, app = three_lanes("simple")
+
+    async def script(pilot):
+        app.run_command("/layout deck", None)
+        await pilot.pause()
+        await pilot.pause()
+        assert " ".join(status_line(app).split()).endswith("this terminal is narrow, so the compact layout shows")
+        await pilot.resize_terminal(*SIZE)
+        await pilot.pause()
+        await pilot.pause()
+        assert " ".join(status_line(app).split()) == "● layout deck for this run (this console has no config file)"
+        await press(pilot, "enter")  # into a lane's view, which draws the status line too
+        await pilot.pause()
+        assert isinstance(app.screen, FocusScreen) and "narrow" not in status_line(app)
 
     drive(app, script, (60, 30))
 

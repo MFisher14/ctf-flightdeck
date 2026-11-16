@@ -255,13 +255,34 @@ def test_a_filter_that_hides_the_selected_lane_leaves_the_bar_with_no_lane():
 
     async def script(pilot):
         assert title(app) == "to L02 · Beta"
-        await press(pilot, *"/filter gamma", "enter")
-        assert title(app) == "no lane"  # L02 is still the selection, and the filter hides it
+        await press(pilot, *"/filter zzz", "enter")
+        assert title(app) == "no lane"  # L02 is still the selection, and the filter hides it with every lane (P96)
         await press(pilot, "tab", *"hello", "enter")
         assert_warning(app, "L02 is hidden by the filter")
         assert not hints(deck, "L02")
         await press(pilot, "escape")
         assert app.fleet.filter_text == "" and title(app) == "to L02 · Beta"
+
+    drive(app, script, SIZE)
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_filter_that_hides_the_selected_lane_takes_its_answers_off_the_why_line(layout):
+    """The why line offered the hidden lane's answers (`1 submit flag{synthetic}`) under a bar
+    that says no lane, and its keys refused them: it says the lane is hidden instead."""
+    from test_console import region_text
+
+    deck, app = three_lanes(layout)
+
+    async def script(pilot):
+        assert "submit flag{synthetic}" in region_text(app, "#why")  # L02's flag waits for a yes
+        app.fleet.set_filter("zzz")  # no lane shown: with one, its row takes the selection (P96)
+        await pilot.pause()
+        why = " ".join(region_text(app, "#why").split())
+        assert "flag{synthetic}" not in why and "L02 is hidden by the filter: esc clears it" in why
+        app.fleet.set_filter("")
+        await pilot.pause()
+        assert "submit flag{synthetic}" in region_text(app, "#why")
 
     drive(app, script, SIZE)
 
@@ -335,7 +356,7 @@ def test_the_title_takes_the_themes_colours_when_the_theme_changes():
             await pilot.pause()
             assert theme.MUTED != was[0] and theme.TEXT != was[1]
             assert color_of(app, "to", row) == theme.MUTED.lower() and color_of(app, "L02", row) == theme.TEXT.lower()
-        app.fleet.set_filter("gamma")  # hides the selected lane
+        app.fleet.set_filter("zzz")  # hides the selected lane, and every other
         await pilot.pause()
         assert title(app) == "no lane" and color_of(app, "no lane", row) == theme.MUTED.lower()
         was = theme.MUTED

@@ -77,6 +77,16 @@ def test_a_missing_key_says_to_put_it_in_the_keys_file(keys, tmp_path):
         api_key(load_config(cfg))
 
 
+def test_a_message_that_says_to_put_a_token_in_the_keys_file_names_where_it_is(tmp_path, monkeypatch):
+    """`http check`, `plugin pull` and `play` told a player with no token set to put it "in your
+    keys file", and nothing said where that file is."""
+    monkeypatch.setenv("FLIGHTDECK_KEYS", str(tmp_path / "mine.env"))
+    assert keyfile.keys_file_named() == f"your keys file ({tmp_path / 'mine.env'})"
+    monkeypatch.delenv("FLIGHTDECK_KEYS")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert keyfile.keys_file_named() == "your keys file (~/.config/ctf-flightdeck/keys.env)"
+
+
 # ---------------------------------------------------------------------- saving a key
 
 

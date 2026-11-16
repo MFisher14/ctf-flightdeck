@@ -78,7 +78,9 @@ Escalation and take-over are turn boundaries. Each bumps the lane's generation, 
 asked for in an older generation runs no further tool call. After an escalation none of
 it goes into the new context (it belongs to the old one). After a take-over the calls it
 had not run yet are answered "not run", and the next call tells the model what the player
-did. A reply that arrives after either is dropped (its cost still counts). So is one the lane's
+did. A take-over also closes the lane's sessions (agent/sessions.py: a debugger must not go on
+beside the player's shell), and the hand-back says which; so does the lane's end, before its
+workspace closes. A reply that arrives after either is dropped (its cost still counts). So is one the lane's
 stop cuts short (a kill, a solve, quitting) while it waits for the paused lane or its tool calls
 run: what its call cost is reported as spend, which the deck counts after a lane's end too.
 """
@@ -129,6 +131,9 @@ WorkspaceFactory = Callable[[Lane, Challenge], Workspace]
 MAX_SESSION = 256  # OpenRouter's limit for session_id
 MAX_FILES_PER_TURN = 50  # an unpacked archive can change thousands; the console shows the first 50
 COMPACT_AT = 50_000  # prompt tokens: past this, a lane continues in a fresh context with a summary
+# Prompt tokens under which a server's count is not judged for dropped messages (_dropped): a
+# lane's first request alone is more (its tools and system prompt are about 1,000 tokens).
+DROPS_JUDGED_FROM = 1024
 HISTORY = f"{PRIVATE}/takeover_history"  # the take-over shell's bash history (its HISTFILE)
 MAX_HISTORY_BYTES = 64 * 1024  # read from the end of the history, at most
 NOT_RUN = "not run: the player took over your shell before this call ran"
@@ -181,6 +186,41 @@ def _may_pass(status: int | None) -> bool:
     """Whether a model API's failure is one that may pass on its own: a status the client
     tries again (a timeout, a rate limit, a 5xx) or any other 5xx (Anthropic's 529 overloaded)."""
     return status is not None and (status in RETRY_STATUSES or status >= 500)
+
+
+class Outage:
+    """The lanes that ended in a row on a model API failure that may pass, and when: the
+    run's count, which says when such failures are an outage (AgentDriver's lanes, and the
+    coding-agent CLIs' of agent/external.py, P78). An outage is OUTAGE_LANES lanes or more
+    ending that way in a row: no reply from the model API in between (answered() clears the
+    count), and each within OUTAGE_SECONDS of the one before.
+
+    While the hold it led to stands, each further lane ending this way is of the same
+    outage. Once the player has lifted that hold, the count starts again."""
+
+    def __init__(self) -> None:
+        self.lanes: list[tuple[str, float]] = []
+
+    def ended(self, lane_id: str, deck) -> list[str]:
+        """`lane_id` ended on a failure that may pass: the lanes of the outage it belongs to
+        once it looks like one, else []. The caller holds the deck's queue on them."""
+        now = deck.now
+        lifted = len(self.lanes) >= OUTAGE_LANES and not deck.held  # we held the queue, and the player lifted it
+        if lifted or (self.lanes and now - self.lanes[-1][1] > OUTAGE_SECONDS):
+            self.lanes.clear()
+        self.lanes.append((lane_id, now))
+        return [lane for lane, _ in self.lanes] if len(self.lanes) >= OUTAGE_LANES else []
+
+    def answered(self) -> None:
+        """The model API answered a lane: the failures before it were no outage that lasts."""
+        self.lanes.clear()
+
+
+def outage_hold(ended: Sequence[str], last: str) -> str:
+    """The reason the queue is held on an outage: the lanes it ended (Outage.ended), and
+    what the last of them failed on (`last`)."""
+    return (f"the model API keeps failing: {len(ended)} lanes in a row ended on it ({', '.join(ended)}) with no reply "
+            f"in between. Lift the hold once it answers again: the challenges they parked are queued again. {last}")
 
 
 def web_origins(urls: Sequence[str]) -> tuple[str, ...]:
@@ -281,6 +321,13 @@ class _Run:
     handover: dict | None = None  # what other lanes tried and its series, as of its first model call: after the brief in every fresh context
     opened: bool = False  # the lane's first model call is made (or about to be): nothing more goes into its brief
     viewed: list[int] = field(default_factory=list)  # bytes of each picture the turn being run has looked at (view_image)
+    # the last answered call: (its context, how many messages it sent, the model asked, the one
+    # that answered, the prompt tokens the server counted), for _dropped; None before the first
+    counted: tuple[list[dict], int, str, str, int] | None = None
+    # the context the lane's last refresh made, and the prompt tokens its first answered call
+    # counted (None until then): how much of a model's refresh point a fresh context takes (_cramped)
+    refreshed: list[dict] | None = None
+    fresh: int | None = None
 
 
 @dataclass
@@ -294,6 +341,7 @@ class Takeover:
     before: Snapshot | None = None
     history: bool = False  # the history file was emptied at the start, so what it holds is this take-over's
     shell: ShellSpec | None = None  # what begin() gave; finish() removes the folder made for it (its HOME)
+    sessions: tuple[str, ...] = ()  # the lane's sessions (agent/sessions.py) begin() closed: the lane hears which
 
     @property
     def busy(self) -> bool:
@@ -305,22 +353,43 @@ class Takeover:
         await run.idle.wait()
         if run.closed or self.driver._over(run):
             raise TakeoverRefused(f"{run.lane_id} has ended")
-        shell = self.shell = run.workspace.interactive_shell()  # first: on the host it repairs .flightdeck
-        root = run.workspace.root
+        # a process the lane drives (a debugger, a connection) must not go on beside the player's shell
+        toolbox = getattr(run, "toolbox", None)  # a coding-agent lane (agent/external.py) has none, and so no session
+        if toolbox is not None:
+            self.sessions = tuple(await toolbox.close_sessions("the player took over the lane, which closes every session"))
         try:
-            await asyncio.to_thread(write_inside, root, HISTORY, b"")
-            self.history = True
-        except OSError:
-            self.history = False  # then its lines could be the lane's: they are not read
-        self.before = await asyncio.to_thread(take_snapshot, root)
+            shell = self.shell = run.workspace.interactive_shell()  # first: on the host it repairs .flightdeck
+            root = run.workspace.root
+            try:
+                await asyncio.to_thread(write_inside, root, HISTORY, b"")
+                self.history = True
+            except OSError:
+                self.history = False  # then its lines could be the lane's: they are not read
+            self.before = await asyncio.to_thread(take_snapshot, root)
+        except BaseException:  # no shell opens: the folder made for it goes now
+            self.abandon()
+            raise
         return shell
+
+    def abandon(self) -> None:
+        """The shell begin() gave never ran (the console could not hand over the terminal, or
+        its program could not start): its HOME goes. Nothing was done in the lane's workspace,
+        so the lane hears only that its sessions were closed, when begin() closed any."""
+        self._remove_home()
+        if self.sessions:
+            self.run.notes.append(f"The player tried to take over your shell, which closed your sessions "
+                                  f"({', '.join(self.sessions)}): start again what you still need.")
+            self.sessions = ()  # said once
+
+    def _remove_home(self) -> None:
+        if self.shell is not None:  # the workspace's close tries again
+            problem = remove_shell_home(self.shell)
+            if problem:
+                self.driver.errors.append(f"{self.run.lane_id}: {problem}")
 
     def finish(self) -> str:
         run = self.run
-        if self.shell is not None:  # the shell has exited: its HOME goes (the workspace's close tries again)
-            problem = remove_shell_home(self.shell)
-            if problem:
-                self.driver.errors.append(f"{run.lane_id}: {problem}")
+        self._remove_home()  # the shell has exited: its HOME goes
         root = run.workspace.root
         changes = changed_files(self.before, take_snapshot(root), root) if self.before is not None else []
         if changes:
@@ -329,6 +398,8 @@ class Takeover:
         else:
             note = "no files changed"
         told = f"The player took over your shell and handed it back ({note})."
+        if self.sessions:
+            told += f" Taking over closed your sessions ({', '.join(self.sessions)}): start again what you still need."
         commands = self._commands(root) if self.history else []
         if commands:
             told += " Their last commands, as the workspace recorded them:\n" + prompts.fenced("\n".join(commands)) + "\n"
@@ -384,6 +455,8 @@ class AgentDriver:
         self.prices = dict(prices or {})
         self.max_tokens = max_tokens
         self.compact_at = compact_at  # None: never refresh a lane's context
+        self.fits: dict[str, int] = {}  # model -> the smallest count of a call just before its server dropped messages (_dropped)
+        self.cramped: set[str] = set()  # the models the player was told leave a fresh context too little room (_cramped)
         self.l1 = l1  # the player's no-model solvers, run before a lane's first model call; None: none
         if instance not in INSTANCE_POLICIES:
             raise ValueError(f"instance must be one of {', '.join(INSTANCE_POLICIES)}, got {instance!r}")
@@ -393,7 +466,7 @@ class AgentDriver:
         self.runs: dict[str, _Run] = {}
         self.errors: list[str] = []  # cleanup problems, shown when the console exits
         self.answered: set[str] = set()  # the models that have answered a lane in this run
-        self.outage: list[tuple[str, float]] = []  # lanes that ended in a row on a failure that may pass, and when (_outage)
+        self.outage = Outage()  # lanes that ended in a row on a failure that may pass (_outage)
         self.deck = None
         self.lights = lights  # the run's light engines (light.Lights): route and recon at a lane's start; None: none
         self.looks = FirstLooks(self.errors)
@@ -506,6 +579,19 @@ class AgentDriver:
         if run.task is not None and not run.task.done() and run.task is not asyncio.current_task():
             run.task.cancel()  # its finally closes the workspace
 
+    def running(self, lane: Lane) -> str:
+        """What of the lane runs on while it waits for the player ("" for nothing): its open
+        sessions, whose processes the lane's state does not stop (core/driver.py). The deck
+        keeps the lane's slot while they run; they close after ten minutes unused."""
+        run = self.runs.get(lane.id)
+        sessions = run.toolbox.sessions if run is not None else None
+        names = [s.name for s in sessions.open.values() if not s.eof] if sessions is not None else []
+        if not names:
+            return ""
+        if len(names) == 1:
+            return f"its session {names[0]} still runs"
+        return f"its sessions {', '.join(names)} still run"
+
     def takeover(self, lane: Lane) -> Takeover:
         """The player's shell in the lane's workspace. TakeoverRefused when the lane has none
         now: its workspace is not ready yet, or it has ended."""
@@ -574,6 +660,7 @@ class AgentDriver:
                 run.messages.append({"role": "user", "content": self.redact(prompts.player_message(hints, notes))})
                 run.idle_turns = 0
             generation, model, messages = run.generation, run.model, run.messages
+            sent = len(messages)  # the turn appends to the same list: what this call carried is its first `sent`
             try:
                 reply = await self._ask(run, model, messages, generation)
             except _Overtaken:
@@ -606,7 +693,10 @@ class AgentDriver:
                 await self._until_over(run)  # it gave up: no more model calls, though a flag of it may still wait
                 return
             if run.messages is messages:  # not escalated during the turn
-                self._refresh_if_long(run, reply.usage.prompt_tokens)
+                if messages is run.refreshed and run.fresh is None:
+                    run.fresh = reply.usage.prompt_tokens  # what a fresh context of the lane takes (_cramped)
+                dropped = self._dropped(run, model, messages, sent, reply)
+                self._refresh_if_long(run, reply.usage.prompt_tokens, model, now=dropped)
 
     async def _ask(self, run: _Run, model: str, messages: list[dict], generation: int) -> Reply:
         """The lane's next model call. When it fails for good and the request was the first to
@@ -658,6 +748,7 @@ class AgentDriver:
         for message in new:
             del message[IMAGE_KEY]
             message["content"] = self.redact(told)
+        run.counted = None  # the context shrank by flightdeck's hand: the next count is not judged against the last (_dropped)
         count, them = ("a picture", "it") if len(new) == 1 else (f"{len(new)} pictures", "them")
         unsure = f", a server error that may not be about {them}" if error.status in IMAGE_UNSURE else ""
         self._say(run.lane_id, f"{run.lane_id} view_image: the call to {model} that carried {count} failed ({error}){unsure}; "
@@ -832,12 +923,7 @@ class AgentDriver:
         else:
             ended = self._outage(run, error)
             if ended:
-                self.deck.hold_queue(
-                    f"the model API keeps failing: {len(ended)} lanes in a row ended on it ({', '.join(ended)}) with no reply "
-                    f"in between. Lift the hold once it answers again: the challenges they parked are queued again. "
-                    f"{run.lane_id}'s call to {model}: {error}",
-                    ended=ended,
-                )
+                self.deck.hold_queue(outage_hold(ended, f"{run.lane_id}'s call to {model}: {error}"), ended=ended)
         usage = error.usage
         self._apart(run, model, usage)  # before the lane ends: then nothing more is reported
         tokens = usage.total if usage else 0
@@ -874,28 +960,18 @@ class AgentDriver:
     def _outage(self, run: _Run, error: ModelError) -> list[str]:
         """Count a failure that ended this lane for good and may pass (_may_pass: a rate limit,
         a 5xx, Anthropic's 529), and return the lanes of the outage it belongs to once it
-        looks like one, else []. An outage is OUTAGE_LANES lanes or more ending that way in
-        a row: no reply from the model API in between (_answered clears the count), and each
-        within OUTAGE_SECONDS of the one before. Only failures that reach _failed count: not a
+        looks like one, else [] (Outage). Only failures that reach _failed count: not a
         superseded call's (_overtaken), nor one a [fallback] API took over. Lanes share one
-        model API (the driver's client), so the count is the run's.
-
-        While the hold it led to stands, each further lane ending this way is of the same
-        outage. Once the player has lifted that hold, the count starts again."""
+        model API (the driver's client), so the count is the run's."""
         if error.declined or not _may_pass(error.status):
             return []
-        now = self.deck.now
-        lifted = len(self.outage) >= OUTAGE_LANES and not self.deck.held  # we held the queue, and the player lifted it
-        if lifted or (self.outage and now - self.outage[-1][1] > OUTAGE_SECONDS):
-            self.outage.clear()
-        self.outage.append((run.lane_id, now))
-        return [lane_id for lane_id, _ in self.outage] if len(self.outage) >= OUTAGE_LANES else []
+        return self.outage.ended(run.lane_id, self.deck)
 
     def _answered(self, model: str) -> None:
         """The model API answered a lane's call: `model` is known to answer in this run, and
         whatever failures came before were not an outage that still lasts."""
         self.answered.add(model)
-        self.outage.clear()
+        self.outage.answered()
 
     def _overtaken(self, run: _Run, messages: list[dict], hints: list[str], notes: list[str],
                    usage: Usage | None = None, model: str = "", *, declined: bool = False) -> None:
@@ -1084,15 +1160,79 @@ class AgentDriver:
         run.said.update(found)
         return found
 
-    def _refresh_if_long(self, run: _Run, prompt_tokens: int) -> None:
+    def _dropped(self, run: _Run, model: str, messages: list[dict], sent: int, reply: Reply) -> bool:
+        """Whether the server dropped messages of the context this call sent: the context only
+        grew since the lane's last answered call (the same list, more messages, the same model
+        asked and answering), yet the server counted no more prompt tokens than it did then.
+        Ollama does this past the context it gives a model (4,096 or 32,768 tokens unless
+        OLLAMA_CONTEXT_LENGTH says more): it leaves out the oldest messages, keeping the system
+        message and the latest, answers as usual and says nothing, so a lane's count stops
+        growing below its refresh point and the lane goes on without its brief (seen on Ollama
+        0.34.2: docs/MODELS.md). Then the lane's later contexts on this model are refreshed at the
+        prompt tokens of the call before, where the drop was seen (`fits`, the smallest such count);
+        that call may itself have been cut, so it is not a count known to fit; the player is told, once a model, what to set. Counts under
+        DROPS_JUDGED_FROM are not judged: no real lane's request is that small."""
+        tokens = reply.usage.prompt_tokens
+        before, run.counted = run.counted, (messages, sent, model, reply.model, tokens)
+        if before is None or tokens < DROPS_JUDGED_FROM:
+            return False
+        context, length, asked, answered, fitted = before
+        if context is not messages or sent <= length or (asked, answered) != (model, reply.model) or tokens > fitted:
+            return False
+        known = self.fits.get(model)
+        self.fits[model] = fitted if known is None else min(known, fitted)
+        if self._cramped(run, model):
+            return True  # no refresh helps: _refresh_if_long says so, once a model, not at every drop
+        lane_id = run.lane_id
+        first = known is None
+        self._say(lane_id, f"{lane_id}: the model server left out messages of this context: it counted {tokens:,} prompt "
+                           f"tokens, no more than the {fitted:,} of the call before, though the context had grown. Its "
+                           f"context for {model} is smaller than the lane's; " + (
+                               f"the lane continues in a fresh context, and lanes on {model} are refreshed from "
+                               f"{self.fits[model]:,} prompt tokens on" if self.compact_at is not None else
+                               "this run never refreshes a lane, so the lane goes on without its oldest messages"))
+        if first:
+            self._say(lane_id, f"{lane_id}: to give lanes their whole context, give the server a longer one (Ollama: "
+                               f"OLLAMA_CONTEXT_LENGTH=65536 where it runs, then restart it) and set context under [api] "
+                               f"to it; `flightdeck doctor` checks it (docs/MODELS.md)")
+        return True
+
+    def _refresh_if_long(self, run: _Run, prompt_tokens: int, model: str = "", *, now: bool = False) -> None:
         """Past compact_at prompt tokens, continue in a fresh context: the same prefix and
-        brief (so the API's cache still hits) plus a summary, instead of the whole history."""
+        brief (so the API's cache still hits) plus a summary, instead of the whole history.
+        Sooner for a model whose server was seen to drop messages (`fits`, _dropped), and at
+        once (`now`) after a call it dropped some of. Never when compact_at is None, nor when
+        a fresh context of the lane leaves too little room under that point (_cramped): the
+        player is told so, once a model."""
         lane = self._lane(run)
-        if self.compact_at is None or prompt_tokens < self.compact_at or lane is None or lane.finished:
+        if self.compact_at is None or lane is None or lane.finished:
+            return
+        point = min(self.compact_at, self.fits.get(model, self.compact_at))
+        if not now and prompt_tokens < point:
+            return
+        if self._cramped(run, model):
+            if model not in self.cramped:
+                self.cramped.add(model)
+                self._say(lane.id, f"{lane.id}: the server's context for {model} is too small for a lane: it drops messages "
+                                   f"from {self.fits[model]:,} prompt tokens on, and a fresh context of this lane takes "
+                                   f"{run.fresh:,} of them, so a refresh would come again within a turn. Lanes on {model} "
+                                   f"go on without their oldest messages instead. Give the server a longer context (Ollama: "
+                                   f"OLLAMA_CONTEXT_LENGTH=65536 where it runs, then restart it) and set context under "
+                                   f"[api] to it (docs/MODELS.md)")
             return
         summary = lane_summary(self.deck, lane)
         run.messages = self._fresh(run, lane.approach) + [{"role": "user", "content": self.redact(prompts.refresh(summary, prompt_tokens))}]
+        run.refreshed, run.fresh = run.messages, None
         self._say(lane.id, f"context refreshed at {prompt_tokens:,} prompt tokens (a summary replaces the history)")
+
+    def _cramped(self, run: _Run, model: str) -> bool:
+        """Whether a fresh context of the lane takes more than three quarters of the point its
+        model's server was seen to drop messages at (`fits`): a refresh there would leave too
+        little room for a turn, so the lane would be refreshed again on nearly every call and
+        its model would never see a tool's output. Known only once a refresh's first call is
+        answered (run.fresh); before that, False."""
+        fits = self.fits.get(model)
+        return run.fresh is not None and fits is not None and run.fresh * 4 > fits * 3
 
     # ------------------------------------------------------------------ helpers
 
@@ -1133,7 +1273,8 @@ class AgentDriver:
                                          instance=self.instance, shell_hosts=getattr(run.workspace, "shell_hosts", None),
                                          toolkit=self.l1.toolkit if self.l1 is not None else "",
                                          view_image=self._no_images(run) is None,
-                                         tools=getattr(run.workspace, "shell_tools", ())),
+                                         tools=getattr(run.workspace, "shell_tools", ()),
+                                         sessions=callable(getattr(run.workspace, "open_session", None))),
             },
         ]
         if run.handover is not None:
@@ -1255,6 +1396,10 @@ class AgentDriver:
         await asyncio.shield(run.closing)
 
     async def _close_workspace(self, run: _Run) -> None:
+        try:
+            await run.toolbox.close_sessions("the lane ended")
+        except Exception as exc:  # a flightdeck bug: reported when the console exits; the workspace still closes
+            self.errors.append(f"{run.lane_id}: closing its sessions failed: {type(exc).__name__}: {exc}")
         try:
             await run.workspace.close()
         except Exception as exc:  # reported when the console exits; a lane's end is not held up

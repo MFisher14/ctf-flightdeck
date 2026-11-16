@@ -132,6 +132,9 @@ from .eventlog import EventLog, new_run_dir
 from .instancerun import InstanceRunner, on_demand
 from .platform.instances import InstanceClient
 from .governor import TICK_SECONDS as GOVERNOR_SECONDS
+
+WAITS_SECONDS = 5.0  # Run._waits: how often the deck is asked to give up the slots of lanes that have waited long enough
+BENCH_AFTER = DeckConfig.bench_after  # the deck's own default: 60 s
 from .governor import Governor, Reading
 from .leftovers import RECORD, ProcessRecord, labels, sweep
 from .platform.ctfd import CTFdClient, CTFdError, CTFdVerifier, HumanCheck, Pull, Solves, Verdict, check_site, load_ids, pull
@@ -151,10 +154,10 @@ from .plugins.call import PLUGIN_PULL, CallFailed, Caller, PlatformCaller, plugi
 from .preflight import (
     USES_PLATFORM,
     EventProfile,
-    allowed,
     Policies,
     Policy,
     ProfileError,
+    allowed,
     check,
     deck_submit,
     instances_off,
@@ -162,6 +165,7 @@ from .preflight import (
     load_profile,
     looser,
     no_agents,
+    placeholder_url,
     strictest,
 )
 from .notify import Notifier, NotifyError
@@ -210,6 +214,8 @@ class RunOptions:
     solves_seconds: float = SOLVES_SECONDS
     team_seconds: float = POLL_SECONDS  # how often the team folder is read
     governor_seconds: float = GOVERNOR_SECONDS  # how often the host governor reads this machine again
+    waits_seconds: float = WAITS_SECONDS  # how often the deck looks for lanes that have waited long enough to give their slot up
+    bench_after: float = BENCH_AFTER  # seconds a lane waits for a flag or budget answer before it gives its slot up (P91)
     host_reading: Callable[[Path], Reading] | None = None  # how the governor reads the machine; None: governor.probe
     confirm: Callable[[str], bool] | None = None  # asks the player yes or no (the pull policy "confirm"); None: nobody to ask
     agent: str | None = None  # "claude" | "codex": lanes are that coding-agent CLI instead of flightdeck's own loop
@@ -387,6 +393,7 @@ class Run:
             self._tasks.append(asyncio.create_task(self.instances.work(), name="flightdeck instances"))
         if self.governor is not None:  # its first reading was taken before the deck had a lane to start
             self._tasks.append(asyncio.create_task(self._govern(), name="flightdeck host governor"))
+        self._tasks.append(asyncio.create_task(self._waits(), name="flightdeck waits"))
         self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
         if self.watches_folder:  # a folder board takes challenges added during the run
             for b in self.board.challenges:
@@ -500,7 +507,8 @@ class Run:
             layout=self.config.console.layout,
             mouse=self.config.console.mouse,
             terminal_title=self.config.console.title,
-            terminal_bell=self.config.console.bell,
+            terminal_bell=self.config.console.rings_bell(mock=False),
+            agent=self.options.agent or "",
             themes_folder=self.config.source.parent / "themes" if self.config.source is not None else None,
             adder=self.add_challenge if self.by_hand else None,
             paster=self.paste_image if self.by_hand else None,
@@ -604,6 +612,14 @@ class Run:
                 governor.use(reading)
                 failing = False
             self.deck.recheck_starts()
+
+    async def _waits(self) -> None:
+        """Every waits_seconds, have the deck give up the slots of the lanes that have waited
+        for the player long enough (Deck.recheck_waits, P91): the deck has no clock of its own
+        to wake it."""
+        while True:
+            await asyncio.sleep(self.options.waits_seconds)
+            self.deck.recheck_waits()
 
     async def _waves(self) -> None:
         """Pull the board again every wave_seconds and release what is new. A failure is a
@@ -716,7 +732,11 @@ class Run:
         if new:
             if self.plug is not None:  # their refs: the pull that wrote the folders wrote them into the board's plugin.json
                 self.plug.reload()
+                if self.instances is not None:  # the http platform's instancer: asked by the same refs
+                    self.instances.client.ids.update(self.plug.refs)
             self._add(new)
+            if self.instances is not None:  # an on-demand one waits for its instance, as at the start
+                self.instances.hold([b.challenge for b in new])
             self.deck.release([b.challenge for b in new], self.entries(new, skip=self._held()), "Added")
         return [b.challenge.id for b in new]
 
@@ -878,7 +898,20 @@ class Run:
             description = (description + "\n\n" if description else "") + f"[Text read from the image {image.name} by {self.model}:]\n{text}"
         ok, said = await self._add_now(replace(new, description=description))
         if not ok:
-            self.deck.warn(f"/new: {said}", data={"source": "board"})
+            self.deck.warn(f"/new: {said}" + await self._dropped_lost(new.files), data={"source": "board"})
+
+    async def _dropped_lost(self, files: Sequence[Path]) -> str:
+        """A /new that was answered and then not added: the form is closed, and nothing will
+        attach the copies of a drop among its files now. They are removed (in a thread), and
+        what is returned says so, for the warning; with no such copy, it is empty."""
+        from .addchallenge import staged
+
+        copies = staged(self._drops, files)
+        if not copies:
+            return ""
+        await asyncio.to_thread(self.unstage_files, copies)
+        names = ", ".join(_show(copy.name) for copy in copies)
+        return f"; the copies of its dropped file{'' if len(copies) == 1 else 's'} ({names}) are removed: drop them again with /new"
 
     def _add(self, new: Sequence[BoardChallenge]) -> None:
         """New challenges on the board: their handouts and instances, for lanes and L1."""
@@ -1107,6 +1140,8 @@ def prepare_run(options: RunOptions) -> Run:
         submit_limited=config.lanes.submit_limited,
         wrong_stop=config.lanes.wrong_stop,
         variant_tries=config.lanes.variant_tries,
+        max_waiting=config.lanes.max_waiting,
+        bench_after=options.bench_after,
         models=ladder,
         lanes_ceiling=profile.max_lanes if profile is not None else None,
         # in the console the player may go as far as the event's rules do, whatever this run started with
@@ -1301,7 +1336,7 @@ def prepare_run(options: RunOptions) -> Run:
             start=profile.start if profile is not None else None, end=profile.end if profile is not None else None,
             second_after=config.autopilot.second_after, third_after=config.autopilot.third_after,
         )
-    instances = _instances(profile, plan.policies, board, link, token, deck, urls, driver, plan.notes)
+    instances = _instances(profile, plan.policies, board, link, token, deck, urls, driver, plan.notes, plug)
     run = Run(
         board, config, deck, driver, client, log, transcripts, run_dir, runtime, model, watch,
         shared=shared,
@@ -1323,14 +1358,22 @@ def prepare_run(options: RunOptions) -> Run:
 
 
 def _instances(profile: EventProfile | None, policies: Policies, board: Board, link: CTFdLink | None, token: str | None,
-               deck: Deck, urls: dict[str, tuple[str, ...]], driver: object, notes: list[str]) -> InstanceRunner | None:
+               deck: Deck, urls: dict[str, tuple[str, ...]], driver: object, notes: list[str],
+               plug: PluginLink | None = None) -> InstanceRunner | None:
     """The run's instance scheduler, when the event's [instances] table and its policies let
     flightdeck start instances on the platform; else None, with a note saying why when the
-    board has challenges that need one. Marks the board's on-demand challenges either way."""
+    board has challenges that need one. Marks the board's on-demand challenges either way.
+    On CTFd the instancer is asked with CTFd's token and numbers (`link`); on the http platform
+    with the [http] table's own auth and the board's refs (`plug`, whose caller is the table's)."""
     challenges = [b.challenge for b in board.challenges]
     marked = on_demand(challenges, profile.instances.types if profile is not None and profile.instances is not None else ())
     why = instances_off(profile, policies) if profile is not None else "there is no event profile"
-    if why or link is None or token is None:
+    wire = None
+    if not why and profile is not None and profile.platform == http_platform.NAME:
+        caller = plug.caller if plug is not None else None
+        if isinstance(caller, http_platform.HttpCaller):
+            wire = caller.instance_wire()
+    if why or ((link is None or token is None) and wire is None):
         if marked:
             notes.append(
                 f"instances: {len(marked)} challenge{'s' if len(marked) != 1 else ''} on this board need an instance the platform "
@@ -1339,7 +1382,12 @@ def _instances(profile: EventProfile | None, policies: Policies, board: Board, l
             )
         return None
     assert profile is not None and profile.instances is not None and profile.url is not None
-    client = InstanceClient(profile.url, token, link.ids, profile.instances)
+    if wire is not None:
+        assert plug is not None
+        client = InstanceClient(None, None, plug.refs, profile.instances, wire=wire)
+    else:
+        assert link is not None and token is not None
+        client = InstanceClient(profile.url, token, link.ids, profile.instances)
     notes.append(
         f"instances: flightdeck starts a challenge's instance on the platform before a lane works it"
         f" ({len(marked)} on the board now), keeps at most {profile.instances.max_running} running, and stops one when its "
@@ -1512,10 +1560,13 @@ def anthropic_price_notes(config: Config, cap: float | None) -> list[str]:
 
 def _check_options(options: RunOptions) -> None:
     """Options a caller set in code that the run cannot use."""
-    for name in ("wave_seconds", "solves_seconds", "team_seconds", "governor_seconds"):
+    for name in ("wave_seconds", "solves_seconds", "team_seconds", "governor_seconds", "waits_seconds"):
         value = getattr(options, name)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value > 0):
             raise RunError(f"{name} must be a positive number of seconds, not {value!r}")
+    value = options.bench_after
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value >= 0):
+        raise RunError(f"bench_after must be a number of seconds, 0 or more, not {value!r}")
     if options.instance not in INSTANCE_POLICIES:
         raise RunError(f"instance must be auto, confirm or off, not {options.instance!r}")
     if options.submit not in (None, "confirm", "auto"):
@@ -1923,7 +1974,7 @@ def _gm_token(profile: EventProfile, board: Path | None) -> tuple[str, dict]:
     board folder: RunError unless the board was pulled from the profile's Game Master."""
     name, url = profile.token_env, profile.url
     assert name is not None and url is not None and board is not None  # check() refuses a Game Master profile without them
-    from .keys import KeysError, environment
+    from .keys import KeysError, environment, keys_file_named
 
     try:
         value = environment().get(name, "").strip()
@@ -1931,8 +1982,8 @@ def _gm_token(profile: EventProfile, board: Path | None) -> tuple[str, dict]:
         raise RunError(str(exc)) from None
     if not value:
         raise RunError(
-            f"the Game Master token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
-            "keys file or export it, then start play again"
+            f"the Game Master token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in "
+            f"{keys_file_named()} or export it, then start play again"
         )
     try:
         check_gm_site(url, value)
@@ -1971,21 +2022,23 @@ def _adapter(profile: EventProfile, config: Config) -> _Adapter:
     event's token read. RunError when the plugin, the table or the token cannot be used."""
     assert profile.url is not None  # check() refuses the profile without one
     url, event = profile.url, profile.name
+    if (unedited := placeholder_url(url)) is not None:
+        raise RunError(unedited)
     if profile.platform != "http":
         plugin, token = _plugin_token(profile, config)
         held = {profile.token_env: token} if profile.token_env and token else {}
         return _Adapter(plugin.name, lambda: Caller(plugin, url, event, token), plugin_label(plugin.name), PLUGIN_PULL, held)
     table, name = profile.http, profile.token_env
     assert table is not None and name is not None  # check() refuses an http profile without either
-    from .keys import KeysError, environment
+    from .keys import KeysError, environment, keys_file_named
 
     try:
         value = environment().get(name, "").strip()
     except KeysError as exc:
         raise RunError(str(exc)) from None
     if not value:
-        raise RunError(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
-                       "keys file or export it, then start play again")
+        raise RunError(f"the token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in "
+                       f"{keys_file_named()} or export it, then start play again")
     try:
         read = http_platform.HttpCaller(table, url, value)
     except ValueError as exc:  # a token no header can carry; the message never shows it
@@ -2010,7 +2063,7 @@ def _plugin_token(profile: EventProfile, config: Config) -> tuple[plugin_manifes
         return plugin, None
     name = profile.token_env
     assert name is not None  # check() refuses the profile without one when the plugin takes a token
-    from .keys import KeysError, environment
+    from .keys import KeysError, environment, keys_file_named
 
     try:
         value = environment().get(name, "").strip()
@@ -2018,8 +2071,8 @@ def _plugin_token(profile: EventProfile, config: Config) -> tuple[plugin_manifes
         raise RunError(str(exc)) from None
     if not value:
         raise RunError(
-            f"the {plugin.name} token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
-            "keys file or export it, then start play again"
+            f"the {plugin.name} token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in "
+            f"{keys_file_named()} or export it, then start play again"
         )
     return plugin, value
 
@@ -2107,7 +2160,9 @@ def _ctfd_token(profile: EventProfile) -> str:
     """The CTFd token, from the variable event.token_env names. Never shown."""
     name = profile.token_env
     assert name is not None  # check() refuses a CTFd profile without one
-    from .keys import KeysError, environment
+    if profile.url is not None and (unedited := placeholder_url(profile.url)) is not None:
+        raise RunError(unedited)
+    from .keys import KeysError, environment, keys_file_named
 
     try:
         value = environment().get(name, "").strip()
@@ -2115,8 +2170,8 @@ def _ctfd_token(profile: EventProfile) -> str:
         raise RunError(str(exc)) from None
     if not value:
         raise RunError(
-            f"the CTFd token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in your "
-            "keys file or export it (CTFd: Settings, Access Tokens), then start play again"
+            f"the CTFd token variable {name} (event.token_env) is not set or is empty: put {name}=<token> in "
+            f"{keys_file_named()} or export it (CTFd: Settings, Access Tokens), then start play again"
         )
     assert profile.url is not None  # check() refuses a CTFd profile without one
     try:

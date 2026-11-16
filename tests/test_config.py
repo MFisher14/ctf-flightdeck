@@ -269,6 +269,11 @@ def test_counted_tries_wait_for_the_player_unless_the_config_opts_in(tmp_path):
     for bad in ("-1", "1.5", '"3"', "true"):
         assert "lanes.wrong_stop must be a whole number, 0 or more" in error(write(tmp_path, LADDER + f"[lanes]\nwrong_stop = {bad}\n"))
     assert load_config(write(tmp_path, LADDER + '[lanes]\nsubmit_limited = "auto"\n')).lanes.submit_limited == "auto"
+    assert load_config(write(tmp_path, LADDER)).lanes.max_waiting == 4  # lanes waiting for the player without a slot (P91)
+    assert load_config(write(tmp_path, LADDER + "[lanes]\nmax_waiting = 0\n")).lanes.max_waiting == 0
+    for bad in ("-1", "1.5", '"3"', "true"):
+        assert "lanes.max_waiting must be a whole number, 0 or more (0: lanes keep their slots while they wait)" in error(
+            write(tmp_path, LADDER + f"[lanes]\nmax_waiting = {bad}\n"))
     assert load_config(write(tmp_path, LADDER)).lanes.variant_tries == 0  # flag variants are off unless asked for
     assert load_config(write(tmp_path, LADDER + "[lanes]\nvariant_tries = 12\n")).lanes.variant_tries == 12
     for bad in ("-1", "13", "1.5", '"3"', "true"):
@@ -941,11 +946,14 @@ def test_the_console_table_takes_either_layout_and_keeps_the_default_of_the_key_
     assert console("mouse = true") == ConsoleConfig()
     assert console('mouse = false\ntheme = "light"\nlayout = "deck"') == ConsoleConfig(
         layout="deck", theme="light", palette=themes.BUILTIN["light"], mouse=False)
-    # the terminal's title and bell are on unless the config turns one off, each by itself
-    assert (console("").title, console("").bell) == (True, True)
+    # the terminal's title and bell are on unless the config turns one off, each by itself;
+    # a bell left out rings in a run and not in the mock, one written as true in both (P70)
+    assert (console("").title, console("").rings_bell(mock=False), console("").rings_bell(mock=True)) == (True, True, False)
     assert console("title = false") == ConsoleConfig(title=False)
     assert console("bell = false") == ConsoleConfig(bell=False)
-    assert console("title = true\nbell = true") == ConsoleConfig()
+    assert [console("bell = false").rings_bell(mock=m) for m in (False, True)] == [False, False]
+    assert [console("bell = true").rings_bell(mock=m) for m in (False, True)] == [True, True]
+    assert console("title = true\nbell = true") == ConsoleConfig(bell=True)
     assert console('title = false\nbell = false\ntheme = "light"') == ConsoleConfig(
         theme="light", palette=themes.BUILTIN["light"], title=False, bell=False)
     for name, palette in themes.BUILTIN.items():

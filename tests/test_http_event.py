@@ -20,9 +20,11 @@ from typer.testing import CliRunner
 from ctf_flightdeck import http_cli, plugin_cli, preflight_cli
 from ctf_flightdeck.config import ConfigError, load_config
 from ctf_flightdeck.core.model import ChallengeStatus, LaneState, PendingKind
+from ctf_flightdeck.keys import keys_file_named
 from ctf_flightdeck.platform.manual import cannot_check, load_board
+from ctf_flightdeck.platform.http import PRESETS
 from ctf_flightdeck.platform.plugin_run import PluginLink
-from ctf_flightdeck.preflight import HTTP_BOARD, ProfileError, check, describe, load_profile
+from ctf_flightdeck.preflight import HTTP_BOARD, ProfileError, check, describe, load_profile, placeholder_url
 from ctf_flightdeck.run import RunError, RunOptions, prepare_run
 
 from fake_ctfd import Reply
@@ -83,6 +85,18 @@ def test_an_http_profile_needs_no_leave_from_the_players_config_and_its_plan_is_
         "http      solved    GET /api/v1/users/me, with the session token (Authorization: Bearer)",
     ]
     assert f"pull      auto     {HTTP_BOARD['auto']}" in lines
+    boxed, chosen = load_profile(event_file(tmp_path, http='preset = "rctf2"', extra='\n[instances]\nplugin = "rctf"\n'))
+    route = "/api/v2/integrations/challs/{id}/instance, with the session token (Authorization: Bearer): only for an on-demand challenge"
+    assert [line for line in describe(boxed, chosen, environ={}) if line.startswith("http      instance")] == [
+        f"http      instance  {action} {method} {route} of the board"
+        for action, method in (("status", "GET"), ("start", "PUT"), ("renew", "PATCH"), ("stop", "DELETE"))]
+    own = '\n[instances]\napi = true\nstart = ["POST", "/x/start"]\nstop = ["POST", "/x/stop"]\nrenew = ["POST", "/x/renew"]\n' \
+          'status = ["GET", "/x?c={id}"]\nbody_key = "c"\n'
+    routed, chosen = load_profile(event_file(tmp_path, extra=own))
+    shown = [line for line in describe(routed, chosen, environ={}) if line.startswith("http      instance")]
+    assert [line.split(",")[0] for line in shown] == [  # the paths InstanceClient asks under /api/v1, as it asks them
+        "http      instance  status GET /api/v1/x?c={id}", "http      instance  start POST /api/v1/x/start",
+        "http      instance  renew POST /api/v1/x/renew", "http      instance  stop POST /api/v1/x/stop"]
     manual, chosen = load_profile(event_file(tmp_path, pull="manual"))
     assert f"pull      manual   {HTTP_BOARD['manual']} (the rules allow auto)" in describe(manual, chosen, environ={})
     assert "it plays the board `flightdeck http pull` wrote" in HTTP_BOARD["manual"]
@@ -99,6 +113,25 @@ def test_a_table_written_out_is_named_as_such_and_a_key_under_a_preset_shows_in_
     path.write_text(written)
     loaded, chosen = load_profile(path)
     assert describe(loaded, chosen, environ={})[0] == "event     Example Quals · http (the routes of its [http] table) at https://ctf.example.org · solo"
+
+
+@pytest.mark.parametrize("routes", [False, True])
+@pytest.mark.parametrize("name", PRESETS)
+def test_every_presets_example_profile_loads_and_passes_preflight_once_its_url_is_the_events(tmp_path, name, routes):
+    result = runner.invoke(http_cli.app, ["example", "--preset", name, *(["--routes"] if routes else [])])
+    assert result.exit_code == 0, result.output
+    assert result.output == http_cli.example_profile(routes, name)
+    path = tmp_path / "event.toml"
+    path.write_text(result.output)
+    loaded, chosen = load_profile(path)
+    assert (loaded.http.preset == name) is not routes
+    variable = loaded.token_env
+    assert variable == ("HTTP_TOKEN" if routes else {"rctf2": "RCTF_TOKEN"}.get(name, f"{name.upper()}_TOKEN"))
+    assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == [placeholder_url(loaded.url)]
+    path.write_text(result.output.replace("https://ctf.example.org", "https://ctf.example.net"))
+    loaded, chosen = load_profile(path)
+    assert [p.message for p in check(loaded, chosen, max_lanes=4, environ={variable: "set"}) if p.refuse] == []
+
 
 
 NOT_NAMED = ("a variable that is not named for this platform (its name is not HTTP_TOKEN and does not start with HTTP_TOKEN_ or "
@@ -186,7 +219,7 @@ def test_what_an_http_profile_must_have_and_what_is_only_a_warning(tmp_path):
     with pytest.raises(ProfileError) as missing:
         load_profile(event_file(tmp_path, http=None))
     assert str(missing.value) == (f'{tmp_path / "event.toml"}: the [http] table is missing: platform = "http" asks the platform by the '
-                                  'routes it writes (preset = "rctf", or the platform\'s own: `flightdeck http example` prints one to edit)')
+                                  'routes it writes (preset = "rctf" or "rctf2" or "noctf" or "gzctf", or the platform\'s own: `flightdeck http example` prints one to edit)')
     with pytest.raises(ProfileError) as bad:
         load_profile(event_file(tmp_path, http='preset = "rctf"\n[http.list]\nrequest = ["GET", "https://evil.example.test/x"]'))
     assert str(bad.value).startswith(f'{tmp_path / "event.toml"}: http.list.request: the path must start with / and name a route under event.url')
@@ -256,6 +289,15 @@ def invoke(*args):
     return runner.invoke(http_cli.app, [str(a) for a in args], prog_name="flightdeck http")
 
 
+def pulled(result) -> str:
+    """A pull's output after its first line, which must say that the pull has started (a slow
+    platform or plugin would otherwise look like a frozen terminal)."""
+    first, _, rest = result.output.partition("\n")
+    assert first.startswith("pulling the board through ") and first.endswith("..."), result.output
+    assert first + "\n" in result.stderr and first not in result.stdout  # said on stderr: stdout stays the report
+    return rest
+
+
 @pytest.fixture
 def own_config(tmp_path, monkeypatch) -> Path:
     """The player's config for the commands: a file in tmp_path, never the real one."""
@@ -280,7 +322,7 @@ def test_the_example_profile_loads_and_passes_the_check(tmp_path, routes):
     variable = "HTTP_TOKEN" if routes else "RCTF_TOKEN"
     assert loaded.token_env == variable and (loaded.http.preset == "rctf") is not routes
     problems = check(loaded, chosen, max_lanes=4, environ={variable: "set"})
-    assert [p.message for p in problems if p.refuse] == []
+    assert [p.message for p in problems if p.refuse] == [placeholder_url(loaded.url)]  # the address left as the example's: the one refusal (placeholder_url)
     other = tmp_path / "other"
     other.mkdir()
     preset, _ = load_profile(event_file(other))
@@ -355,7 +397,7 @@ def test_http_pull_writes_the_board_reads_the_solved_list_and_submits_nothing(tm
         event = event_file(tmp_path, fake.url)
         result = invoke("pull", event)
         assert result.exit_code == 0, result.output
-        assert result.output == f"pulled into {board}: 3 challenges (misc 2, web 1), 1 listed as solved; nothing was submitted\n"
+        assert pulled(result) == f"pulled into {board}: 3 challenges (misc 2, web 1), 1 listed as solved; nothing was submitted\n"
         assert fake.kinds() == ["login", "challs", "file", "me"]  # one sign-in serves the pull and the solved list
         assert json.loads((board / "plugin.json").read_text()) == {
             "format": 1, "plugin": "http", "url": fake.url, "refs": {"done-before": "done-a4d0", "warm-up": "warm-7f3a", "web-thing": "web-19c2"}}
@@ -363,11 +405,11 @@ def test_http_pull_writes_the_board_reads_the_solved_list_and_submits_nothing(tm
         assert [item.challenge.id for item in load_board(board).challenges] == ["done-before", "warm-up", "web-thing"]
         fake.add(RTask("new-55aa", "Newer", category="web", files={"more.txt": b"more\n"}))
         again = invoke("pull", event)
-        assert again.output == f"pulled into {board}: 4 challenges (misc 2, web 2), 1 new, 1 listed as solved; nothing was submitted\n"
+        assert pulled(again) == f"pulled into {board}: 4 challenges (misc 2, web 2), 1 new, 1 listed as solved; nothing was submitted\n"
         assert len(fake.of("file")) == 2 and fake.of("submit") == []  # the first file was not fetched a second time
         other = tmp_path / "elsewhere"
         named = invoke("pull", event, other)  # FOLDER: another board folder than the profile's
-        assert named.exit_code == 0 and named.output.startswith(f"pulled into {other}: 4 challenges")
+        assert named.exit_code == 0 and pulled(named).startswith(f"pulled into {other}: 4 challenges")
     assert TEAM_TOKEN not in (board / "plugin.json").read_text()
 
 
@@ -389,7 +431,7 @@ def test_http_pull_refuses_a_folder_that_holds_another_board(tmp_path, own_confi
         result = invoke("pull", event_file(tmp_path, fake.url))
         assert fake.requests == []
     assert result.exit_code == 2
-    assert result.output == (f"flightdeck: {board} holds a board pulled by something other than the http adapter or from another address: "
+    assert pulled(result) == (f"flightdeck: {board} holds a board pulled by something other than the http adapter or from another address: "
                              "use a new folder\n")
 
 
@@ -402,8 +444,8 @@ def test_http_pull_refuses_a_folder_that_holds_another_board(tmp_path, own_confi
                                 "holds your token\n"),
     ({"token_env": "CTFD_TOKEN"}, True, "Name the variable that holds your token for it, like RCTF_TOKEN\n"),
     ({"token_env": "HTTP_PROXY_PASSWORD"}, True, "Name the variable that holds your token for it, like RCTF_TOKEN\n"),
-    ({}, False, f"flightdeck: the token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put {TOKEN_VAR}=<token> in your "
-                "keys file or export it, then try again\n"),
+    ({}, False, f"flightdeck: the token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put {TOKEN_VAR}=<token> in {{keys}} "
+                "or export it, then try again\n"),
     ({"board": None}, True, "flightdeck: name the board folder: `flightdeck http pull EVENT.toml FOLDER`, or set event.board in the profile\n"),
 ])
 def test_http_pull_refuses_before_it_asks_the_platform(tmp_path, own_config, monkeypatch, fields, set_token, message):
@@ -414,7 +456,7 @@ def test_http_pull_refuses_before_it_asks_the_platform(tmp_path, own_config, mon
     with FakeRCTF(sample()) as fake:
         result = invoke("pull", event_file(tmp_path, fake.url, **fields))
         assert fake.requests == []
-    assert result.exit_code == 2 and result.output.endswith(message)
+    assert result.exit_code == 2 and result.output.endswith(message.replace("{keys}", keys_file_named()))
 
 
 def test_the_commands_say_so_when_the_config_was_not_read_and_still_check_the_variables_name(tmp_path, monkeypatch, token):
@@ -504,6 +546,47 @@ def test_a_flag_rctf_rate_limits_is_sent_again_after_the_wait_its_429_names(tmp_
     assert http_warnings(run) == []
 
 
+def test_a_run_on_rctf_v2_starts_a_challenges_instance_with_the_sign_ins_session_and_stops_it_on_the_solve(tmp_path, token):
+    """The rctf2 preset marks the challenge with an instancer on-demand; [instances] plugin =
+    "rctf" starts it before its lane works it, by its string id and with the same session as
+    the pull's, hands the lane its address, and stops it once it is solved."""
+    from fake_http import Instancer
+
+    tasks = [RTask("box-7f3a", "Boxed", category="pwn", flag="t{boxed}", instancer=Instancer(slow=1)),
+             RTask("plain-19c2", "Plain", flag="t{plain}")]
+    model = Model({"Boxed": [submit("t{boxed}")], "Plain": [submit("t{plain}")]})
+    with FakeRCTF(tasks, v2=True) as fake, FakeModelServer(responder=model) as server:
+        event = event_file(tmp_path, fake.url, http='preset = "rctf2"', board=str(tmp_path / "board"), pull="auto", submit="auto",
+                           extra='\n[instances]\nplugin = "rctf"\n')
+        run = prepare_run(RunOptions(event=event, config=config(tmp_path, server.base_url, max_lanes=2)))
+        run.instances.every = 0.05
+        assert json.loads((tmp_path / "board" / "boxed" / "challenge.json").read_text())["instance"] == "on-demand"
+        assert any(note.startswith("instances: flightdeck starts a challenge's instance on the platform before a lane works it (1 on")
+                   for note in run.notes())
+
+        async def body(run):
+            await wait_for(lambda: run.deck.challenges["boxed"].status is ChallengeStatus.SOLVED, "the boxed challenge solved")
+            # the run's own word that it is stopped (the stop's answer read), not only the fake's: the run ends after this
+            await wait_for(lambda: fake.tasks["box-7f3a"].instancer.status == "stopped" and "boxed" not in run.instances.running,
+                           "its instance stopped after the solve")
+
+        play(run, body)
+        asked = [(r.method, r.path) for r in fake.of("instance")]
+        assert {path for _, path in asked} == {"/api/v2/integrations/challs/box-7f3a/instance"}  # only the on-demand one, by its own id
+        assert [m for m, _ in asked if m != "GET"] == ["PUT", "DELETE"]  # one start, one stop
+        # the first pull's caller signed in once; the run's own signs in, and its instancer and its flags share that session.
+        # Two of the run's first calls can find no session at once and both sign in (allowed:
+        # test_two_sign_ins_at_once_both_end_with_the_platforms_session), so that is once or twice.
+        assert fake.kinds().count("login") in (2, 3) and fake.kinds().index("instance") > fake.kinds().index("login", 1)
+        assert {r.headers["authorization"] for r in fake.of("instance") + fake.of("submit")} == {f"Bearer {AUTH_TOKEN}"}
+    briefs = {r["json"]["messages"][1]["content"].split("Challenge: ", 1)[1].split(" (", 1)[0]: r["json"]["messages"][1]["content"]
+              for r in server.chats()}
+    assert "\nLive instance: tcp://pwn-1.chal.example.test:31337" in briefs["Boxed"]
+    assert "\nLive instance: none\n" in briefs["Plain"]
+    everything = run.log.path.read_text() + "\n".join(run.notes())
+    assert TEAM_TOKEN not in everything and AUTH_TOKEN not in everything
+
+
 def test_a_kind_the_table_has_no_rule_for_gives_the_flag_back_to_the_player_and_is_never_wrong(tmp_path, token):
     with FakeRCTF(sample()[:1]) as fake, FakeModelServer(responder=Model({"Warm Up": [submit("t{warm}")]})) as server:
         run = rctf_run(tmp_path, fake, server)
@@ -544,7 +627,7 @@ def test_a_token_that_is_not_set_stops_the_run_before_the_platform_is_asked(tmp_
             rctf_run(tmp_path, fake, server)
         assert fake.requests == []
     assert str(refused.value) == (f"the token variable {TOKEN_VAR} (event.token_env) is not set or is empty: put {TOKEN_VAR}=<token> in "
-                                  "your keys file or export it, then start play again")
+                                  f"{keys_file_named()} or export it, then start play again")
 
 
 def test_under_pull_manual_the_run_plays_the_board_http_pull_wrote_and_refuses_one_it_did_not(tmp_path, own_config, token):
@@ -624,3 +707,136 @@ def test_a_coding_agent_lane_on_an_http_event_shows_the_login_link_and_the_token
     for kept in (run.log.path, *(run.dir / "lanes").iterdir()):
         text = kept.read_text()
         assert TEAM_TOKEN not in text and encoded not in text, kept.name
+
+
+# ---------------------------------------------------------------------- check, with [instances] (P89)
+
+
+RCTF2 = 'preset = "rctf2"'
+ON_RCTF = '[instances]\nplugin = "rctf"\n'
+STATUS = "instance GET /api/v2/integrations/challs/{id}/instance for pwn-box, the first of 1 on-demand"
+
+
+def boxed(status: str = "stopped") -> list[RTask]:
+    """The sample, and one challenge with an instancer in the given state."""
+    from fake_http import Instancer
+
+    return [*sample(), RTask("pwn-box", "Pwn Box", category="pwn", instancer=Instancer(status=status, left=5))]  # starting: 5 more looks
+
+
+def instance_methods(fake: FakeRCTF) -> list[str]:
+    return [r.method for r in fake.of("instance")]
+
+
+def test_http_check_asks_the_instancers_status_once_with_a_get_and_shows_where_it_runs(tmp_path, own_config, token):
+    with FakeRCTF(boxed("running"), v2=True) as fake:
+        result = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra=ON_RCTF))
+        assert instance_methods(fake) == ["GET"]  # never a PUT, a PATCH or a DELETE
+        assert fake.of("instance")[0].headers["authorization"] == f"Bearer {AUTH_TOKEN}"  # the sign-in's session, as a run sends it
+        assert fake.kinds().count("login") == 1
+    assert result.exit_code == 0, result.output
+    out = result.stdout.splitlines()
+    assert out[0] == f"Fake Quals at {fake.url}: nothing is submitted, no file is downloaded, no instance is started"
+    assert "  instance  status GET /api/v2/integrations/challs/{id}/instance, with the session token (Authorization: Bearer): only for " \
+           "an on-demand challenge of the board" in out  # the plan names the instancer's routes too
+    line = next(line for line in out if line.startswith("instance GET"))
+    assert line.startswith(f"{STATUS}: running at tcp://pwn-1.chal.example.test:31337, ends in ")
+    assert out[-1] == "every path a pull needs matched; nothing was submitted and no instance was started"
+    assert TEAM_TOKEN not in result.output and AUTH_TOKEN not in result.output
+
+
+@pytest.mark.parametrize(("status", "said"), [
+    ("stopped", "no instance runs for it, and none was started (a 400 or a 404 reads so too: if one runs on the site, the status "
+                "route is wrong)"),
+    ("errored", "the platform says the instance of pwn-box failed (errored): flightdeck sends no start for it while the platform "
+                "says so; stop it or start it again on the site"),
+    ("starting", "the instance of pwn-box is on its way up or down on the platform (starting); flightdeck sends nothing for it and "
+                 "asks again in a while"),
+])
+def test_http_check_says_what_the_instancer_says_and_starts_nothing(tmp_path, own_config, token, status, said):
+    with FakeRCTF(boxed(status), v2=True) as fake:
+        result = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra=ON_RCTF))
+        assert instance_methods(fake) == ["GET"] and fake.tasks["pwn-box"].instancer.status == status
+    assert result.exit_code == 0, result.output
+    assert f"{STATUS}: {said}" in result.stdout.splitlines()
+
+
+def test_http_check_counts_a_status_the_platform_refuses_and_exits_1(tmp_path, own_config, token):
+    with FakeRCTF(boxed(), v2=True) as fake:
+        fake.script("instance", answer(403, "badPerms", "The token does not have the required permissions."))
+        result = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra=ON_RCTF))
+        assert instance_methods(fake) == ["GET"]
+    assert result.exit_code == 1
+    assert f"{STATUS}: the platform refused instance status for challenge pwn-box: The token does not have the required " \
+           "permissions." in result.stdout.splitlines()
+    assert "flightdeck: the [instances] table's status route did not give what a run needs: see the instance line above" in result.output
+    assert "paths of the [http] table" not in result.output  # every path matched: only the instance line counts
+
+
+def test_http_check_never_sends_a_status_route_that_is_not_a_get(tmp_path, own_config, token):
+    route = "/api/v2/integrations/challs/{id}/instance"
+    own = (f'[instances]\nstart = ["PUT", "{route}"]\nstop = ["DELETE", "{route}"]\nrenew = ["PATCH", "{route}"]\n'
+           f'status = ["POST", "{route}"]\nendpoints_key = "endpoints"\n')
+    with FakeRCTF(boxed("running"), v2=True) as fake:
+        result = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra=own))
+        assert fake.of("instance") == []
+    assert result.exit_code == 0, result.output
+    assert f"instance POST {route}: not asked: the status route is a POST, and check sends only requests that change nothing " \
+           "(a GET)" in result.stdout.splitlines()
+
+
+def test_http_check_names_an_instances_table_no_run_would_use(tmp_path, own_config, token):
+    """A CTFd plugin's shape on the http platform, and a table whose list marks no challenge
+    on-demand: a run would start no instance, so check says so, asks nothing and exits 1."""
+    with FakeRCTF(boxed("running"), v2=True) as fake:
+        ctfd = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra='[instances]\nplugin = "docker_per_team"\n'))
+        unmarked = invoke("check", event_file(tmp_path, fake.url, http=PRESET, extra=ON_RCTF))  # rctf's v1 list has no instance path
+        assert fake.of("instance") == []
+    assert ctfd.exit_code == 1 and unmarked.exit_code == 1
+    assert 'instance not asked: instances.plugin docker_per_team is for platform "ctfd", and this event\'s is "http", so a run ' \
+           'starts no instance with it (rCTF v2\'s instancer: plugin = "rctf")' in ctfd.stdout.splitlines()
+    assert "instance GET /api/v2/integrations/challs/{id}/instance: not asked: the [http] table has no list.instance or " \
+           "detail.instance path, so a run marks no challenge on-demand and starts no instance" in unmarked.stdout.splitlines()
+
+
+def test_http_check_with_no_challenge_marked_on_demand_asks_nothing_and_passes(tmp_path, own_config, token):
+    with FakeRCTF(sample(), v2=True) as fake:
+        result = invoke("check", event_file(tmp_path, fake.url, http=RCTF2, extra=ON_RCTF))
+        assert fake.of("instance") == []
+    assert result.exit_code == 0, result.output
+    assert "instance GET /api/v2/integrations/challs/{id}/instance: not asked: no challenge is marked on-demand (list.instance " \
+           "matched no value)" in result.stdout.splitlines()
+
+
+@pytest.mark.parametrize("preset", ["rctf", "rctf2", "noctf", "gzctf"])
+def test_an_example_profile_left_unedited_sends_the_token_nowhere(tmp_path, own_config, monkeypatch, preset):
+    """`flightdeck http example > event.toml` and then `http check` (or pull, or play) with
+    event.url still the example's: the player's token went to ctf.example.org, a host that is
+    not the event's. Each command now refuses it by name before any address is looked up."""
+    import socket
+
+    from ctf_flightdeck.preflight import placeholder_url
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("a request left for the example's address")
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_network)
+    text = http_cli.example_profile(False, preset)
+    loaded_once = tmp_path / "once.toml"
+    loaded_once.write_text(text)
+    variable = load_profile(loaded_once)[0].token_env
+    monkeypatch.setenv(variable, "a-synthetic-token-for-the-example")
+    folder = tmp_path / "quals"
+    folder.mkdir()
+    path = folder / "event.toml"
+    path.write_text(text)
+    refusal = placeholder_url("https://ctf.example.org")
+    assert refusal is not None and placeholder_url("https://ctf.realevent.test") is None
+    for command in ("check", "pull"):
+        result = invoke(command, path)
+        assert (result.exit_code, result.output) == (2, f"flightdeck: {refusal}\n"), command
+    with pytest.raises(RunError) as refused:
+        prepare_run(RunOptions(event=path, config=config(tmp_path, "http://127.0.0.1:9/v1")))
+    assert str(refused.value).endswith(f"\nrefuse: {refusal}")  # preflight's check, as preflight and start say it
+    checked = runner.invoke(preflight_cli.app, [str(path), "--config", str(config(tmp_path, "http://127.0.0.1:9/v1")), "--docker"])
+    assert checked.exit_code != 0 and f"refuse: {refusal}" in checked.output, checked.output

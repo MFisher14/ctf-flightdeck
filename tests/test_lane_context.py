@@ -126,3 +126,141 @@ def test_a_lane_on_a_32768_token_server_is_refreshed_at_16384_prompt_tokens_and_
             await lab.finish()
 
     asyncio.run(main())
+
+
+def roles(request: dict) -> list[str]:
+    return [m["role"] for m in request["json"]["messages"]]
+
+
+DROPPED = "left out messages of this context"
+
+
+def run_lane(tmp_path: Path, replies: list[dict], *, compact_at: int | None = COMPACT_AT):
+    """One lane on `replies` (the last submits a flag): the requests the lanes model got, what the
+    lane's transcript says, and the driver's `fits`."""
+    lanes = FakeModelServer(replies + [tool_call_reply("submit_flag", {"flag": "t{note}"})])
+    seen = {}
+
+    async def main():
+        with lanes:
+            lab = Lab(tmp_path, lanes, {"c1": handout(tmp_path, "c1", {"note.txt": "hi\n"})}, compact_at=compact_at)
+            lab.release(challenge("c1"))
+            lane = lab.lane("c1")
+            await until(lambda: lane.pending is not None, "the candidate flag")
+            seen.update(sent=[roles(chat) for chat in lanes.chats()], texts=[a.text for a in lane.actions],
+                        fits=dict(lab.driver.fits))
+            await lab.finish()
+
+    asyncio.run(main())
+    return seen["sent"], seen["texts"], seen["fits"]
+
+
+def shell(n: int, tokens: int, model: str = "fake/model") -> dict:
+    return tool_call_reply("shell", {"command": f"echo {n}"}, prompt_tokens=tokens, model=model)
+
+
+def test_a_lane_whose_server_drops_messages_is_refreshed_at_once_and_from_then_on_sooner(tmp_path):
+    """No [api] context, so the refresh point is the driver's 50,000, and the server's count
+    stops growing at about 28,300 while the context grows, as Ollama 0.34.2's did past its
+    32,768-token default (docs/MODELS.md): the lane is refreshed after the first call that
+    counted no more than the one before, the player is told once what to set, and the lane's
+    next context on that model is refreshed when it reaches the 28,300 where the drop was seen."""
+    sent, texts, fits = run_lane(tmp_path, [
+        shell(1, 23_600),
+        shell(2, 28_300),
+        shell(3, 28_290),  # the context grew by a turn, yet the server counted less: it dropped messages
+        shell(4, 12_000),  # the first call of a fresh context: not judged against the old one
+        shell(5, 28_300),  # under the driver's 50,000, but the count where the drop was seen
+    ])
+    assert sent[2] == ["system", "user"] + ["assistant", "tool"] * 2  # the call the server dropped from
+    assert sent[3] == ["system", "user", "user"]  # fresh, with the summary, right after it
+    assert sent[4] == ["system", "user", "user", "assistant", "tool"]  # 12,000: not refreshed
+    assert sent[5] == ["system", "user", "user"]  # refreshed at 28,300
+    assert fits == {"small": 28_300}
+    assert len([t for t in texts if DROPPED in t]) == 1, texts
+    assert len([t for t in texts if "OLLAMA_CONTEXT_LENGTH=65536" in t]) == 1, texts
+    assert any("context refreshed at 28,290 prompt tokens" in t for t in texts), texts
+    assert any("context refreshed at 28,300 prompt tokens" in t for t in texts), texts
+
+
+def test_a_second_drop_on_the_same_model_is_said_without_the_hint_and_lowers_the_refresh_point(tmp_path):
+    """The hint to set OLLAMA_CONTEXT_LENGTH comes the first time for each model, not on every
+    drop; and a later drop at a smaller count lowers the model's refresh point to it."""
+    sent, texts, fits = run_lane(tmp_path, [
+        shell(1, 23_600),
+        shell(2, 28_300),
+        shell(3, 28_290),  # the first drop: fits 28,300, refreshed at once
+        shell(4, 12_000),  # a fresh context: not judged
+        shell(5, 20_000),  # under 28,300: not refreshed
+        shell(6, 19_000),  # the second drop, at a smaller count: fits 20,000, refreshed at once
+        shell(7, 12_000),  # a fresh context: not judged
+        shell(8, 20_000),  # under 28,300, but at the lowered point: refreshed
+    ])
+    assert fits == {"small": 20_000}
+    assert len([t for t in texts if DROPPED in t]) == 2, texts
+    assert len([t for t in texts if "OLLAMA_CONTEXT_LENGTH=65536" in t]) == 1, texts
+    assert sent[5] == ["system", "user", "user"] + ["assistant", "tool"] * 2  # grown, not refreshed at 20,000
+    assert sent[6] == ["system", "user", "user"]  # fresh after the second drop
+    assert sent[8] == ["system", "user", "user"]  # refreshed at the lowered 20,000
+    assert any("context refreshed at 19,000 prompt tokens" in t for t in texts), texts
+    assert any("context refreshed at 20,000 prompt tokens" in t for t in texts), texts
+
+
+@pytest.mark.parametrize("replies", [
+    [shell(1, 20_000), shell(2, 20_500)],  # the count grew with the context: nothing dropped
+    [shell(1, 900), shell(2, 900)],  # too small to be a lane's request (a fake's): not judged
+    [shell(1, 20_000, "fake/a"), shell(2, 15_000, "fake/b")],  # another model answered: its count is its own
+])
+def test_a_count_that_is_not_a_drop_leaves_the_lane_in_its_context(replies, tmp_path):
+    sent, texts, fits = run_lane(tmp_path, replies)
+    assert sent[2] == ["system", "user"] + ["assistant", "tool"] * 2  # the same context, grown
+    assert fits == {}
+    assert not [t for t in texts if DROPPED in t or "context refreshed" in t], texts
+
+
+def test_a_run_that_never_refreshes_says_the_server_dropped_messages_and_goes_on(tmp_path):
+    sent, texts, fits = run_lane(tmp_path, [shell(1, 28_300), shell(2, 28_300)], compact_at=None)
+    assert sent[2] == ["system", "user"] + ["assistant", "tool"] * 2  # not refreshed
+    assert any(DROPPED in t and "never refreshes a lane" in t for t in texts), texts
+    assert not [t for t in texts if "context refreshed" in t], texts
+
+
+CRAMPED = "is too small for a lane"
+
+
+def test_a_server_context_a_fresh_context_nearly_fills_is_said_once_and_not_refreshed_into(tmp_path):
+    """Ollama at its 4,096-token default: the drop is seen at 3,900 and the lane is refreshed,
+    but its fresh context alone counts 3,500 of them. Refreshing at 3,900 from then on would
+    replace the context on nearly every call, so the model never saw a tool's output: the lane
+    goes on in its context instead, and the player is told once that the server's is too small."""
+    sent, texts, fits = run_lane(tmp_path, [
+        shell(1, 3_000),
+        shell(2, 3_900),
+        shell(3, 3_890),  # the drop: fits 3,900, refreshed at once
+        shell(4, 3_500),  # the first call of the fresh context: it takes 3,500 of the 3,900
+        shell(5, 3_950),  # past 3,900: not refreshed, told why
+        shell(6, 3_940),  # another drop: not said again, not refreshed
+        shell(7, 3_960),
+    ])
+    assert fits == {"small": 3_900}
+    assert sent[3] == ["system", "user", "user"]  # the refresh after the drop
+    assert sent[5] == ["system", "user", "user"] + ["assistant", "tool"] * 2  # grown, not refreshed at 3,950
+    assert sent[7] == ["system", "user", "user"] + ["assistant", "tool"] * 4  # nor after the second drop
+    assert len([t for t in texts if DROPPED in t]) == 1, texts
+    told = [t for t in texts if CRAMPED in t]
+    assert len(told) == 1 and "takes 3,500 of them" in told[0] and "from 3,900 prompt tokens on" in told[0], texts
+    assert len([t for t in texts if "context refreshed" in t]) == 1, texts
+
+
+def test_a_fresh_context_with_room_under_the_point_is_still_refreshed_at_it(tmp_path):
+    """The other side of the line: a fresh context of 2,900 leaves a quarter of the 3,900 free,
+    so the lane is refreshed there as before, and nothing says the server is too small."""
+    sent, texts, fits = run_lane(tmp_path, [
+        shell(1, 3_000),
+        shell(2, 3_900),
+        shell(3, 3_890),  # the drop: refreshed at once
+        shell(4, 2_900),  # the fresh context takes under three quarters of 3,900
+        shell(5, 3_950),  # refreshed
+    ])
+    assert sent[5] == ["system", "user", "user"]
+    assert not [t for t in texts if CRAMPED in t], texts

@@ -25,9 +25,10 @@ FLAG = "t{handed_over}"
 
 @pytest.fixture(autouse=True)
 def a_plain_local_terminal(monkeypatch):
-    """Not over SSH, not under WSL and not VS Code's terminal, wherever the tests run: the line
-    said for a dropped file that is not there is chosen by those (addchallenge.not_there_line)."""
-    for name in ("SSH_CONNECTION", "SSH_TTY", "WSL_DISTRO_NAME", "WSL_INTEROP", "TERM_PROGRAM"):
+    """Not over SSH, not under WSL, not in tmux and not VS Code's terminal, wherever the tests
+    run: the line said for a dropped file that is not there, and the drop sentence, are chosen
+    by those (addchallenge.not_there_line, drop_hint)."""
+    for name in ("SSH_CONNECTION", "SSH_TTY", "WSL_DISTRO_NAME", "WSL_INTEROP", "TERM_PROGRAM", "TMUX", "XDG_SESSION_TYPE"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -207,6 +208,108 @@ def test_a_paste_that_reads_as_dropped_files_names_the_one_that_is_not_there_and
     assert addchallenge.windows_path('"C:\\Users\\me\\my shot.png" "D:\\b.bin"') == '"C:\\Users\\me\\my shot.png" "D:\\b.bin"'
     for text in ["C: is the drive", "see C:\\Users\\me\\shot.png", str(gone), "c:\\ ", ""]:
         assert addchallenge.windows_path(text) == "", text
+
+
+CHOOSE = "press ctrl+o to choose it"
+GENERIC_DROP = "Drag a file onto this window to attach it. If nothing lands, your terminal kept the drop: press ctrl+o to choose it."
+VSCODE_DROP = ("VS Code's terminal types only the first file of a drop, and leaves ` $ | & > ~ # ! ^ * ; < out of its name: "
+               "drop one file at a time, or press ctrl+o to choose it.")
+ITERM2_DROP = ("In iTerm2, drag the file with no key held: with Option iTerm2 offers an upload or takes nothing, and with "
+               "Command it types a cd line. If nothing lands, press ctrl+o to choose it.")
+TMUX_DROP = ("Inside tmux, drop the file on the terminal tmux runs in: tmux passes its path on as a paste (flightdeck cannot "
+             "tell which terminal that is). If nothing lands, press ctrl+o to choose it.")
+SSH_DROP = ("Over SSH a file you drop stays on the machine your terminal runs on: copy it here first (scp), then /attach "
+            "its path.")
+WEZTERM_X11_DROP = "WezTerm takes a dropped file on X11 only in its nightly builds: press ctrl+o to choose it."
+
+
+@pytest.mark.parametrize(("program", "said"), [
+    ("vscode", VSCODE_DROP),
+    ("iTerm.app", ITERM2_DROP),
+    ("tmux", TMUX_DROP),
+    # nothing in their own source or documentation that this sentence could name: the generic one
+    ("Apple_Terminal", GENERIC_DROP),
+    ("ghostty", GENERIC_DROP),
+    ("kitty", GENERIC_DROP),
+    ("WezTerm", GENERIC_DROP),  # off X11 its drops paste as any other terminal's
+    ("WarpTerminal", GENERIC_DROP),
+    ("gnome-terminal", GENERIC_DROP),
+    ("Hyper", GENERIC_DROP),
+    ("", GENERIC_DROP),
+    (None, GENERIC_DROP),  # GNOME Terminal, kitty and Alacritty set no TERM_PROGRAM at all
+])
+def test_the_drop_sentence_is_the_one_for_the_terminal_program(program, said):
+    env = {} if program is None else {"TERM_PROGRAM": program}
+    assert addchallenge.drop_hint(choose=CHOOSE, env=env) == said
+
+
+def test_the_drop_sentence_inside_tmux_or_over_ssh_wins_over_the_terminal_program():
+    hint = lambda **env: addchallenge.drop_hint(choose=CHOOSE, env=env)  # noqa: E731
+    # tmux sets TERM_PROGRAM to its own name in a pane, but a shell started before it may keep the outer one
+    assert hint(TMUX="/tmp/tmux-501/default,4242,0", TERM_PROGRAM="iTerm.app") == TMUX_DROP
+    assert hint(TMUX="/tmp/tmux-501/default,4242,0") == TMUX_DROP
+    assert hint(TMUX="") == GENERIC_DROP  # set but empty is no tmux
+    # over SSH the file is on the other machine, in tmux or not, whatever the terminal
+    assert hint(SSH_CONNECTION="192.0.2.1 50000 192.0.2.2 22", TMUX="/tmp/tmux-501/default,1,0") == SSH_DROP
+    assert hint(SSH_TTY="/dev/pts/3", TERM_PROGRAM="vscode") == SSH_DROP
+    # WezTerm's own sentence is for X11 only, where its documentation says drops need a nightly build
+    assert hint(TERM_PROGRAM="WezTerm", XDG_SESSION_TYPE="x11") == WEZTERM_X11_DROP
+    assert hint(TERM_PROGRAM="WezTerm", XDG_SESSION_TYPE="wayland") == GENERIC_DROP
+    assert hint(TERM_PROGRAM="ghostty", XDG_SESSION_TYPE="x11") == GENERIC_DROP
+
+
+class _Recording(dict):
+    """An environment that remembers every name a function asks it for."""
+
+    def __init__(self, **values):
+        super().__init__(values)
+        self.asked: set[str] = set()
+
+    def get(self, name, default=None):
+        self.asked.add(name)
+        return super().get(name, default)
+
+
+def test_the_guide_names_every_variable_the_drop_sentences_are_chosen_by(tmp_path):
+    """docs/GUIDE.md says which variables pick the drop sentence and the not-there line; one
+    the code reads that the guide leaves out fails here."""
+    asked: set[str] = set()
+    for values in ({}, {"TERM_PROGRAM": "WezTerm"}, {"TMUX": "x"}, {"SSH_TTY": "x"}):
+        env = _Recording(**values)
+        addchallenge.drop_terminal(env)
+        asked |= env.asked
+    gone = str(tmp_path / "gone.png")
+    for text, values in ((gone, {}), ("C:\\Users\\a\\b.png", {}), (gone, {"SSH_TTY": "x"})):
+        env = _Recording(**values)
+        addchallenge.not_there_line(text, choose=CHOOSE, env=env)
+        asked |= env.asked
+    assert {"SSH_CONNECTION", "SSH_TTY", "TMUX", "TERM_PROGRAM", "XDG_SESSION_TYPE",
+            "WSL_DISTRO_NAME", "WSL_INTEROP"} <= asked  # the probe reached every branch
+    guide = (Path(__file__).parents[1] / "docs" / "GUIDE.md").read_text()
+    paragraph = guide[guide.index("It picks that sentence from"):guide.index("- **Over SSH:** the file you drop")]
+    assert [name for name in sorted(asked) if f"`{name}`" not in paragraph] == []
+    assert "nothing else depends on them" not in guide
+
+
+@pytest.mark.parametrize(("env", "said"), [
+    ({}, "drag them in, or ctrl+o if none lands"),
+    ({"TERM_PROGRAM": "Apple_Terminal"}, "drag them in, or ctrl+o if none lands"),
+    ({"TERM_PROGRAM": "vscode"}, "drag one at a time (VS Code types one), or ctrl+o"),
+    ({"TERM_PROGRAM": "iTerm.app"}, "drag them in with no key held, or ctrl+o"),
+    ({"TERM_PROGRAM": "tmux"}, "drop them on the terminal tmux runs in, or ctrl+o"),
+    ({"TERM_PROGRAM": "WezTerm", "XDG_SESSION_TYPE": "x11"}, "ctrl+o (a drop needs a nightly WezTerm on X11)"),
+    ({"SSH_TTY": "/dev/pts/3", "TERM_PROGRAM": "iTerm.app"}, "over SSH, scp them here and paste the path"),
+])
+def test_the_forms_files_line_is_the_short_one_for_the_same_terminal(env, said):
+    assert addchallenge.form_files_line(env) == f"Files: {said}; the line under the box names them."
+
+
+def test_the_drop_sentence_shows_nothing_from_the_environment():
+    """Fixed words only: a TERM_PROGRAM or a TMUX value never reaches the screen."""
+    for env in ({"TERM_PROGRAM": "\x1b]0;owned\x07"}, {"TMUX": "\x1b[2J/tmp/x,1,0"}, {"TERM_PROGRAM": "vscode\x1b[31m"}):
+        said = addchallenge.drop_hint(choose=CHOOSE, env=env)
+        assert "\x1b" not in said and "owned" not in said, env
+    assert addchallenge.drop_hint(choose=CHOOSE, env={"TERM_PROGRAM": "vscode\x1b[31m"}) == GENERIC_DROP  # only the exact name
 
 
 def test_the_line_for_a_dropped_file_that_is_not_there_says_why_it_is_not_where_the_console_runs(tmp_path):
@@ -803,6 +906,48 @@ def test_an_image_the_model_cannot_read_is_a_warning_and_the_challenge_is_added_
                 await asyncio.sleep(0.01)
             assert run.deck.challenges["blind"].description == "typed text"
             assert any("could not read clip.png" in w and "without that image's text" in w for w in warnings)
+            await run.shutdown()
+            run.close()
+
+    asyncio.run(main())
+
+
+@pytest.mark.parametrize("dropped", [True, False])
+def test_a_new_with_an_image_that_is_not_added_after_all_removes_the_copies_of_its_drop_and_says_so(tmp_path, monkeypatch, dropped):
+    """The /new was answered ("reading 1 image...") and its form closed, then the challenge
+    could not be written: nothing will attach the copies of its drop now, so they go, and the
+    warning says so. A file of the player's own that was not dropped is left where it is."""
+    from fake_model import text_reply
+
+    shot = tmp_path / "clip.png"
+    shot.write_bytes(PNG)
+
+    def full(board, new):
+        raise AddError("the disk is full")
+
+    monkeypatch.setattr(addchallenge, "create", full)
+
+    async def main():
+        with FakeModelServer([text_reply("some text")]) as server:
+            run = prepare_run(options(tmp_path, server))
+            warnings = []
+            run.deck.subscribe(lambda e: warnings.append(e.text) if e.kind.value == "warning" else None)
+            run.release()
+            files = run.stage_files([shot]) if dropped else [shot]
+            ok, told = await run.add_challenge(NewChallenge(name="Lost", description="typed", files=tuple(files)))
+            assert ok and "reading 1 image" in told
+            for _ in range(500):
+                if warnings:
+                    break
+                await asyncio.sleep(0.01)
+            (warning,) = warnings
+            assert "the disk is full" in warning
+            if dropped:
+                assert "copies of its dropped file (clip.png) are removed" in warning
+                assert not files[0].exists() and not files[0].parent.exists()
+            else:
+                assert "dropped" not in warning
+            assert shot.read_bytes() == PNG and "lost" not in run.deck.challenges
             await run.shutdown()
             run.close()
 
@@ -1649,12 +1794,12 @@ def test_a_dropped_file_that_is_not_there_is_said_with_the_reason_and_pasted_as_
         await app.on_event(events.Paste(text))  # the lanes table has the focus: a paste has nowhere to go
         await pilot.pause()
         assert bar.value == "" and app._status[1] == "warning"
-        assert app._status[0].startswith("no such file: ...") and app._status[0].endswith(why + "type /attach with no file to choose it")
+        assert app._status[0].startswith("no such file: ...") and app._status[0].endswith(why + "press ctrl+o or type /attach with no file to choose it")
         app._status = None
         await pilot.press("slash")
         await app.on_event(events.Paste(text))  # in the command bar: the same line, and the text where the cursor is
         await pilot.pause()
-        assert bar.value == "/" + text and app._status[0].endswith(why + "type /attach with no file to choose it")
+        assert bar.value == "/" + text and app._status[0].endswith(why + "press ctrl+o or type /attach with no file to choose it")
         bar.value, app._status = "", None
         for words in ("hint L01 look at /etc/passwd", f"hint L01 open {gone}", "help"):  # text, and a command: nothing is said
             await app.on_event(events.Paste(words))
@@ -2097,7 +2242,7 @@ def test_a_typed_path_of_a_file_that_is_not_there_is_said_and_none_of_its_keys_a
             assert bar.value == "" and not bar.has_focus  # not even its first: `/` opens the command bar
             assert app._status[0].startswith("no such file: ...") and app._status[1] == "warning"
             assert app._status[0].endswith("park kill quit.bin. VS Code's terminal leaves ` $ | & > ~ # ! ^ * ; < out of a "
-                                           "dropped file's name: type /attach with no file to choose it")
+                                           "dropped file's name: press ctrl+o or type /attach with no file to choose it")
         await pilot.press("slash")  # with the command bar open it is text there, as a paste is, and said all the same
         await pilot.pause(GAP * 2)
         app._status = None
@@ -2146,12 +2291,48 @@ def test_the_form_and_the_attach_command_say_what_to_do_when_a_dropped_file_does
         await pilot.press(*"/new", "enter")
         await pilot.pause()
         shown = " ".join(" ".join(str(part.render()).split()) for part in app.screen.query("Static"))
-        assert "Files: ctrl+o, or drag them in (if none lands, use ctrl+o)" in shown
+        assert "Files: drag them in, or ctrl+o if none lands; the line under the box names them." in shown
         assert "ctrl+o choose files" in " ".join(shown.split())
         await pilot.press("escape")
         await pilot.press(*"/att")  # the command menu, at /attach
         await pilot.pause()
         assert "add files to a challenge (drag them here, or none to choose)" in " ".join(screen_text(app).split())
+
+    in_console(tmp_path, body)
+
+
+def test_the_form_and_help_say_how_a_drop_works_in_the_terminal_flightdeck_runs_in(tmp_path, monkeypatch):
+    """Where the player looks to learn how to attach: the /new form and help, each with the sentence for this terminal."""
+    from test_console import prompt_text
+
+    from ctf_flightdeck.console.screens import FILES_CHOOSE, HelpScreen
+
+    monkeypatch.setenv("TERM_PROGRAM", "iTerm.app")
+
+    def shown(app) -> str:
+        return " ".join(" ".join(str(part.render()).split()) for part in app.screen.query("Static"))
+
+    async def body(run, app, pilot):
+        await pilot.press(*"/new", "enter")
+        await pilot.pause()
+        assert "Files: drag them in with no key held, or ctrl+o; the line under the box names them." in shown(app)
+        assert "Files: drag them in, or ctrl+o if none lands" not in shown(app)
+        await pilot.press("escape")
+        await pilot.pause()
+        app.action_help()
+        await pilot.pause()
+        assert isinstance(app.screen, HelpScreen)
+        body, seen = app.screen.query_one("#help-body"), []
+        while True:  # help is longer than the screen: read it a page at a time, to its end
+            seen.append(prompt_text(app))
+            if body.scroll_y >= body.max_scroll_y:
+                break
+            body.scroll_page_down(animate=False)
+            await pilot.pause()
+        said = " ".join(seen)
+        assert "Files, in this terminal (/new and /attach)" in said
+        assert ITERM2_DROP.replace(CHOOSE, FILES_CHOOSE) in said
+        assert "press ctrl+o in the /new form, or type /attach with no file, to choose it" in said
 
     in_console(tmp_path, body)
 
@@ -2188,6 +2369,47 @@ def test_ctrl_o_and_a_bare_attach_open_the_file_window_and_take_what_was_chosen(
                         break
                     await pilot.pause(0.01)
                 assert (run.options.board / "bare" / "doll.bin").read_bytes() == b"inside" and len(asked) == 2
+            await run.shutdown()
+            run.close()
+
+    asyncio.run(main())
+
+
+@pytest.mark.parametrize("layout", ["simple", "deck", "compact"])
+def test_ctrl_o_in_the_lane_list_attaches_to_the_selected_lanes_challenge_and_in_a_lane_is_details(tmp_path, monkeypatch, layout):
+    """ctrl+o in the lane list is a bare /attach: the file window, then the files go to the
+    selected lane's challenge, in each layout (the compact one is the simple one on a phone's
+    width). In a lane's own view the key is still details, and no file window opens."""
+    from ctf_flightdeck import filepick
+
+    handout = tmp_path / "doll.bin"
+    handout.write_bytes(b"inside")
+    asked = []
+    monkeypatch.setattr(filepick, "choose", lambda **kw: asked.append(kw) or [handout])
+
+    async def main():
+        with busy_lanes() as server:
+            run = prepare_run(options(tmp_path, server))
+            app = run.app(refresh_seconds=None)
+            async with app.run_test(size=(60, 40) if layout == "compact" else (160, 46)) as pilot:
+                await pilot.pause()
+                if layout == "deck":
+                    app.switch_layout("deck")
+                    await pilot.pause()
+                await run.add_challenge(NewChallenge(name="Doll", description="d"))
+                await until(pilot, lambda: app.fleet.selected_lane in run.deck.lanes)
+                await pilot.press("ctrl+o")
+                await until(pilot, lambda: (run.options.board / "doll" / "doll.bin").exists())
+                assert (run.options.board / "doll" / "doll.bin").read_bytes() == b"inside" and len(asked) == 1
+                await until(pilot, lambda: app.screen is app.fleet and app.fleet.selected_lane in run.deck.lanes)
+                app.open_lane(app.fleet.selected_lane)
+                await until(pilot, lambda: app.screen is not app.fleet)
+                await pilot.pause()
+                details = app.screen.details
+                await pilot.press("ctrl+o")
+                await pilot.pause()
+                assert app.screen.details != details and len(asked) == 1  # details turned; no file window
+                await pilot.press("escape")
             await run.shutdown()
             run.close()
 

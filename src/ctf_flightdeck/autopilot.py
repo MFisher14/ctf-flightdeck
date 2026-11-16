@@ -31,7 +31,10 @@ platform is left alone: those are the player's):
   killed and parked;
 - an "ignores the hint" or "wrong direction" alert: the lane is redirected to the alert's own
   suggestion (the detector's words, from flightdeck's tables, never a challenge's), once per
-  lane and kind. A light hint judge, if configured, has had its say in the Watch already;
+  lane and kind. The same alert again on that lane means the redirect did not take: the lane
+  is escalated one rung, and at the top it is killed and parked, as a stalled lane is. An
+  alert with no redirect to suggest waits for the player. A light hint judge, if configured,
+  has had its say in the Watch already;
 - a second opinion on a timer (`second_after`, in seconds; 0, the default, is off): when an
   unsolved challenge has exactly one open lane and nothing queued, and that lane started at
   least `second_after` seconds ago, or a flag of the challenge was judged wrong (the first
@@ -61,7 +64,8 @@ on its own (Deck._keeps_last_try).
 
 It disengages (disengage) when something needs a human: the run budget reached; spend with
 no price under a budget in dollars alone; the queue held by anything else (a model API that
-fails for every lane, an outage: agent/driver.py); the platform failing, or answering with a
+fails for every lane, an outage: agent/driver.py, and agent/external.py for the coding-agent
+lanes); the platform failing, or answering with a
 human check (run.py tells it: platform()); the event's end (ended()). A disengage holds the
 queue, logs a warning whose data is {"autopilot": "disengaged", "reason": ...} (what a
 notifier listens for, and what the post-flight report lists) and stops the rules.
@@ -371,7 +375,7 @@ class Autopilot:
             return
         self.disengage(over)
         for lane in list(self.deck.lanes.values()):  # also once disengaged: the budget holds while the player is away
-            if lane.state in (LaneState.RUNNING, LaneState.WAITING):
+            if lane.state in (LaneState.RUNNING, LaneState.WAITING, LaneState.QUEUED):
                 self._apply(Pause(lane.id))
 
     def _over_budget(self) -> str:
@@ -396,8 +400,8 @@ class Autopilot:
         for lane in list(self.deck.lanes.values()):
             if self.state is not State.ENGAGED:
                 return
-            if lane.finished or lane.state in (LaneState.PAUSED, LaneState.TAKEOVER) or lane.gave_up_later:
-                continue
+            if lane.finished or lane.state in (LaneState.PAUSED, LaneState.TAKEOVER, LaneState.QUEUED) or lane.gave_up_later:
+                continue  # a QUEUED lane does no work until it has a slot again (P83): as a queued challenge, untouched
             pending = lane.pending
             if pending is not None and pending.kind is PendingKind.BUDGET:
                 if not self._over_budget():
@@ -417,12 +421,19 @@ class Autopilot:
             else:
                 for kind in (AlertKind.HINT, AlertKind.DIRECTION):
                     alert = lane.alert(kind)
-                    if alert is None or (lane.id, kind) in self._redirected:
+                    if alert is None:
                         continue
-                    self._redirected.add((lane.id, kind))
+                    if (lane.id, kind) in self._redirected:
+                        # the same alert again after its redirect: the redirect did not take, so the lane goes up a
+                        # rung as a stalled one does, and at the top it is killed and parked (P78)
+                        if not self._apply(Escalate(lane.id)).ok and self._apply(Kill(lane.id, requeue=False)).ok:
+                            self._parked.add(lane.id)
+                        break
                     text = next((s.text for s in alert.suggestions if s.key == "r" and s.text.strip()), "")
-                    if text:
-                        self._apply(Redirect(lane.id, text))
+                    if not text:
+                        continue  # no plan to redirect to: the alert waits for the player
+                    self._redirected.add((lane.id, kind))
+                    self._apply(Redirect(lane.id, text))
                     break
 
     def _opinions(self) -> None:
@@ -462,9 +473,10 @@ class Autopilot:
         self._wake_in(soonest)
 
     def _hands_off(self, lane: Lane) -> bool:
-        """A lane no rule touches (P23): paused or taken over, waiting for the player's answer,
+        """A lane no rule touches (P23): paused or taken over, waiting for the player's answer
+        or for a slot after it (QUEUED, P83: it does no work, as a queued challenge does none),
         open only for its flag's answer, or with a flag on its way to the platform."""
-        return (lane.state in (LaneState.PAUSED, LaneState.TAKEOVER) or lane.pending is not None or bool(lane.waiting)
+        return (lane.state in (LaneState.PAUSED, LaneState.TAKEOVER, LaneState.QUEUED) or lane.pending is not None or bool(lane.waiting)
                 or bool(lane.gave_up_later) or bool(self.deck.sending(lane.id)))
 
     def _opinion(self, parent: Lane, lanes: list[Lane], which: str, why: str) -> None:
@@ -525,7 +537,7 @@ class Autopilot:
 
     def _next_round(self) -> None:
         deck = self.deck
-        if deck.held or deck.queue or any(lane.state is LaneState.RUNNING for lane in deck.lanes.values()):
+        if deck.held or deck.queue or any(lane.state in (LaneState.RUNNING, LaneState.QUEUED) for lane in deck.lanes.values()):
             return
         ladder = deck.config.models
         order = sorted(deck.challenges.values(), key=lambda ch: (ch.points, -ch.solves, ch.name))  # as the board is queued

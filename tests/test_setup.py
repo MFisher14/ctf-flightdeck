@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
+from dataclasses import replace
 
 import pytest
 from typer.testing import CliRunner
@@ -49,6 +51,44 @@ def test_init_never_overwrites_a_config_unless_forced_and_never_writes_a_bad_one
     assert not (tmp_path / "bad.toml").exists()
     write_config(ANSWERS, path, force=True)
     assert load_config(path).models == ANSWERS.models
+
+
+def test_init_replaces_a_config_whole_and_keeps_its_mode_and_a_write_that_fails_leaves_it_as_it_was(tmp_path, monkeypatch):
+    from ctf_flightdeck import config_edit
+
+    path, twin = tmp_path / "config.toml", tmp_path / "twin.toml"
+    path.write_text("# mine\n")
+    path.chmod(0o600)
+    os.link(path, twin)  # a second name for the same file: written over in place, it would change too
+    write_config(ANSWERS, path, force=True)
+    assert load_config(path).models == ANSWERS.models and (path.stat().st_mode & 0o777) == 0o600
+    assert twin.read_text() == "# mine\n"  # a new file took the path; the old one was not written into
+
+    def broken(fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(config_edit.os, "fsync", broken)
+    before = path.read_text()
+    with pytest.raises(OSError, match="No space"):
+        write_config(replace(ANSWERS, models=("vendor/other",)), path, force=True)
+    assert path.read_text() == before and sorted(p.name for p in tmp_path.iterdir()) == ["config.toml", "twin.toml"]
+    fresh = tmp_path / "new" / "config.toml"
+    with pytest.raises(OSError, match="No space"):
+        write_config(ANSWERS, fresh)
+    assert list(fresh.parent.iterdir()) == []  # no half-made config, and no empty one either
+
+
+def test_init_writes_a_new_config_with_the_mode_the_umask_gives_and_through_a_link(tmp_path):
+    old = os.umask(0o027)
+    try:
+        path = write_config(ANSWERS, tmp_path / "config.toml")
+    finally:
+        os.umask(old)
+    assert (path.stat().st_mode & 0o777) == 0o640
+    link = tmp_path / "link.toml"
+    link.symlink_to(tmp_path / "real.toml")  # a link to a config not written yet
+    write_config(ANSWERS, link)
+    assert link.is_symlink() and load_config(tmp_path / "real.toml").models == ANSWERS.models
 
 
 def docker_that(tmp_path, monkeypatch, *, has_image: bool) -> None:
@@ -1073,6 +1113,54 @@ def test_answers_for_a_provider_are_the_config_init_writes_for_it():
         setup.answers_for("custom", ("m",), "host")
 
 
+@pytest.mark.parametrize("url", ["http://127.0.0.1:8000/v1", "http://localhost:8000/v1", "http://LOCALHOST:8000/v1", "http://[::1]:8000/v1"])
+def test_a_custom_server_on_this_machine_gets_no_dollar_cap_and_keeps_the_token_cap(tmp_path, url):
+    """P92: like Ollama and MLX, a custom server here bills nothing flightdeck can price, so a
+    dollar cap would stop every lane on its first turn to ask about it. The token cap stays."""
+    from ctf_flightdeck import setup
+
+    here = setup.answers_for("custom", ("m",), "host", base_url=url, key_env="")
+    assert (here.dollar_cap, here.token_cap) == (None, 400_000)
+    config = load_config(write_config(here, tmp_path / "config.toml"))
+    assert (config.lanes.dollar_cap, config.lanes.token_cap) == (None, 400_000)
+    assert setup.server_lines(here, "custom")[0] == setup.LOCAL_PROXY_NOTE
+
+
+@pytest.mark.parametrize("provider, url", [
+    ("custom", "https://models.example.test/v1"),  # a remote API: it may bill
+    ("custom", "http://127.0.0.1.example.test/v1"),  # only looks local
+    ("openai", "http://127.0.0.1:8000/v1"),  # OpenAI's own provider through a local proxy: OpenAI bills it
+    ("openrouter", "http://localhost:8000/v1"),
+])
+def test_a_server_that_may_bill_keeps_the_dollar_cap_and_hears_no_proxy_note(provider, url):
+    from ctf_flightdeck import setup
+
+    answers = setup.answers_for(provider, ("m",), "host", base_url=url, key_env="MY_MODEL_KEY" if provider == "custom" else None)
+    assert answers.dollar_cap == 2.0
+    assert setup.LOCAL_PROXY_NOTE not in setup.server_lines(answers, provider)
+
+
+def test_ollama_and_mlx_hear_no_proxy_note():
+    from ctf_flightdeck import setup
+
+    for provider in setup.LOCAL_PROVIDERS:
+        answers = setup.answers_for(provider, ("m",), "host")
+        assert answers.dollar_cap is None and setup.LOCAL_PROXY_NOTE not in setup.server_lines(answers, provider)
+
+
+def test_the_proxy_note_names_the_keys_that_load():
+    """The note names [lanes] dollar_cap and [prices]: a config with both set as it says loads, and caps the lane."""
+    from ctf_flightdeck import setup
+    from ctf_flightdeck.config import parse_config
+
+    assert "dollar_cap under [lanes]" in setup.LOCAL_PROXY_NOTE and "[prices]" in setup.LOCAL_PROXY_NOTE
+    answers = setup.answers_for("custom", ("m",), "host", base_url="http://127.0.0.1:8000/v1", key_env="")
+    text = setup.render(answers).replace("dollar_cap = false", "dollar_cap = 2")
+    text = text.replace("[lanes]", '[prices]\nm = { input = 1.0, output = 2.0 }\n\n[lanes]')
+    config = parse_config(text, Path("config.toml"))
+    assert config.lanes.dollar_cap == 2.0 and "m" in config.prices
+
+
 def test_a_setup_that_cannot_be_written_keeps_no_key_and_a_key_that_cannot_be_kept_leaves_no_config(tmp_path, monkeypatch):
     from ctf_flightdeck import keys, setup
 
@@ -1102,8 +1190,6 @@ def test_a_config_that_cannot_be_written_keeps_no_key_and_a_refused_key_puts_the
     """The config is written before the key is kept: a write that fails (a full disk, a folder
     that cannot be written) leaves the keys file as it was, the key already there too; and with
     --force, a key the keys file refuses puts back the config the new one replaced."""
-    from pathlib import Path
-
     from ctf_flightdeck import keys, setup
 
     keys_file = tmp_path / "keys.env"
@@ -1111,11 +1197,11 @@ def test_a_config_that_cannot_be_written_keeps_no_key_and_a_refused_key_puts_the
     keys.save("OPENROUTER_API_KEY", "the-old-synthetic-key")
     target = tmp_path / "config.toml"
 
-    def full(self, *args, **kwargs):
+    def full(*args, **kwargs):
         raise OSError(28, "No space left on device")
 
     with monkeypatch.context() as patch:
-        patch.setattr(Path, "write_text", full)
+        patch.setattr(os, "fsync", full)  # the config's new file cannot be flushed to the disk
         with pytest.raises(OSError):
             setup.write_setup(ANSWERS, target, keys={"OPENROUTER_API_KEY": PASTED_KEY})
     assert not target.exists() and keys.load_keys(keys_file) == {"OPENROUTER_API_KEY": "the-old-synthetic-key"}
