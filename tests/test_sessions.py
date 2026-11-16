@@ -183,9 +183,12 @@ def test_a_session_that_ends_says_its_status_and_is_gone_after(tmp_path, handout
 
 
 def test_newline_false_sends_the_input_as_it_is(tmp_path, handout):
+    # A reader that waits for all six bytes, on every system (GNU head -c writes what it has
+    # read at once, so "abc" would come in the first read on Linux and not on a Mac).
     async def go():
         box = await host_box(tmp_path, handout)
-        await call(box, "session_start", {"command": "head -c 6; echo '|'", "wait_seconds": 0})
+        await call(box, "session_start", {"command": "python3 -c \"import sys; sys.stdout.write(sys.stdin.buffer.read(6).decode() + '|\\n')\"",
+                                          "wait_seconds": 0})
         await call(box, "session_send", {"session": "s1", "input": "abc", "newline": False, "wait_seconds": 0.2})
         done = await call(box, "session_send", {"session": "s1", "input": "def", "newline": False, "wait_seconds": 5})
         await box.workspace.close()

@@ -426,7 +426,9 @@ def test_two_sign_ins_at_once_both_end_with_the_platforms_session():
             return await asyncio.gather(caller.solved(), caller.solved())
 
         assert run(both()) == [{"done-a4d0"}, {"done-a4d0"}]
-        assert fake.kinds() == ["login", "login", "me", "me"] and caller._session == AUTH_TOKEN
+        # Both find no session before either answer is back; which answer comes first is the
+        # server's and the scheduler's, so the order of the four calls is not asserted.
+        assert sorted(fake.kinds()) == ["login", "login", "me", "me"] and caller._session == AUTH_TOKEN
         assert {r.headers["authorization"] for r in fake.of("me")} == {f"Bearer {AUTH_TOKEN}"}
 
 

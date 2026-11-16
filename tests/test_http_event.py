@@ -574,8 +574,10 @@ def test_a_run_on_rctf_v2_starts_a_challenges_instance_with_the_sign_ins_session
         asked = [(r.method, r.path) for r in fake.of("instance")]
         assert {path for _, path in asked} == {"/api/v2/integrations/challs/box-7f3a/instance"}  # only the on-demand one, by its own id
         assert [m for m, _ in asked if m != "GET"] == ["PUT", "DELETE"]  # one start, one stop
-        # the first pull's caller signed in once; the run's own signs in once, and its instancer and its flags share that session
-        assert fake.kinds().count("login") == 2 and fake.kinds().index("instance") > fake.kinds().index("login", 1)
+        # the first pull's caller signed in once; the run's own signs in, and its instancer and its flags share that session.
+        # Two of the run's first calls can find no session at once and both sign in (allowed:
+        # test_two_sign_ins_at_once_both_end_with_the_platforms_session), so that is once or twice.
+        assert fake.kinds().count("login") in (2, 3) and fake.kinds().index("instance") > fake.kinds().index("login", 1)
         assert {r.headers["authorization"] for r in fake.of("instance") + fake.of("submit")} == {f"Bearer {AUTH_TOKEN}"}
     briefs = {r["json"]["messages"][1]["content"].split("Challenge: ", 1)[1].split(" (", 1)[0]: r["json"]["messages"][1]["content"]
               for r in server.chats()}
