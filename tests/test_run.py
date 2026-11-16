@@ -813,6 +813,9 @@ def test_practice_without_a_config_says_how_to_make_one(tmp_path, monkeypatch):
     result = CliRunner().invoke(cli.app, ["practice"])
     assert result.exit_code == 2
     assert "none.toml" in result.output and "config" in result.output
+    # what one full run was measured to cost comes first, before anything is spent (#43)
+    first = result.output.splitlines()[0]
+    assert first.startswith("flightdeck: the whole practice set cost $0.02 on Haiku 5.5") and "docs/MODELS.md" in first
 
 
 # ---------------------------------------------------------------------- M2-M3 wiring: L1 first, detectors on

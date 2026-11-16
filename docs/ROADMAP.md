@@ -14,6 +14,18 @@ Proposals built and waiting for a release, in the order of their numbers in
   file, and `--speed` plays it faster or slower. Each wave's release line names the next. Until
   now `play` put the whole board out at the start, and `practice_mode.Release` was used by no
   command.
+- **ACP agents as lanes** (P100; until now in "Still open from M0 to M4"). `--agent acp` runs
+  the agent `[agents.acp]` names over the Agent Client Protocol, version 1. Met a fake only.
+- **Both coding-agent CLIs played the whole practice set for real** (2026-11-16,
+  [#3](https://github.com/MFisher14/ctf-flightdeck/issues/3)): claude 2.1.325 in docker lanes
+  behind the fenced network, with tool calls (12 of 14), and codex 0.167.0 on the host with a
+  saved ChatGPT login (13 of 14). It found that `doctor --agent` checked `[lanes] image` while
+  `play` under `lane_tools` runs lanes in `[l1] image`; both now ask about the same image.
+- **What the practice set costs** ([#43](https://github.com/MFisher14/ctf-flightdeck/issues/43)):
+  $0.02 on Haiku 5.5, through OpenRouter or as claude lanes ([MODELS.md](MODELS.md#what-the-practice-set-costs)),
+  and `flightdeck practice` says so before it starts. Measuring it found that Claude models on
+  OpenRouter used no prompt cache; each request now carries OpenRouter's cache breakpoint (0% to
+  72% of the prompt read from the cache).
 
 ## Released: 0.6.0, lane sessions and more platforms (2026-11-16)
 
@@ -458,8 +470,10 @@ Planned in a milestone and not built:
 - **A real capture of the `claude` and `codex` streams.** The driver is tested against a fake CLI
   built from their docs, and so is a coding-agent lane's fenced network (below). Claude Code's
   stream was compared with a real run on 2026-11-14 (P86: 2.1.325, a prompt with no tools), and
-  the differences fixed; still open: claude's tool calls, a whole `practice --agent claude` run,
-  the fenced network with a real CLI, and all of codex.
+  the differences fixed. On 2026-11-16 both played the whole practice set for real: claude in
+  docker lanes behind the fenced network (12 of 14, $0.02 on Haiku), codex on the host with a
+  saved ChatGPT login (13 of 14). Still open: codex in docker (it needs `CODEX_API_KEY`) and a
+  raw capture of each stream's fields.
 
 Built since (2026-11-12, issue #14): **the per-origin egress allowlist.** A Docker lane that may
 reach its instance reaches only the hosts and ports its challenge's `urls` name, and a

@@ -766,13 +766,14 @@ def practice(
 ) -> None:
     """Play the practice set that ships with flightdeck (14 small synthetic challenges, answers
     checked by hash). Spends model tokens like `play`."""
-    from .practice_set import practice_dir
+    from .practice_set import MEASURED, practice_dir
 
     try:
         board = practice_dir()
     except FileNotFoundError as exc:
         typer.echo(f"flightdeck: {exc}", err=True)
         raise typer.Exit(2) from None
+    typer.echo(f"flightdeck: {MEASURED}", err=True)
     play(
         board=board, answers=None, config=config, max_lanes=max_lanes, host=host,
         team=False, submit=None, model=model, run_dir=run_dir, pack=pack, agent=agent, agent_auth=agent_auth,

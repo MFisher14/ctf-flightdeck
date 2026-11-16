@@ -4,6 +4,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- `flightdeck practice` says what the whole practice set cost when it was measured ($0.02 on
+  Haiku 5.5) before it starts; docs/MODELS.md has the runs.
 - Claude models on OpenRouter now use Anthropic's prompt cache: each request carries OpenRouter's
   automatic cache breakpoint. Before, a practice run on `anthropic/claude-haiku-5.5` read none of
   its prompt from the cache.

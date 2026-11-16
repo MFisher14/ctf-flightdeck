@@ -121,7 +121,11 @@ What this module assumes about the CLIs is listed in tests/fake_agent_cli.py, wh
 them in the tests (a real run spends the player's money). Claude Code's stream (events,
 cost, interrupt, signals, configuration folder) was compared with a real run of 2.1.325
 (P86), with no tools; the fake marks what that run settled as CHECKED and the rest as
-ASSUMED (its tool calls among it). Codex has not been checked against a real run.
+ASSUMED. On 2026-11-16 both CLIs played the whole practice set for real: claude 2.1.325 in
+docker lanes behind the fenced network (14 lanes, tool calls, 12 solved, its cost counted),
+and codex 0.167.0 on the host with a saved ChatGPT login (14 lanes, 13 solved, tokens
+counted, no cost). Those runs settled that the driver reads both streams' steps, flags and
+spend; field-level marks in the fake stay as they were.
 claude_argv() and codex_argv() hold every flag in one place.
 """
 
