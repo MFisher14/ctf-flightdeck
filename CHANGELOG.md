@@ -23,6 +23,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   lane. And when you approve, decline or kill a lane from the list and it ends, the selection
   moves on to the next lane that needs you (or the row under it), instead of staying on the
   folded `N finished` row.
+- In the simple layout a lane that waits for you shows `1 0 answer` on the key line, in the lane
+  list and in its own view, so the keys match the numbered answers under the list and on the
+  card (`1 more budget  0 stop the lane`). `a` and `d` still answer it, and `?` says so. A lane
+  waiting on whether to carry on with no dollar cap now says that in its transcript when it
+  gives its slot up, not "more budget".
 - A lane's session no longer answers one call late. Output a program wrote before a send (a
   debugger still loading, say) comes with the send's read but no longer ends it, so the read
   waits for the reply, and `until` is looked for only in what came after the send. A secret of

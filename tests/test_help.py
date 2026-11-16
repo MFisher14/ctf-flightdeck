@@ -53,8 +53,8 @@ from test_layout import LAYOUTS, SIZE, console, release, three_lanes
 
 PHONE = (60, 40)  # the compact layout
 TALL = (160, 190)  # every row of help on screen at once: nothing to scroll to
-LANE_NOW = {"L01": ["esc", "/", "?", "ctrl+o"], "L02": ["1-9", "esc", "/", "?", "ctrl+o"], "L03": ["1-9", "esc", "/", "?", "ctrl+o"]}
-LIST_NOW = {"L01": ["enter", "/", "?", "q"], "L02": ["a", "d", "enter", "/", "?", "q"], "L03": ["1-9", "x", "enter", "/", "?", "q"]}
+LANE_NOW = {"L01": ["esc", "/", "?", "ctrl+o"], "L02": ["1 0", "esc", "/", "?", "ctrl+o"], "L03": ["1-9", "esc", "/", "?", "ctrl+o"]}
+LIST_NOW = {"L01": ["enter", "/", "?", "q"], "L02": ["1 0", "enter", "/", "?", "q"], "L03": ["1-9", "x", "enter", "/", "?", "q"]}
 NAMES = {"L01": "Alpha", "L02": "Beta", "L03": "Gamma"}
 
 
@@ -82,8 +82,10 @@ def now(app: FlightdeckApp) -> tuple[str, list[str]]:
 
 
 def line_keys(app: FlightdeckApp) -> list[str]:
-    """The keys on the key line as drawn: the first word of each `key label` pair."""
-    return [pair.split(" ")[0] for pair in footer_line(app).strip().split("  ")]
+    """The keys on the key line as drawn: the first word of each `key label` pair, or for the
+    answers all that is before the label (`1 0 answer`: its key is `1 0`)."""
+    return [pair.removesuffix(" answer") if pair.endswith(" answer") else pair.split(" ")[0]
+            for pair in footer_line(app).strip().split("  ")]
 
 
 def hints(deck, lane_id: str) -> list[str]:
@@ -331,7 +333,7 @@ def test_each_view_lists_its_own_keys_and_no_row_says_in_a_lane_of_a_list_key():
 
 def test_every_key_a_simple_key_line_can_show_has_a_sentence_and_help_refuses_a_view_it_does_not_know():
     in_list = {shown_ for _, shown_, _ in (fleet.NEW_KEY, *fleet.SIMPLE_KEYS)}
-    in_lane = {key for key, _ in (focus.SIMPLE_ANSWER_LABEL, *focus.SIMPLE_KEY_LABELS)}
+    in_lane = {key for key, _ in (focus.SIMPLE_ANSWER_LABEL, focus.SIMPLE_YES_NO_LABEL, *focus.SIMPLE_KEY_LABELS)}
     assert set(NOW_HELP) == set(screens.HELP_VIEWS) == {"list", "lane"}
     assert set(NOW_HELP["list"]) == in_list and set(NOW_HELP["lane"]) == in_lane  # none missing, none left over
     assert all(text and text[0].isupper() for sentences in NOW_HELP.values() for text in sentences.values())

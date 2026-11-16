@@ -400,7 +400,7 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   | none, on a platform's board | `? help  q quit` |
   | hidden by a filter that leaves no lane row | as for none: every key refuses it, and the bar's title says `no lane` (a filter that leaves a lane row selects it: Fleet view) |
   | needs nothing, or has finished | `enter open  / commands  ? help  q quit` |
-  | waits for an approval | `a approve  d decline  enter open  / commands  ? help  q quit` |
+  | waits for an approval | `1 0 answer  enter open  / commands  ? help  q quit`: 1 says yes and 0 says no, in the why line's words for this approval (`1 more budget  0 stop the lane`); `a` and `d` still answer it |
   | has an alert with numbered answers | `1-9 answer`, and `x dismiss` when the alert is about its course, then `enter open  / commands  ? help  q quit` |
 
 - **Focus view.** A part shows only when it has something in it: the files pane once the lane
@@ -409,7 +409,8 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   challenge, model, state, turns, tokens, cost and idle time). The transcript and the
   needs-you card are calm: details start off (Focus view, above), and `ctrl+o` shows every line
   and the full card. Key line: `esc lanes  / commands  ? help  ctrl+o details`, with `1-9
-  answer` first while the lane has numbered answers (59 columns with the answers, so it is
+  answer` first while the lane has numbered answers, `1 0 answer` while it waits for an approval
+  (59 columns with the answers, so it is
   whole at every width the layout has; `?` works on the empty chat box). The chat box names
   the lane a message goes to on its border, as in every layout (Chat box, above), and a lane
   that has ended says `esc goes back to the lanes`.
@@ -442,7 +443,7 @@ takes its pictures in `deck`, and saves the simple layout as `simple-open`, `sim
   │ ╰──────────────────────────────────────────────────────────────────────────────────────────────╯ │
   ╰───────────────────────────────────────────────────────────────────────────────────────── plan - ─╯
   ╭─ to L01 · Baby RSA ──────────────────────────────────────────────────────────────────────────────╮
-   1-9 answer  esc lanes  / commands  ? help  ctrl+o details
+   1 0 answer  esc lanes  / commands  ? help  ctrl+o details
   ```
 - **The first lane.** On a board the player fills, the first lane of the run that a `/new`
   starts opens in the focus view, once it exists: only while the player is still in the lane

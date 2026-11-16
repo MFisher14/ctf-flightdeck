@@ -88,8 +88,10 @@ COMPACT_KEYS = (
 # The simple layout's key line: (what a click does: a binding's key, an action, or "" for
 # nothing; the key as shown; its label). Which of them a lane gets: context_keys().
 NEW_KEY = ("app.new", "/new", "add a challenge")
-APPROVE_KEY, DECLINE_KEY = ("a", "a", "approve"), ("d", "d", "decline")
-ANSWER_KEY, DISMISS_KEY = ("", "1-9", "answer"), ("x", "x", "dismiss")
+# A lane that waits for the player is answered with the numbers the why line puts on its two
+# answers, in the card's own words (1 more budget, 0 stop the lane), as its alerts are and as
+# the lane's view has it (P98); a and d still act, and help's "now" says so.
+ANSWER_KEY, YES_NO_KEY, DISMISS_KEY = ("", "1-9", "answer"), ("", "1 0", "answer"), ("x", "x", "dismiss")
 OPEN_KEY, COMMANDS_KEY = ("o", "enter", "open"), ("slash", "/", "commands")
 HELP_KEY, QUIT_KEY = ("question_mark", "?", "help"), ("q", "q", "quit")
 # What the page says while the board has no challenge: on a board the player fills (/new works
@@ -962,16 +964,17 @@ def keys_text(keys: tuple[tuple[str, str, str], ...]) -> Text:
 def context_keys(lane: Lane | None, *, by_hand: bool) -> tuple[tuple[str, str, str], ...]:
     """The simple layout's key line for the selected lane: only the keys that apply to it now.
     Every other key still acts, and help lists them all. With no lane: how to add a challenge
-    (on a board the player fills), help and quit. With one: what answers it (approve and
-    decline while it waits for the player; else the numbers of its alert's answers, and dismiss
-    for an alert about its course), then open, the commands, help and quit."""
+    (on a board the player fills), help and quit. With one: what answers it (1 and 0 while it
+    waits for the player, the numbers the why line puts on its yes and its no; else the
+    numbers of its alert's answers, and dismiss for an alert about its course), then open, the
+    commands, help and quit."""
     if lane is None:
         return ((NEW_KEY,) if by_hand else ()) + (HELP_KEY, QUIT_KEY)
     answers: tuple[tuple[str, str, str], ...] = ()
     if lane.finished:
         pass
     elif lane.pending is not None:
-        answers = (APPROVE_KEY, DECLINE_KEY)
+        answers = (YES_NO_KEY,)
     else:
         top = views.top_answerable(lane)
         if views.quick_answers(lane):
@@ -984,7 +987,7 @@ def context_keys(lane: Lane | None, *, by_hand: bool) -> tuple[tuple[str, str, s
 # The longest key line the simple layout draws: a lane with numbered answers and an alert to dismiss.
 SIMPLE_LONGEST = (ANSWER_KEY, DISMISS_KEY, OPEN_KEY, COMMANDS_KEY, HELP_KEY, QUIT_KEY)
 # Every key a lane's line can have, each once, in the order of a line.
-SIMPLE_KEYS = (APPROVE_KEY, DECLINE_KEY, ANSWER_KEY, DISMISS_KEY, OPEN_KEY, COMMANDS_KEY, HELP_KEY, QUIT_KEY)
+SIMPLE_KEYS = (YES_NO_KEY, ANSWER_KEY, DISMISS_KEY, OPEN_KEY, COMMANDS_KEY, HELP_KEY, QUIT_KEY)
 
 
 def simple_key_room(columns: int) -> tuple[list[str], int]:
@@ -994,7 +997,8 @@ def simple_key_room(columns: int) -> tuple[list[str], int]:
     its own that the terminal's edge cuts."""
     needed = keys_text(SIMPLE_LONGEST).cell_len + KEY_MARGIN
     if views.compact(columns):
-        kept = {shown for _, shown, _ in COMPACT_KEYS}
+        # the compact line's `a yes  d no` answer what 1 and 0 answer: the waiting lane's keys are there
+        kept = {shown for _, shown, _ in COMPACT_KEYS} | {YES_NO_KEY[1]}
         left = [f"{shown} {label}" for _, shown, label in SIMPLE_KEYS if shown not in kept]
         return left + cut_keys([(shown, label) for _, shown, label in COMPACT_KEYS], columns - KEY_MARGIN), needed
     return cut_keys([(shown, label) for _, shown, label in SIMPLE_LONGEST], columns - KEY_MARGIN), needed

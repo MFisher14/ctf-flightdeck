@@ -148,6 +148,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   A long path, a where line or a check's detail wraps under its own column at 80 columns. The
   layout list's "this terminal is narrow" note, and that part of the status line, go once the
   terminal is made wide.
+- **One vocabulary for an answer** (P98). A lane that waits for you shows `1 0 answer` on the
+  simple layout's key line, in the list and in its view, matching the numbers and words of the
+  why line and the card (`1 more budget  0 stop the lane`); `a` and `d` still act. A budget
+  wait about a model with no price says so when the lane gives its slot up.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

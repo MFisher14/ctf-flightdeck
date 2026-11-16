@@ -871,7 +871,7 @@ def test_the_simple_key_line_names_the_details_key_last_and_the_narrowest_simple
         deck.report("L01", TurnReport(turn=False, pending=Pending(PendingKind.LIVE_BOX, "connect to the live box")))
         app.refresh_view()
         await pilot.pause()
-        assert footer_line(app).strip() == "1-9 answer  esc lanes  / commands  ? help  ctrl+o details"  # whole at the narrowest simple terminal
+        assert footer_line(app).strip() == "1 0 answer  esc lanes  / commands  ? help  ctrl+o details"  # whole at the narrowest simple terminal
 
     drive(app, script, (65, 24))
     assert focus.SIMPLE_KEY_LABELS[-1] == ("ctrl+o", "details")
