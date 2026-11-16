@@ -285,6 +285,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   the token goes to your keys file as `RCTF_TOKEN_<NAME>`, `NOCTF_TOKEN_<NAME>` or
   `GZCTF_TOKEN_<NAME>`, never shown. Without a terminal: `--preset NAME`, `--url` and, for
   GZCTF, `--game NUMBER`. By hand is still `2`.
+- Settings and health is laid out in two columns: a long path, where a setting comes from, or
+  a check's detail and fix wraps under its own column instead of under the names on the left.
+- Making the terminal wider while the layout list is open takes away its "this terminal is
+  narrow" note (narrowed again, it comes back), and a status line said while the terminal was
+  narrow no longer says so once it is wide.
 
 ## 0.5.0 (2026-11-14)
 

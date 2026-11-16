@@ -144,6 +144,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   selected lane selects the row the cursor is on, so the keys act on the highlighted row; a
   lane you approve, decline or kill from the list that folds into `N finished` hands the
   selection to the next lane that needs you, else to the row under it.
+- **Settings and health in two columns; the narrow note goes when the terminal widens** (P97).
+  A long path, a where line or a check's detail wraps under its own column at 80 columns. The
+  layout list's "this terminal is narrow" note, and that part of the status line, go once the
+  terminal is made wide.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

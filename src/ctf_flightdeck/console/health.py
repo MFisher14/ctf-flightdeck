@@ -14,13 +14,16 @@ value; an API's address is shown without any user, password or query it carries.
 
 from __future__ import annotations
 
+import io
 import os
 import time
 import tomllib
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+from rich.console import Console, ConsoleOptions, RenderableType
+from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -121,17 +124,57 @@ def settings(path: Path | None = None) -> list[Row]:
     return rows
 
 
-NAME_WIDTH = 10
+NAME_WIDTH = 10  # cells: the settings' names, and where their values and their "where" lines start
+MARK_WIDTH = 4  # cells: a check's ok, FAIL or warn
 
 
-def settings_text(rows: list[Row], heading: str = "Settings") -> Text:
-    text = Text()
-    text.append(heading + "\n", style="bold")
+@dataclass(frozen=True)
+class Sheet:
+    """A block of the screen: its heading lines, then rows of a two-column grid, then any
+    lines under it. A second column too long for the screen wraps under itself, never under
+    the first (a long path, a check's detail), at any width. `plain` (and str) is the sheet as
+    it draws on a terminal wide enough for every row, without its colours: what the tests read."""
+
+    heading: Text
+    grid: Table
+    lines: tuple[Text, ...] = ()
+
+    def then(self, *lines: Text) -> Sheet:
+        """The same sheet with `lines` under it."""
+        return replace(self, lines=(*self.lines, *lines))
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> Iterator[RenderableType]:
+        yield self.heading
+        if self.grid.row_count:
+            yield self.grid
+        yield from self.lines
+
+    @property
+    def plain(self) -> str:
+        console = Console(file=io.StringIO(), width=10_000, color_system=None, legacy_windows=False)
+        with console.capture() as captured:
+            console.print(self)
+        return "".join(line.rstrip() + "\n" for line in captured.get().splitlines())
+
+    def __str__(self) -> str:
+        return self.plain
+
+
+def _grid(first: int, gap: int) -> Table:
+    grid = Table.grid(padding=(0, gap, 0, 0))
+    grid.add_column(no_wrap=True, width=first)
+    grid.add_column(overflow="fold")  # a long path with no space in it still wraps, in its column
+    return grid
+
+
+def settings_text(rows: list[Row], heading: str = "Settings") -> Sheet:
+    """Each setting as two rows of the grid: its name and value, then under the value where
+    it is set."""
+    grid = _grid(NAME_WIDTH, 0)
     for row in rows:
-        text.append(f"{row.name:<{NAME_WIDTH}}", style="bold")
-        text.append(untrusted(row.value, one_line=True) + "\n")
-        text.append(" " * NAME_WIDTH + untrusted(row.where, one_line=True) + "\n", style=theme.MUTED)
-    return text
+        grid.add_row(Text(row.name, style="bold"), Text(untrusted(row.value, one_line=True)))
+        grid.add_row(Text(""), Text(untrusted(row.where, one_line=True), style=theme.MUTED))
+    return Sheet(Text(heading, style="bold"), grid)
 
 
 def verdict(checks: list[Check]) -> tuple[str, str]:
@@ -150,21 +193,20 @@ def verdict(checks: list[Check]) -> tuple[str, str]:
     return "Ready: nothing to fix.", "GREEN"
 
 
-def checks_text(checks: list[Check]) -> Text:
+def checks_text(checks: list[Check]) -> Sheet:
     """Each check as doctor prints it: ok, FAIL (stops a run) or warn, what was found, and
-    under a check that is not ok, what fixes it."""
+    under a check that is not ok, what fixes it, each in the grid's second column."""
     said, colour = verdict(checks)
-    text = Text()
-    text.append("Health\n", style="bold")
-    text.append(said + "\n", style=getattr(theme, colour))
+    grid = _grid(MARK_WIDTH, 1)
     for check in checks:
-        mark, colour = ("ok  ", "GREEN") if check.ok else (("FAIL", "RED") if check.essential else ("warn", "YELLOW"))
-        text.append(mark, style=f"bold {getattr(theme, colour)}")
-        text.append(f" {untrusted(check.name, one_line=True)}: ", style="bold")
-        text.append(untrusted(check.detail, one_line=True) + "\n")
+        mark, colour_of = ("ok", "GREEN") if check.ok else (("FAIL", "RED") if check.essential else ("warn", "YELLOW"))
+        found = Text()
+        found.append(f"{untrusted(check.name, one_line=True)}: ", style="bold")
+        found.append(untrusted(check.detail, one_line=True))
+        grid.add_row(Text(mark, style=f"bold {getattr(theme, colour_of)}"), found)
         if not check.ok and check.fix:
-            text.append(f"     fix: {untrusted(check.fix, one_line=True)}\n", style=theme.MUTED)
-    return text
+            grid.add_row(Text(""), Text(f"fix: {untrusted(check.fix, one_line=True)}", style=theme.MUTED))
+    return Sheet(Text.assemble(("Health", "bold"), "\n", (said, getattr(theme, colour))), grid)
 
 
 Runner = Callable[..., Awaitable[list[Check]]]  # (columns, lines[, config=path][, agent=kind]): health.run_checks
@@ -261,7 +303,7 @@ class HealthScreen(Screen):
         if run is not None and run.checked is not None:  # found earlier in this run: shown again, not run again
             self.checked = run.checked
             said = Text(f"Checked {ago(time.monotonic() - run.at)}: r checks again.", style=theme.MUTED)
-            self.query_one("#checks", Static).update(Text.assemble(checks_text(run.checked), said))
+            self.query_one("#checks", Static).update(checks_text(run.checked).then(said))
             return
         self.action_again()
 

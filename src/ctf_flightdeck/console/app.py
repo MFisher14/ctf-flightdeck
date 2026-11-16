@@ -55,6 +55,15 @@ from .widgets import History
 STATUS_EVENTS = (EventKind.RELEASE, EventKind.TEAMMATE, EventKind.SUBMIT, EventKind.WARNING)
 STATUS_SECONDS = 12.0
 ANSWERS = (iv.Approve, iv.Decline, iv.Kill)  # answers that can end a lane: the lane list moves on from it (P96)
+# What a look's status line adds on a narrow terminal (look_said). It is true only while the terminal is narrow:
+# made wide, the status line leaves it out (status_text), and the layout list's note goes too (narrow_note).
+NARROW_SAID = "; this terminal is narrow, so the compact layout shows"
+
+
+def narrow_note(columns: int) -> str:
+    """The layout list's note for a terminal `columns` wide: the compact layout shows whichever
+    is chosen, or nothing when there is room for them."""
+    return "This terminal is narrow, so the compact layout shows in both." if views.compact(columns) else ""
 # A terminal that has no bracketed paste sends a dropped file as its path, typed: every character
 # at once. Keys that start like a path and come closer together than nobody types are held until
 # they stop coming (take_keys), and are a drop only when all of them together are paths that exist.
@@ -357,6 +366,8 @@ class FlightdeckApp(App[None]):
         text, severity, when = self._status
         if self._refresh_seconds and self.status_clock() - when > STATUS_SECONDS:
             return Text("")
+        if not views.compact(self.size.width):  # said on a narrow terminal that has since been made wide: no longer so
+            text = text.replace(NARROW_SAID, "")
         color = {"warning": theme.YELLOW, "error": theme.RED}.get(severity, theme.ACCENT)
         return Text.assemble(("● ", color), (untrusted(text, one_line=True), theme.TEXT if severity == "information" else color))
 
@@ -1360,9 +1371,8 @@ class FlightdeckApp(App[None]):
             show(name)
             self.keep_look(save=save, layout=name)
 
-        narrow = "This terminal is narrow, so the compact layout shows in both." if views.compact(self.size.width) else ""
         self.push_screen(Picker("layout", [Choice(name, LAYOUT_HELP[name]) for name in LAYOUTS], in_use=before, preview=show,
-                                save_to=self.config_path, note=narrow), done)
+                                save_to=self.config_path, note=narrow_note), done)
 
     def keep_look(self, *, save: bool = False, theme: str | None = None, layout: str | None = None) -> None:
         """Say that the console is in the theme or the layout just chosen, and for how long
@@ -1380,7 +1390,7 @@ class FlightdeckApp(App[None]):
 
         chosen = {"theme": theme, "layout": layout}
         said = " and ".join(f"{key} {chosen[key]}" for key in CONSOLE_KEYS if chosen[key] is not None)
-        narrow = "; this terminal is narrow, so the compact layout shows" if layout is not None and views.compact(self.size.width) else ""
+        narrow = NARROW_SAID if layout is not None and views.compact(self.size.width) else ""
         if not self.config_path:
             return f"{said} for this run (this console has no config file){narrow}", True
         if not save:
