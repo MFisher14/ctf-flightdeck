@@ -2,7 +2,13 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Unreleased
+## 0.8.0 (2026-11-16)
+
+What the real practice-set runs of 0.7.0 found, fixed: a planted decoy no longer keeps a challenge
+from every model while you are away, a slow L1 engine no longer holds the model for its whole time
+limit, and two false alerts are gone. A rerun under autopilot solved the decoy challenge for the
+first time.
+
 
 - A flag an L1 engine read out of the challenge (often its planted decoy) no longer holds the
   lane while you are away: unanswered for a minute it waits aside, still yours to approve or

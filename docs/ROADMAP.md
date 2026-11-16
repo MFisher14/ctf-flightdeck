@@ -3,10 +3,12 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: what the real runs found, fixed (2026-11-16)
+## Released: 0.8.0, what the real runs found, fixed (2026-11-16)
 
 Three proposals (P101 to P103) from the practice-set runs of 0.7.0; the lines for players are
-under "Unreleased" in [CHANGELOG.md](../CHANGELOG.md).
+under 0.8.0 in [CHANGELOG.md](../CHANGELOG.md). A rerun of the practice set under autopilot on Haiku 5.5
+in Docker solved 13 of 14 for $0.05, Welcome Mat for the first time; it also found the two fixes
+below the three.
 
 - **A decoy no longer holds a challenge** (P101). Every real run missed welcome-mat: under
   autopilot its planted decoy, read out by an L1 engine, waited for an approval nobody gave, and
@@ -16,6 +18,9 @@ under "Unreleased" in [CHANGELOG.md](../CHANGELOG.md).
   its full 300 s on two practice challenges before any model started.
 - **The hint check sees Morse by its shape** (P103). A lane decoding Morse with its own table was
   called off the hint.
+- **A lane's `python` step carries its whole code.** Three different scripts that began alike
+  looked like one command to the loop alert, and autopilot killed a working lane.
+- **`/note` is `/broadcast`**, and every proposal from P29 to P103 is accepted (2026-11-16).
 
 ## Released: 0.7.0, timeline replay, ACP agents and real agent runs (2026-11-16)
 
