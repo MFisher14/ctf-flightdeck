@@ -1050,7 +1050,7 @@ class Deck:
         self._on_thread("tell_all")
         text = text.strip()
         if not text:
-            return Outcome(False, "Empty note; nothing sent")
+            return Outcome(False, "Empty message; nothing sent")
         if len(self.standing) >= MAX_STANDING:
             return Outcome(False, f"{MAX_STANDING} notes for every lane are standing already; a lane's own message (h) still works")
         self.standing.append(text)

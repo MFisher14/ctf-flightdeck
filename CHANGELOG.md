@@ -11,6 +11,10 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - L1 engines get a head start of 60 seconds (`[l1] model_after`); past it the lane's model starts
   and the engines run on, and the model hears what they find. A slow engine no longer holds the
   model for its whole time limit. `model_after = 0` waits for every engine, as before.
+- `/note` is now `/broadcast`: the same message to every lane, under a name that says so.
+- A lane's `python` step shows its whole code, as a shell step shows its whole command. With only
+  the first line, three different scripts that began alike looked like one command run three
+  times, and the loop alert ended a lane that was working.
 - The "ignores the hint" check sees Morse by its shape, a run of dots and dashes or a table keyed
   by them, so a lane decoding Morse with its own code is no longer called off the hint.
 

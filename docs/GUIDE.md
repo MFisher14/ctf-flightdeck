@@ -567,7 +567,7 @@ The bar's border says who you are talking to. In the lane list it follows the se
 `to L04 · Ticket Desk` means a message you type goes to L04, and it changes as you move through
 the list. In a lane's view it names that lane. It reads `no lane` when there is none to take a
 message (no lane has started, or the board is on a challenge that no lane or several lanes
-work), and `the run` while you type a command that is not about one lane, such as `/note` or
+work), and `the run` while you type a command that is not about one lane, such as `/broadcast` or
 `/config`. A command that names a lane shows that lane while you type it: `/kill L07` reads
 `to L07 · …`, whichever lane is selected. Check the border before you press Enter: the
 lane named there is the one that reads your message on its next turn.
