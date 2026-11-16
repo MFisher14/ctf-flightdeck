@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: twenty-four proposals, P69 to P92 (2026-11-14)
+## Built, not released: thirty proposals, P69 to P98 (2026-11-14)
 
 Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P92); the lines for players are under Unreleased in
+[DECISIONS.md](DECISIONS.md) (P69 to P98); the lines for players are under Unreleased in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -130,7 +130,7 @@ Proposals built and waiting for a release, in the order of their numbers in
   and in the mock, Enter and esc both opened the console under two names; the key line now
   says `enter  open the console` alone, and esc and q still close it. An empty board keeps
   both, since there Enter opens `/new`.
-- **The config folder follows `$XDG_CONFIG_HOME`** (P94, proposed). The config, the keys file
+- **The config folder follows `$XDG_CONFIG_HOME`** (P94). The config, the keys file
   and the themes are in `$XDG_CONFIG_HOME/ctf-flightdeck` when that is set, as notes and packs
   already follow their XDG variables; `~/.config/ctf-flightdeck` stays the default. A file left
   at the old place is still found, and every command says once where (doctor in its own line).
@@ -140,7 +140,7 @@ Proposals built and waiting for a release, in the order of their numbers in
   under a site-bound `RCTF_TOKEN_<NAME>`-style variable. The event file carries the `[http]`
   table `flightdeck http example --preset NAME` prints. The home screen's form asks the same.
   Not built: a table of your own routes from start, and asking the site which platform it runs.
-- **The lane list's selection follows what you see** (P96, proposed). A filter that hides the
+- **The lane list's selection follows what you see** (P96). A filter that hides the
   selected lane selects the row the cursor is on, so the keys act on the highlighted row; a
   lane you approve, decline or kill from the list that folds into `N finished` hands the
   selection to the next lane that needs you, else to the row under it.

@@ -5,9 +5,9 @@ operator: the harness pulls and triages challenges, runs no-model (L1) solvers, 
 and submits. The player watches every lane and steps in when something looks wrong.
 **Status: 0.5.0 is released (PyPI, public on GitHub): the simple layout and the calm lane view, themes, plugins,
 the http platform (rCTF), ctfd-owl and chall-manager instances, rules for 2026 events, gdb and radare2 in lanes
-(P51 to P68). Built, not released: P69 to P91 (noCTF and GZCTF presets, bar history and `ctrl+g`, folded
-steps, coding-agent outages, settings and health (also in a run), ctfd-whale, rCTF v2 and GZCTF instances, lane sessions and their terminal,
-the live-box and answer slots, a real Claude Code check and more: `docs/ROADMAP.md` lists each).
+(P51 to P68). Built, not released: P69 to P98 (noCTF and GZCTF presets, settings and health, rCTF v2 and GZCTF
+instances, lane sessions, answer slots, `start` on the json-api platforms, `$XDG_CONFIG_HOME` and more:
+`docs/ROADMAP.md` lists each).
 Next: a release, then the Later milestone.**
 Keep this file short: every agent re-reads it on every turn.
 
