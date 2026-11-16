@@ -2,6 +2,13 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+- `--agent acp` runs lanes as any agent that speaks the Agent Client Protocol: name its command
+  line, models and credential variables under `[agents.acp]`. Its permission requests are
+  answered by flightdeck's own policy, and its files stay in the lane's workspace. Not yet tried
+  with a real agent, only with a stand-in.
+
 ## 0.6.0 (2026-11-16)
 
 Lanes that keep a program running: sessions for gdb, radare2, an interpreter or `nc`, on a

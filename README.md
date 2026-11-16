@@ -37,7 +37,8 @@ you, and one key sends a hint, redirects it, starts a second lane beside it, kil
 a stronger model or hands you its shell.
 
 - **Bring what you have.** An API key (Anthropic, OpenRouter, OpenAI), a free model on your own
-  machine (Ollama, MLX), a coding-agent CLI (Claude Code, Codex), a folder of solver scripts.
+  machine (Ollama, MLX), a coding-agent CLI (Claude Code, Codex, or an agent that speaks ACP), a
+  folder of solver scripts.
 - **Built for CTFs.** It knows points, solves, categories, 40 challenges released at once,
   teammates, the servers an event runs for a challenge (live instances), flag formats and counted
   tries. It plays events on CTFd, rCTF, noCTF and GZCTF (common CTF platforms), on another
