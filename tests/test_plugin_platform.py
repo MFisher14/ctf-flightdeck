@@ -956,6 +956,8 @@ def test_a_challenge_plugin_pull_adds_from_another_terminal_during_the_run_is_pl
             await boards.pull_into(other, board, plugin="acme", url=fake.url)  # what `flightdeck plugin pull` does
             await wait_for(lambda: run.deck.challenges.get("second-wave") is not None
                            and run.deck.challenges["second-wave"].status is ChallengeStatus.SOLVED, "the late one solved")
+            # the folder is read in turns: wait for the solved one too, not only for the one played (P84)
+            await wait_for(lambda: run.plug.refs.get("late-and-done") == "41", "the solved one's ref")
 
         play(run, body)
         assert fake.attempts() == [(40, "t{second}")]
