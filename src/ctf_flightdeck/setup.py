@@ -1038,16 +1038,16 @@ def _agent_fix(kind: str, problem: str) -> str:
 def _agent_image_check(kind: str, config) -> Check:
     """A docker lane runs the agent's CLI inside the lane image: the probe play runs (it starts
     a throwaway container of the image, with no network)."""
-    from .run import image_lacks
+    from .run import agent_lane_image, image_lacks
 
-    image = config.lanes.image
+    image, key = agent_lane_image(config, has_pack=config.l1.pack is not None)
     problem = image_lacks(image, kind)
     if problem is None:
         return Check("agent image", True, f"{image} has {kind}")
     return Check(
         "agent image", False, problem,
         f"play with --host (lanes on this machine), or build an image FROM {image} that installs {kind}, and set "
-        f"[lanes] image in {config.source} to it",
+        f"{key} in {config.source} to it",
     )
 
 

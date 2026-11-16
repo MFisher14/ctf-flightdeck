@@ -1085,9 +1085,10 @@ def prepare_run(options: RunOptions) -> Run:
         raise RunError(str(exc)) from None
     if runtime == "docker":
         _check_docker(config.lanes.image)
-        if agent is not None:
-            _check_image_has(config.lanes.image, agent.kind)
     manifests = _l1_manifests(options.pack)
+    if runtime == "docker" and agent is not None:
+        # the CLI must be in the image its lanes run in: the pack's under lane_tools
+        _check_image_has(*agent_lane_image(config, has_pack=manifests is not None), agent.kind)
     if runtime == "docker" and manifests is not None and config.l1.image:
         _check_l1_image(config.l1.image)
     team = _team_channel(options, plan)
@@ -1168,9 +1169,7 @@ def prepare_run(options: RunOptions) -> Run:
             # the lane sees the pack where it is on this machine, read-only, and runs in the
             # pack's image: the pack's own Python and tools are there, not in the lane image
             lane_mounts = ((options.pack, str(options.pack)),)
-            lane_image = config.l1.image or config.lanes.image
-            if lane_image != config.lanes.image and agent is not None:
-                _check_image_has(lane_image, agent.kind)  # the CLI must be in the image its lane runs in
+            lane_image = agent_lane_image(config, has_pack=True)[0]
         plan.notes.append("L1: the lanes' models may call your pack's engines (lane_tools)"
                           + (f"; lanes run in {lane_image} with the pack mounted read-only" if runtime == "docker" else ""))
     if manifests is not None:
@@ -2427,13 +2426,22 @@ def _environment() -> dict[str, str]:
         raise RunError(str(exc)) from None
 
 
-def _check_image_has(image: str, program: str) -> None:
+def agent_lane_image(config, *, has_pack: bool) -> tuple[str, str]:
+    """The image a docker lane runs in, and the config key that names it: the pack's image
+    ([l1] image) when the pack is the lanes' toolkit (lane_tools), else [lanes] image. A
+    coding-agent CLI must be in that one; play and doctor --agent ask about the same image."""
+    if has_pack and config.l1.lane_tools and config.l1.image:
+        return config.l1.image, "[l1] image"
+    return config.lanes.image, "[lanes] image"
+
+
+def _check_image_has(image: str, key: str, program: str) -> None:
     """A docker lane runs the agent's CLI inside its container, so the lane image must have it."""
     problem = image_lacks(image, program)
     if problem is not None:
         raise RunError(
-            f"{problem}: run them on this machine with --host, or build an image that has {program} and set "
-            "[lanes] image in your config"
+            f"{problem}: run them on this machine with --host, or build an image FROM {image} that has {program} "
+            f"and set {key} in your config to it"
         )
 
 

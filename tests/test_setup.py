@@ -1255,3 +1255,28 @@ def test_a_config_there_that_cannot_be_read_is_not_replaced_and_the_reason_is_sa
     assert caught.value.strerror == ("the config there cannot be read (Permission denied), so it is not replaced: "
                                      "it could not be put back if the key cannot be kept")
     assert target.read_text() == "# the player's old config\n" and not keys_file.exists()
+
+
+@pytest.mark.parametrize("lane_tools, probed, key", [
+    (True, "my-pack-with-claude:1", "[l1] image"),  # lane_tools: lanes run in the pack's image
+    (False, "my-lane:1", "[lanes] image"),
+])
+def test_doctor_asks_for_the_agent_cli_in_the_image_its_lanes_run_in(tmp_path, monkeypatch, lane_tools, probed, key):
+    """Under lane_tools a docker lane runs in the pack's image, not [lanes] image: doctor
+    --agent probes that one, as play does, and its fix names the key that sets it."""
+    from ctf_flightdeck import run as run_module
+    from ctf_flightdeck import setup
+
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    path = tmp_path / "c.toml"
+    path.write_text(
+        '[api]\nkey_env = ""\n[models]\nladder = ["a/b"]\n[lanes]\nruntime = "docker"\nimage = "my-lane:1"\n'
+        f'[l1]\npack = "{pack}"\nimage = "my-pack-with-claude:1"\nlane_tools = {str(lane_tools).lower()}\n'
+    )
+    asked = []
+    monkeypatch.setattr(run_module, "image_lacks", lambda image, program: asked.append(image) or f"{image} lacks {program}")
+    check = setup._agent_image_check("claude", load_config(path))
+    assert asked == [probed]
+    assert not check.ok and check.detail == f"{probed} lacks claude"
+    assert check.fix.endswith(f"set {key} in {path} to it")

@@ -2,6 +2,12 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+- `doctor --agent` looks for the CLI in the image a docker lane really runs in: the pack's image
+  (`[l1] image`) when `lane_tools` is on, as `play` does, and the fix names that key. Before, doctor
+  said ready while play refused.
+
 ## 0.6.0 (2026-11-16)
 
 Lanes that keep a program running: sessions for gdb, radare2, an interpreter or `nc`, on a
