@@ -853,6 +853,21 @@ Lanes start on the lowest-point challenges first (most solves first among equals
 queue. Every lane is a model conversation, capped per lane by `[lanes] token_cap` and
 `dollar_cap` (400,000 tokens and $2 by default; an alert at 80%, your approval at 100%).
 
+`play` puts the whole board out at the start. To play an archive of a past event as it was
+released, wave by wave, give it the board's [`timeline.json`](BOARDS.md#timelinejson):
+
+```sh
+flightdeck play ~/ctf/past-event --waves                 # on the board's timeline.json
+flightdeck play ~/ctf/past-event --waves --speed 60      # an hour of the event in a minute
+flightdeck play ~/ctf/past-event --timeline other.json   # on another timeline file
+```
+
+Each wave is queued as it goes out, cheapest first, as at the start. Its line in the status bar
+names the next wave and when it comes, by the clock in the header. The waves count from when the
+console comes up. A timeline that is missing or wrong stops the run before anything starts, and
+the message names the file and the problem. An event whose platform puts out its own challenges
+(CTFd, a Game Master, the http platform, a plugin's) refuses `--waves`.
+
 A challenge is often worked by more than one lane in a run: a fork, a fresh lane after a kill, the
 next model up the ladder. A lane that starts on a challenge other lanes worked or still work reads,
 after its brief, what each of them tried: its plan, the programs it ran, its last steps, what

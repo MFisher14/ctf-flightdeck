@@ -89,6 +89,11 @@ asks it before it starts a queued lane (Deck.start_gate). While a limit binds no
 starts; nothing running is stopped, and starts resume by themselves. A reading that cannot
 be taken is a note before the run starts and holds nothing.
 
+A folder board's timeline (`play --waves`, `--timeline FILE`, `--speed`: P99) is read and
+checked here before anything starts; release() then puts out its first waves and a task on the
+console's loop each later one when the deck's clock reaches it (practice_mode.Release). An
+event whose platform puts out its own challenges refuses a timeline.
+
 What a run starts carries its marks (leftovers.py): its containers flightdeck's labels, and
 its process groups on this machine a record in the run folder, which a note in flightdeck's
 state folder names (so it is found wherever --run-dir put it). Before a run starts, what

@@ -11,7 +11,9 @@ An archive is a folder board (platform/manual.py) with, optionally:
   sits outside the handouts.
 
 `Release` puts each wave on the deck when the deck's clock reaches its time. It has no
-timer of its own: call tick() from one on the console's event loop (the deck's thread).
+timer of its own: call tick() from one on the console's event loop (the deck's thread), as
+`play --waves` does (run.py: Run._replay, on the timeline `replay()` moves to the release and
+divides by --speed: P99).
 
 `score()` reads a run's events.jsonl, so it works on any past run: what was solved, when
 and by whom, the tokens and dollars of the model turns, the player's interventions and the

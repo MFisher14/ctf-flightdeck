@@ -3,6 +3,18 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Built, not released: proposals after 0.6.0 (2026-11-16)
+
+Proposals built and waiting for a release, in the order of their numbers in
+[DECISIONS.md](DECISIONS.md); the lines for players are under Unreleased in
+[CHANGELOG.md](../CHANGELOG.md).
+
+- **Timeline replay in `play`** (P99; until now in "Still open from M0 to M4"). `play --waves`
+  releases a folder board wave by wave from its `timeline.json`, `--timeline FILE` from another
+  file, and `--speed` plays it faster or slower. Each wave's release line names the next. Until
+  now `play` put the whole board out at the start, and `practice_mode.Release` was used by no
+  command.
+
 ## Released: 0.6.0, lane sessions and more platforms (2026-11-16)
 
 Thirty proposals, in the order of their numbers in [DECISIONS.md](DECISIONS.md) (P69 to P98),
@@ -446,9 +458,6 @@ Planned in a milestone and not built:
   stream was compared with a real run on 2026-11-14 (P86: 2.1.325, a prompt with no tools), and
   the differences fixed; still open: claude's tool calls, a whole `practice --agent claude` run,
   the fenced network with a real CLI, and all of codex.
-- **Timeline replay in `play`.** Releasing a board wave by wave from its `timeline.json` is built
-  and tested, but `play` releases the whole board at the start. Scoring a past run against the
-  board's answers works (`flightdeck score`).
 
 Built since (2026-11-12, issue #14): **the per-origin egress allowlist.** A Docker lane that may
 reach its instance reaches only the hosts and ports its challenge's `urls` name, and a
