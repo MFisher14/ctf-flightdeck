@@ -11,6 +11,7 @@ far flightdeck goes on its own at each stage. This page is the format of both.
 some-board/
   board.json               optional: the event's name and flag format
   answers.sha256.json      optional: the sha256 of each flag, for checking flags offline
+  timeline.json            optional: when each challenge was released, for `play --waves`
   crab-walk/
     challenge.json         what the challenge is
     postcard.txt           its handout
@@ -144,6 +145,26 @@ Without an answers file, and without a platform flightdeck submits to, flightdec
 flag. When a lane finds one, the console shows it and asks you to submit it on the platform
 yourself; then press `a` if the platform accepted it or `d` if it did not. The same holds for a
 challenge the answers file does not list.
+
+## `timeline.json`
+
+An archive can also say when each challenge reached the board in the real event, as waves:
+
+```json
+{"waves": [{"at": 0, "ids": ["crab-walk"]}, {"at": 3600, "ids": ["welcome-mat"]}]}
+```
+
+`at` is the seconds from the start, 0 or more, and `ids` the challenge ids of that wave. A
+challenge no wave lists goes out at the start. A challenge listed twice, an id the board does not
+have, two waves at the same time or an unknown key is an error that names the file and the
+problem. The file sits in the board folder; a symlink there is refused (name the real file with
+`--timeline` instead).
+
+`play` reads it only when asked: `play --waves` releases the board on it, and `play --timeline
+FILE` on a file kept somewhere else. `--speed 60` plays the timeline sixty times as fast (an
+hour in a minute), and `--speed 0.5` at half speed. `play --waves` on a board without the file is
+an error, not the whole board at once. `flightdeck score` reads it too: a challenge the timeline
+holds for a later wave counts as on the board the run played, even when the run ended first.
 
 ## A series of challenges
 

@@ -1285,10 +1285,13 @@ folder or no run there fails in one line that names what is missing; a run playe
 
 Where: `practice_mode.py`.
 
-Scores a past run against the board's answers (`flightdeck score`). `Release`, which puts a board on
-the deck wave by wave from its `timeline.json`, is built and tested, but no command uses it: `play`
-releases the whole board at the start, and `score` reads a timeline only to tell the challenges a
-run had not reached from those added to the folder since. It counts a run's solves by the report's
+Scores a past run against the board's answers (`flightdeck score`), and puts a board on the deck
+wave by wave from its `timeline.json` (`Release`). `play --waves` and `--timeline FILE` use
+`Release` (P99): `Run.release` hands it the timeline moved to the deck's clock at the release and
+divided by `--speed` (`practice_mode.replay`), and a task on the console's loop ticks it when the
+next wave is due. Each wave's release line names the next (`Deck.release(then=...)`). Without
+them `play` releases the whole board at the start. `score` reads a timeline only to tell the
+challenges a run had not reached from those added to the folder since. It counts a run's solves by the report's
 rule (`runrecord.Credit`, `runrecord.solvers`), against the board the run played
 (`practice_mode.played`); a solve marked `before_run` (the platform's, or the team folder's at the
 start) is no solve during the run.

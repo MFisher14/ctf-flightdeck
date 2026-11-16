@@ -89,6 +89,11 @@ asks it before it starts a queued lane (Deck.start_gate). While a limit binds no
 starts; nothing running is stopped, and starts resume by themselves. A reading that cannot
 be taken is a note before the run starts and holds nothing.
 
+A folder board's timeline (`play --waves`, `--timeline FILE`, `--speed`: P99) is read and
+checked here before anything starts; release() then puts out its first waves and a task on the
+console's loop each later one when the deck's clock reaches it (practice_mode.Release). An
+event whose platform puts out its own challenges refuses a timeline.
+
 What a run starts carries its marks (leftovers.py): its containers flightdeck's labels, and
 its process groups on this machine a record in the run folder, which a note in flightdeck's
 state folder names (so it is found wherever --run-dir put it). Before a run starts, what
@@ -226,6 +231,10 @@ class RunOptions:
     say: Callable[[str], None] | None = None  # says a line to the player before the console is up (the wait for the start)
     now: Callable[[], datetime] | None = None  # the time of day, with its zone (the event's start and end); None: the system's
     sleep: Callable[[float], None] | None = None  # how the wait for the event's start passes time; None: time.sleep
+    waves: bool = False  # release a folder board wave by wave from its timeline.json (P99); timeline names another file
+    timeline: Path | None = None  # the timeline file to release the board on (implies waves); None: the board's timeline.json
+    speed: float = 1.0  # the timeline played this many times as fast as the event (with waves or timeline only)
+    replay_seconds: float = 1.0  # the longest the timeline's task sleeps before it looks at the deck's clock again
 
 
 @dataclass(eq=False)
@@ -310,6 +319,8 @@ class Run:
     engage: bool = False  # engage autopilot when the board is released (--autopilot, or [autopilot] engage)
     governor: Governor | None = None  # the host governor (governor.py), unless [governor] turns it off: the deck's start gate
     stopper: Callable[[str], None] | None = None  # ends the run as quitting does, saying why: whoever flies the run sets it (the console: app())
+    timeline: Any = None  # practice_mode.Timeline: the board goes out wave by wave on it (play --waves, --timeline); None: whole
+    replay: Any = None  # practice_mode.Release, once the board is released on the timeline
 
     def notes(self) -> list[str]:
         """Things the player should know before lanes start."""
@@ -394,7 +405,10 @@ class Run:
         if self.governor is not None:  # its first reading was taken before the deck had a lane to start
             self._tasks.append(asyncio.create_task(self._govern(), name="flightdeck host governor"))
         self._tasks.append(asyncio.create_task(self._waits(), name="flightdeck waits"))
-        self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
+        if self.timeline is None:
+            self.deck.release([b.challenge for b in self.board.challenges], self.entries(skip=self._held()), "Board")
+        else:
+            self._start_replay()
         if self.watches_folder:  # a folder board takes challenges added during the run
             for b in self.board.challenges:
                 self._folders[b.handout.name] = _mtime(b.handout)
@@ -613,6 +627,44 @@ class Run:
                 failing = False
             self.deck.recheck_starts()
 
+    def _start_replay(self) -> None:
+        """The board on its timeline (P99): the waves at the start go out now, and each later
+        one when the deck's clock reaches it, counted from now and divided by the speed. Each
+        wave is triaged when it goes out, so a challenge solved or claimed by then is not queued."""
+        from .practice_mode import Release, replay
+
+        items = {b.challenge.id: b for b in self.board.challenges}
+        timeline = replay(self.timeline, speed=self.options.speed, start=self.deck.now)
+        self.replay = Release(
+            self.deck, self.board, timeline, lambda ids: self.entries([items[cid] for cid in ids], skip=self._held())
+        )
+        self.replay.tick()
+        if not self.replay.done:
+            self._tasks.append(asyncio.create_task(self._replay(), name="flightdeck timeline"))
+
+    async def _replay(self) -> None:
+        """Put out each wave of the timeline when it is due, until the last is out. A wave
+        that cannot be released is a warning, and the next still goes out on time."""
+        release = self.replay
+        assert release is not None
+        while not release.done:
+            wait = release.next_at - self.deck.now
+            await asyncio.sleep(max(0.0, min(wait, self.options.replay_seconds)))
+            if self.deck.closing:
+                return
+            try:
+                release.tick()
+            except Exception as exc:  # a bug, or a deck that refused the wave: say so, and keep to the timeline
+                self.deck.warn(f"could not release the timeline's next wave: {type(exc).__name__}: {exc}", data={"source": "timeline"})
+
+    def _unreleased(self) -> set[str]:
+        """The board's challenges its timeline has not put out yet."""
+        if self.timeline is None:
+            return set()
+        if self.replay is None:
+            return {cid for wave in self.timeline.waves for cid in wave.ids}
+        return {cid for wave in self.replay.waiting for cid in wave.ids}
+
     async def _waits(self) -> None:
         """Every waits_seconds, have the deck give up the slots of the lanes that have waited
         for the player long enough (Deck.recheck_waits, P91): the deck has no clock of its own
@@ -724,7 +776,8 @@ class Run:
                 self.deck.warn(f"board: not added: {exc}", data={"source": "board"})
                 continue
             cid = item.challenge.id
-            if cid in self.deck.challenges or any(b.challenge.id == cid for b in new):
+            # one the timeline holds for a later wave is the board's already: its wave puts it out (P99)
+            if cid in self.deck.challenges or cid in self._unreleased() or any(b.challenge.id == cid for b in new):
                 if cid != folder.name or self._handouts.get(cid) != item.handout:
                     self.deck.warn(f"board: not added: {_show(folder)} has the id {cid}, which the board already has", data={"source": "board"})
                 continue  # the same folder, its challenge.json touched: the run keeps what it read at first
@@ -1034,6 +1087,7 @@ def prepare_run(options: RunOptions) -> Run:
     if board is not None and not board.challenges:
         plan.notes.append("the board is empty: in the console, /new adds a challenge (its name, then its text and files); "
                           "`flightdeck add` does the same from another terminal")
+    timeline = _timeline(options, plan.profile, board, plan.notes)
     ladder, agent, key, spare_key = config.models, None, None, None
     if options.agent is not None:  # lanes are a coding-agent CLI: its own login, its own models
         ladder = _agent_ladder(options.agent, config, plan.notes)
@@ -1344,6 +1398,7 @@ def prepare_run(options: RunOptions) -> Run:
         processes=processes, lights=lights, status=status, notifier=notifier, autopilot=autopilot, engage=engage,
         instances=instances,
         governor=governor,
+        timeline=timeline,
     )
     if submits is not None:
         submits.solved = run._apply_solves
@@ -1570,6 +1625,49 @@ def _check_options(options: RunOptions) -> None:
         raise RunError(f"instance must be auto, confirm or off, not {options.instance!r}")
     if options.submit not in (None, "confirm", "auto"):
         raise RunError(f"submit must be confirm or auto, not {options.submit!r}")
+    value = options.replay_seconds
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value > 0):
+        raise RunError(f"replay_seconds must be a positive number of seconds, not {value!r}")
+    value = options.speed
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not (math.isfinite(value) and value > 0):
+        raise RunError(f"--speed must be a number above 0 (60 plays an hour of the event in a minute), not {value!r}")
+    if value != 1 and not (options.waves or options.timeline is not None):
+        raise RunError("--speed plays a board's timeline faster or slower: give it with --waves (the board's timeline.json) "
+                       "or --timeline FILE")
+
+
+def _timeline(options: RunOptions, profile: EventProfile | None, board: Board | None, notes: list[str]):
+    """The timeline the board goes out on (play --waves or --timeline: P99), with a note that
+    says how; None to release the whole board at the start. RunError when it cannot be used:
+    an event whose platform puts out its own challenges, or a timeline file that is missing or
+    wrong (practice_mode.load_timeline names the file and the problem)."""
+    if not options.waves and options.timeline is None:
+        return None
+    from . import fmt
+    from .practice_mode import TIMELINE_FILE, TimelineError, load_timeline
+
+    asked = "--timeline" if options.timeline is not None else "--waves"
+    if profile is not None and profile.platform != "manual":
+        raise RunError(f"{asked} replays a folder board's timeline, but this event's board comes from {profile.platform}, "
+                       f"which puts out its own challenges: play it without {asked}")
+    assert board is not None  # a board with no platform is loaded before this
+    if not board.challenges:
+        raise RunError(f"{asked}: the board is empty, so there is nothing to release on a timeline")
+    try:
+        timeline = load_timeline(board, options.timeline, required=True)
+    except TimelineError as exc:
+        raise RunError(f"{asked}: {exc}") from None
+    where = _show(options.timeline) if options.timeline is not None else f"the board's {TIMELINE_FILE}"
+    speed = options.speed
+    faster = "" if speed == 1 else f", {speed:g} times as fast as the event"
+    many = len(timeline.waves)
+    if many == 1:
+        notes.append(f"timeline: {where} has one wave, so the whole board goes out at the start")
+    else:
+        last = timeline.waves[-1].at / speed
+        notes.append(f"timeline: the board goes out in {many} waves from {where}{faster}: the first at the start, "
+                     f"the last {fmt.duration(last)} after it; each release line names the next")
+    return timeline
 
 
 def _mtime(folder: Path) -> float:

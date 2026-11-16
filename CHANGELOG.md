@@ -4,6 +4,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- `play --waves` releases an archived board wave by wave, as its `timeline.json` says the event
+  did; `--timeline FILE` uses another file, and `--speed 60` plays an hour of the event in a
+  minute. Each wave's line in the status bar names the next wave and its time. Without them
+  `play` puts the whole board out at the start, as before. A missing or wrong timeline stops
+  the run before it starts and names the file.
 - `doctor --agent` looks for the CLI in the image a docker lane really runs in: the pack's image
   (`[l1] image`) when `lane_tools` is on, as `play` does, and the fix names that key. Before, doctor
   said ready while play refused.
