@@ -294,7 +294,7 @@ def test_the_platform_question_offers_the_json_api_platforms_so_by_hand_is_not_t
 # ---------------------------------------------------------------------- a JSON-API platform (P95)
 
 
-LINK = "https://ctf.example.org/login?token=c3ludGhldGljK3Rva2VuPQ%3D%3D"  # synthetic: an rCTF login link no site issued
+LINK = "https://ctf.example.net/login?token=c3ludGhldGljK3Rva2VuPQ%3D%3D"  # synthetic: an rCTF login link no site issued
 
 
 @pytest.mark.parametrize("preset", ["rctf", "rctf2", "noctf", "gzctf"])
@@ -309,14 +309,14 @@ def test_a_json_api_event_file_is_the_presets_example_filled_in_and_passes_prefl
     game = "3" if preset == "gzctf" else None
     token_env = start.token_variable("Example CTF", start.token_prefix("http", preset))
     monkeypatch.setenv(token_env, "synthetic-token")
-    answers = start.EventAnswers(name="Example CTF", platform="http", url="https://ctf.example.org", token_env=token_env,
+    answers = start.EventAnswers(name="Example CTF", platform="http", url="https://ctf.example.net", token_env=token_env,
                                  submit="auto", preset=preset, game=game)
     written = start.write(tmp_path / "event", answers)
     text = written.read_text()
     assert http_cli.preset_table(preset, game, keys_file=True).strip() in text and "in quotes" not in text
     profile, policies = load_profile(written)
     assert (profile.platform, profile.url, profile.token_env, profile.http.preset, profile.http.game) == (
-        "http", "https://ctf.example.org", token_env, preset, game)
+        "http", "https://ctf.example.net", token_env, preset, game)
     assert profile.board == tmp_path / "event" / "board" and profile.platform_automation
     assert policies.submit is Policy.AUTO and policies.pull is Policy.AUTO
     config = tmp_path / "config.toml"
@@ -337,11 +337,11 @@ def test_a_json_api_platforms_token_variable_is_one_the_http_platform_takes_and_
 
 
 @pytest.mark.parametrize(("preset", "typed", "url", "game"), [
-    ("rctf", "ctf.example.org", "https://ctf.example.org", None),
-    ("rctf", "https://ctf.example.org/challs", "https://ctf.example.org", None),  # the page pasted from the browser
-    ("rctf2", "https://ctf.example.org:8443/scores?page=2", "https://ctf.example.org:8443", None),
-    ("gzctf", "https://ctf.example.org/games/03/challenges", "https://ctf.example.org", "3"),  # the game's page: the game too
-    ("gzctf", "https://ctf.example.org/games/0", "https://ctf.example.org", None),  # no game 0
+    ("rctf", "ctf.example.net", "https://ctf.example.net", None),
+    ("rctf", "https://ctf.example.net/challs", "https://ctf.example.net", None),  # the page pasted from the browser
+    ("rctf2", "https://ctf.example.net:8443/scores?page=2", "https://ctf.example.net:8443", None),
+    ("gzctf", "https://ctf.example.net/games/03/challenges", "https://ctf.example.net", "3"),  # the game's page: the game too
+    ("gzctf", "https://ctf.example.net/games/0", "https://ctf.example.net", None),  # no game 0
     ("noctf", "https://api.example.org/v1", "https://api.example.org/v1", None),  # noCTF's is its API's address: as typed
 ])
 def test_a_json_api_events_address_is_the_one_its_routes_are_under(preset, typed, url, game):
@@ -386,29 +386,29 @@ def http_answers(folder, *, preset_number, url, more="", token=""):
 def test_at_a_terminal_start_sets_up_an_rctf_event_and_keeps_its_login_link_out_of_sight(tmp_path, monkeypatch, setup):
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     folder = tmp_path / "example"
-    result = run(input=http_answers(folder, preset_number=1, url="https://ctf.example.org/challs", token=LINK))
+    result = run(input=http_answers(folder, preset_number=1, url="https://ctf.example.net/challs", token=LINK))
     assert result.exit_code == 0, result.output
     profile, policies = load_profile(folder / "event.toml")
     assert (profile.platform, profile.http.preset, profile.url, profile.token_env) == (
-        "http", "rctf", "https://ctf.example.org", "RCTF_TOKEN_EXAMPLE_CTF")
+        "http", "rctf", "https://ctf.example.net", "RCTF_TOKEN_EXAMPLE_CTF")
     assert policies.submit is Policy.CONFIRM
-    assert "address: rCTF's routes are under the site's root, so the address is https://ctf.example.org" in result.output
+    assert "address: rCTF's routes are under the site's root, so the address is https://ctf.example.net" in result.output
     assert "Paste your team's login link, whole" in result.output  # the question says where rCTF keeps it, not CTFd's Settings
     assert keys.load_keys(tmp_path / "keys.env") == {"RCTF_TOKEN_EXAMPLE_CTF": LINK}
     assert LINK not in result.output and "c3ludGhldGlj" not in (folder / "event.toml").read_text()
-    assert "pulled from https://ctf.example.org when you play (rCTF's API, by the http platform)" in result.output
+    assert "pulled from https://ctf.example.net when you play (rCTF's API, by the http platform)" in result.output
     assert "type /new" not in result.output  # the board is pulled, not filled by hand
     assert f"check: `flightdeck http check {folder / 'event.toml'}` signs in, lists the challenges" in result.output
 
 
 def test_a_gzctf_events_game_comes_from_its_pages_address_or_is_asked_for(tmp_path, monkeypatch, setup):
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
-    from_page = run(input=http_answers(tmp_path / "one", preset_number=4, url="https://ctf.example.org/games/3/challenges",
+    from_page = run(input=http_answers(tmp_path / "one", preset_number=4, url="https://ctf.example.net/games/3/challenges",
                                        more="", token="synthetic-cookie"))
     assert from_page.exit_code == 0, from_page.output
     assert "The game's number" not in from_page.output and "and the game is 3, from its page's address" in from_page.output
     one = load_profile(tmp_path / "one" / "event.toml")[0]
-    assert (one.url, one.http.game, one.token_env) == ("https://ctf.example.org", "3", "GZCTF_TOKEN_EXAMPLE_CTF")
+    assert (one.url, one.http.game, one.token_env) == ("https://ctf.example.net", "3", "GZCTF_TOKEN_EXAMPLE_CTF")
     asked = run(input=http_answers(tmp_path / "two", preset_number=4, url="other.example.org", more="0\n5\n", token=""))
     assert asked.exit_code == 0, asked.output
     assert "The game's number" in asked.output and "give the game's number" in asked.output  # 0 is no game: asked again
@@ -417,7 +417,7 @@ def test_a_gzctf_events_game_comes_from_its_pages_address_or_is_asked_for(tmp_pa
     assert "the value of the GZCTF_Token cookie" in asked.output.split("token: not set yet", 1)[1]
 
 
-HTTP = ("--name", "Example CTF", "--url", "https://ctf.example.org", "--ai-allowed")
+HTTP = ("--name", "Example CTF", "--url", "https://ctf.example.net", "--ai-allowed")
 
 
 def test_away_from_a_terminal_a_json_api_event_takes_its_preset_game_and_token_as_options(tmp_path, monkeypatch, setup):
@@ -442,12 +442,12 @@ def test_away_from_a_terminal_a_json_api_event_takes_its_preset_game_and_token_a
     (("--platform", "manual", "--preset", "rctf"), "--preset is for --platform http"),
     (("--platform", "ctfd", "--game", "3"), "--game is for --platform http"),
     (("--preset", "fbctf"), "--preset: answer 1 (rCTF), 2 (rCTF v2), 3 (noCTF), 4 (GZCTF)"),
-    (("--preset", "gzctf", "--url", "https://ctf.example.org/games/3", "--game", "4"), "--game 4 and the address's game (3) differ"),
+    (("--preset", "gzctf", "--url", "https://ctf.example.net/games/3", "--game", "4"), "--game 4 and the address's game (3) differ"),
 ])
 def test_a_json_api_answer_that_does_not_fit_stops_start_before_anything_is_written(tmp_path, monkeypatch, setup, options, said):
     monkeypatch.setattr(cli, "_at_terminal", lambda: False)
     folder = tmp_path / "example"
-    result = run(str(folder), "--name", "Example CTF", "--ai-allowed", *(() if "--url" in options else ("--url", "https://ctf.example.org")),
+    result = run(str(folder), "--name", "Example CTF", "--ai-allowed", *(() if "--url" in options else ("--url", "https://ctf.example.net")),
                  *options)
     assert result.exit_code == 2 and said in result.output, result.output
     assert not folder.exists() and not (tmp_path / "keys.env").exists()
