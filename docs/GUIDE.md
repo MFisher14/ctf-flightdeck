@@ -1585,8 +1585,25 @@ read and write files through flightdeck, in the workspace only, never through a 
 An ACP agent reports no cost in general, so its lane's dollars are unknown, and a dollar cap
 asks you once before the lane carries on without it. An agent that reports its cost in USD has
 it counted. It reports no tokens, so a token cap is never reached. `flightdeck doctor --agent acp`
-checks the agent and its variables. ACP lanes have been tested against a stand-in agent built
-from the protocol (version 1) only, not yet with a real one.
+checks the agent and its variables.
+
+`env` is for credentials: every value it names is a secret, shown as `[NAME]` wherever it would
+appear, so a model name given that way shows as `[NAME]` too. Give the model in `command`
+with `{model}` when the agent takes one on its command line.
+
+Tried for real: Claude Code's ACP adapter (`@agentclientprotocol/claude-agent-acp` 0.99.1) on
+Haiku 5.5, on the host, played the practice set (12 of 14, $0.03 in the cost it reported):
+
+```toml
+[agents.acp]
+command = ["node", "/path/to/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"]
+models = ["claude-haiku-5-5"]
+env = ["ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"]   # ANTHROPIC_MODEL picks its model; it shows as [ANTHROPIC_MODEL]
+api = ["https://api.anthropic.com"]
+hold = ["CLAUDE.md", ".claude"]
+```
+
+Not run yet: an ACP lane in docker, and any other agent.
 
 With a pack ([Your solvers first](#your-solvers-first-l1)), a coding-agent lane runs your L1
 engines before its CLI is started, by the same rules as flightdeck's own lanes. While a flag an

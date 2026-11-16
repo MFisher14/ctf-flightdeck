@@ -15,7 +15,8 @@ Proposals built and waiting for a release, in the order of their numbers in
   now `play` put the whole board out at the start, and `practice_mode.Release` was used by no
   command.
 - **ACP agents as lanes** (P100; until now in "Still open from M0 to M4"). `--agent acp` runs
-  the agent `[agents.acp]` names over the Agent Client Protocol, version 1. Met a fake only.
+  the agent `[agents.acp]` names over the Agent Client Protocol, version 1. Besides a fake,
+  the real `@agentclientprotocol/claude-agent-acp` 0.99.1 (Claude Code's ACP adapter) on Haiku 5.5, on the host, played the whole practice set on 2026-11-16: 12 of 14 solved, $0.03 in the cost it reported.
 - **Both coding-agent CLIs played the whole practice set for real** (2026-11-16,
   [#3](https://github.com/MFisher14/ctf-flightdeck/issues/3)): claude 2.1.325 in docker lanes
   behind the fenced network, with tool calls (12 of 14), and codex 0.167.0 on the host with a
@@ -464,9 +465,8 @@ console in a few minutes, without reading the architecture:
 
 Planned in a milestone and not built:
 
-- **ACP agents, against a real agent.** `--agent acp` runs the agent `[agents.acp]` names over the
-  Agent Client Protocol, version 1 (P100). It has met a fake agent built from the protocol's
-  schema only: no real agent or adapter has been run with it yet.
+- **ACP agents in docker, and other agents.** `--agent acp` (P100) has met one real agent, Claude
+  Code's ACP adapter, on the host. Not run yet: an ACP lane in docker, and any other agent.
 - **A real capture of the `claude` and `codex` streams.** The driver is tested against a fake CLI
   built from their docs, and so is a coding-agent lane's fenced network (below). Claude Code's
   stream was compared with a real run on 2026-11-14 (P86: 2.1.325, a prompt with no tools), and

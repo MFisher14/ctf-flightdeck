@@ -4,8 +4,9 @@ or adapter has been run against flightdeck, and a real run spends the player's m
 It plays an agent that speaks the Agent Client Protocol, version 1, from the protocol's
 schema (schema/v1/schema.json of agentclientprotocol/agent-client-protocol, read on
 2026-11-16) and its docs (agentclientprotocol.com: overview, initialization, prompt turn,
-tool calls, file system). Everything it does is ASSUMED from those: no real agent was
-compared with it. In particular, ASSUMED:
+tool calls, file system). Everything it does is ASSUMED from those; a real agent
+(claude-agent-acp 0.99.1, 2026-11-16) ran a practice set through the same driver, field by
+field uncompared. In particular, ASSUMED:
 - one JSON-RPC 2.0 message per line on stdin and stdout, no Content-Length framing;
 - `initialize` comes first and is answered with the agent's protocol version (the client's
   if it speaks it), agentCapabilities and agentInfo; anything before it is refused;
@@ -36,6 +37,7 @@ A step is one of
   {"read": path} / {"write": [path, text]}      fs/read_text_file or fs/write_text_file of the client
   {"plan": [entry, ...]}                        a plan (the first is in_progress, the rest pending)
   {"cost": amount, "currency": "USD"}           a usage_update with the session's cost so far
+  {"notify": method}                            a notification of that method, empty params
   {"think": seconds} / {"until": path}          wait (a session/cancel ends the turn here)
   {"stop": reason}                              the turn's stopReason (default end_turn)
   {"fail": message}                             the prompt is answered with a JSON-RPC error
@@ -195,6 +197,8 @@ def play_turn(steps: list) -> dict:
         elif "cost" in step:
             update({"sessionUpdate": "usage_update", "used": 1000, "size": 200000,
                     "cost": {"amount": step["cost"], "currency": step.get("currency", "USD")}})
+        elif "notify" in step:
+            send({"method": step["notify"], "params": {}})
         elif "think" in step:
             if not wait(seconds=step["think"]):
                 return {"result": {"stopReason": "cancelled"}}

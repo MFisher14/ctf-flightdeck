@@ -37,8 +37,11 @@ escalation, the flag rules). What ACP adds:
 - an outage (P78): ACP gives no structured reason for a failed turn, so a lane whose prompt
   fails ends with the agent's message and counts toward no outage.
 
-Nothing here was run against a real agent: tests/fake_acp_agent.py plays one from the
-protocol's schema, and marks each of its assumptions ASSUMED.
+tests/fake_acp_agent.py plays an agent from the protocol's schema, and marks each of its
+assumptions ASSUMED. One real agent was run (2026-11-16): Claude Code's ACP adapter,
+@agentclientprotocol/claude-agent-acp 0.99.1, played the practice set on the host (12 of 14,
+tool calls, permission requests, the cost it reported in USD). It also sends
+_auth/status_update, an extension notification ("_"), skipped quietly as the spec says.
 """
 
 from __future__ import annotations
@@ -436,7 +439,7 @@ class AcpRun(_Run):
                 params = event.get("params")
                 if isinstance(params, dict) and params.get("sessionId") == conn.session:
                     await self.on_update(proc, conn, params.get("update"))
-            else:
+            elif not method.startswith("_"):  # "_..." is an agent's own extension: the spec has clients ignore it
                 self.unknown_event(proc, f"notification {method}")
             return
         ident = event.get("id")

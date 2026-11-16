@@ -718,3 +718,23 @@ def test_doctor_with_agent_acp_finds_the_agent_and_names_a_missing_table_or_cred
     assert missing["agent"].fix == "set each variable [agents.acp] env names, in the keys file or the environment"
     none = {c.name: c for c in doctor(run_config(tmp_path), environ=environ, agent="acp")}
     assert not none["agent"].ok and none["agent"].detail == "no [agents.acp] in your config"
+
+
+def test_an_extension_notification_is_skipped_quietly_and_an_unknown_one_is_noted_once(tmp_path):
+    """The real claude-agent-acp 0.99.1 sends _auth/status_update every lane (2026-11-16). The
+    spec makes "_" methods an agent's own extensions that a client ignores."""
+    script = {"turns": [[{"notify": "_auth/status_update"}, {"notify": "odd/thing"}, {"notify": "odd/thing"},
+                         {"say": "FLAG: t{note}"}]]}
+
+    async def main():
+        lab = Lab(tmp_path, script)
+        try:
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the flag")
+            said = [n for n in notes(lane) if "does not know" in n]
+            assert said == ["acp sent an event flightdeck does not know (notification odd/thing); it was skipped"]
+        finally:
+            await lab.driver.shutdown()
+
+    run(main())
