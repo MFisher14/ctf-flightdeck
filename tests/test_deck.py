@@ -3125,3 +3125,104 @@ def test_the_player_turns_auto_approve_on_and_off_and_waiting_flags_stay_theirs(
     deck.report(other.id, TurnReport(flag="t{two}"))
     assert sent == [(other.id, "c1", "t{two}")]  # a new one goes at once
     assert deck.set_submit("auto").message == "Submit is auto already" and not deck.set_submit("always").ok
+
+
+# ---------------------------------------------------------------------- an L1 flag no engine vouched for waits aside
+
+
+def ask_aside(deck, lane, flag="t{decoy}"):
+    """What the L1 stage reports for a flag no engine vouched for (scraped, or the challenge's own text)."""
+    deck.report(lane.id, TurnReport(turn=False, flag=flag, claimed=False, aside=True))
+
+
+def test_an_l1_flag_no_engine_vouched_for_waits_then_waits_aside_while_the_lane_works_on():
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_aside(deck, lane)
+    assert lane.state is LaneState.WAITING and lane.pending.flag == "t{decoy}" and not lane.pending.aside
+    clock.t += 59
+    deck.recheck_waits()
+    assert lane.state is LaneState.WAITING and driver.named("resume") == []  # the player at the keys answers first
+    clock.t += 1
+    deck.recheck_waits()
+    assert lane.state is LaneState.RUNNING and driver.named("resume") == [(lane.id,)]
+    assert lane.pending.flag == "t{decoy}" and lane.pending.aside  # the question is still open
+    assert lane.alert(AlertKind.FLAG) is not None and not lane.benched  # it keeps its slot: it is at work
+    assert driver.started() == ["c0"]
+    assert lane.actions[-1].text == ("t{decoy} has waited 60 s for you: it waits aside now, and the lane works on "
+                                     "meanwhile (approve or decline it whenever you like)")
+    (aside,) = [e for e in events(deck, EventKind.PENDING) if e.data.get("aside")]
+    assert aside.data == {"kind": "submit", "flag": "t{decoy}", "aside": True}
+    deck.recheck_waits()  # once
+    assert len([e for e in events(deck, EventKind.PENDING) if e.data.get("aside")]) == 1
+    assert deck.apply(iv.Decline(lane.id)).ok
+    assert lane.state is LaneState.RUNNING and lane.pending is None and deck.not_flag("c0", "t{decoy}") is not None
+
+
+def test_a_flag_a_lane_scraped_itself_still_gives_its_slot_up_and_never_waits_aside():
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    deck.report(lane.id, TurnReport(flag="t{maybe}", claimed=False))  # the model's own find: it asked
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.state is LaneState.WAITING and lane.benched and not lane.pending.aside
+
+
+def test_anything_else_the_lane_waits_for_comes_before_a_flag_waiting_aside():
+    deck, driver, clock = make_deck(n=2, max_lanes=1, bench_after=60, token_cap=10_000, dollar_cap=2.0)
+    lane = lane_on(deck, "c0")
+    ask_aside(deck, lane)
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.state is LaneState.RUNNING and lane.pending.aside
+    deck.report(lane.id, TurnReport(tokens=20_000, dollars=0.5))  # over its token cap: a budget question
+    assert lane.state is LaneState.WAITING and lane.pending.kind is PendingKind.BUDGET
+    assert [p.flag for p in lane.waiting] == ["t{decoy}"]
+    deck.report(lane.id, TurnReport(turn=False, flag="t{mine}"))  # the model's own flag, under confirm
+    assert lane.pending.flag == "t{mine}"  # a flag before a budget question, as ever
+    assert [(p.kind, p.flag) for p in lane.waiting] == [(PendingKind.BUDGET, None), (PendingKind.SUBMIT, "t{decoy}")]
+    assert deck.apply(iv.Decline(lane.id)).ok
+    assert lane.state is LaneState.WAITING and lane.pending.kind is PendingKind.BUDGET
+    assert deck.apply(iv.Approve(lane.id)).ok
+    assert lane.state is LaneState.RUNNING and lane.pending.flag == "t{decoy}" and lane.pending.aside
+
+
+def test_a_flag_that_comes_up_while_another_waits_puts_the_aside_one_behind_it():
+    deck, _, clock = make_deck(n=1, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_aside(deck, lane)
+    clock.t += 60
+    deck.recheck_waits()
+    deck.report(lane.id, TurnReport(turn=False, flag="t{mine}"))
+    assert lane.state is LaneState.WAITING and lane.pending.flag == "t{mine}" and [p.flag for p in lane.waiting] == ["t{decoy}"]
+
+
+def test_an_aside_flag_does_not_hold_a_paused_lane_when_it_is_resumed():
+    deck, driver, clock = make_deck(n=1, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_aside(deck, lane)
+    clock.t += 60
+    deck.recheck_waits()
+    assert deck.apply(iv.Pause(lane.id)).ok
+    out = deck.apply(iv.Resume(lane.id))
+    assert out.ok and out.message == f"Resumed {lane.id}" and lane.state is LaneState.RUNNING
+
+
+def test_an_aside_flag_approved_is_submitted_as_any_other():
+    deck, _, clock = make_deck(n=1, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_aside(deck, lane, flag=good_flag("c0"))
+    clock.t += 60
+    deck.recheck_waits()
+    assert deck.apply(iv.Approve(lane.id)).ok and lane.state is LaneState.SOLVED
+
+
+def test_a_lane_that_ends_with_a_flag_aside_says_it_is_not_asked_any_more():
+    deck, _, clock = make_deck(n=1, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_aside(deck, lane)
+    clock.t += 60
+    deck.recheck_waits()
+    assert deck.apply(iv.Kill(lane.id, requeue=False)).ok
+    assert any(a.text == "ended with t{decoy} still waiting aside for you: it is not asked any more "
+                         "(the run log has the L1 result that gave it)" for a in lane.actions)

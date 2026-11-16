@@ -200,7 +200,12 @@ async def run_stage(stage: L1Stage, deck: Any, lane: StageLane) -> str | None:
                 why = "" if engine.scraped else lane.own_text(flag)
                 # not said of a flag known not to be the flag (the deck says why it is not asked)
                 said = bool(why) and deck.not_flag(cid, flag) is None
-                lane.report(TurnReport(turn=False, flag=flag, claimed=not engine.scraped and not why))
+                claimed = not engine.scraped and not why
+                # one no engine vouched for may wait aside: unanswered for the deck's bench_after, it
+                # waits on while the lane's model starts, so a decoy never holds the challenge while
+                # the player is away (2026-11-16: under autopilot welcome-mat's decoy waited, and
+                # no model ever tried the challenge)
+                lane.report(TurnReport(turn=False, flag=flag, claimed=claimed, aside=not claimed))
                 if said:
                     lane.note(f"{flag} {why}, so it waits for you, though your L1 engine "
                               f"{engine.manifest.id} gave it as its flag")

@@ -65,6 +65,7 @@ class TurnReport:
     pending: Pending | None = None  # ask the player for something
     flag: str | None = None  # candidate flag
     claimed: bool = True  # the lane claims `flag` (submit_flag, an L1 "solved"); False: a match scraped from text it read, never auto-submitted
+    aside: bool = False  # if `flag` waits for the player, it may wait aside after a while (Pending.can_aside)
     gave_up: str | None = None  # the lane ends without a flag, with this reason
     hints_taken: int = 0  # how many queued hints this turn read (oldest first)
     why: str = ""  # for spend outside a turn: what it was ("a reply dropped at escalation")

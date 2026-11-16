@@ -87,7 +87,6 @@ from . import fmt
 from .core.deck import Deck
 from .core.interventions import Approve, Escalate, Fork, Kill, Outcome, Pause, Queue, Redirect
 from .core.model import (
-    FLAG_PENDING,
     ME,
     Actor,
     AlertKind,
@@ -108,6 +107,13 @@ NEEDS_BUDGET = (
     "autopilot needs a run budget: set budget_dollars or budget_tokens under [autopilot] in your config, or give "
     "--budget-dollars or --budget-tokens"
 )
+
+
+def _waits_on_player(lane: Lane) -> bool:
+    """The lane waits for the player's answer to something. A flag that waits aside
+    (Pending.aside: an L1 flag no engine vouched for) does not count: the lane works on, and
+    the rules see it as they see any working lane."""
+    return any(p is not None and not p.aside for p in [lane.pending, *lane.waiting])
 
 
 class State(StrEnum):
@@ -407,7 +413,7 @@ class Autopilot:
                 if not self._over_budget():
                     self._apply(Approve(lane.id))  # refused for spend with no price: then it waits for the player
                 continue
-            if pending is not None or self.deck.sending(lane.id) or any(p.kind in FLAG_PENDING for p in lane.waiting):
+            if _waits_on_player(lane) or self.deck.sending(lane.id):
                 continue  # it waits for the player, or for the platform's answer: never ended under them
             if lane.alert(AlertKind.LOOP) is not None:
                 if self._apply(Kill(lane.id, requeue=False)).ok:
@@ -476,7 +482,7 @@ class Autopilot:
         """A lane no rule touches (P23): paused or taken over, waiting for the player's answer
         or for a slot after it (QUEUED, P83: it does no work, as a queued challenge does none),
         open only for its flag's answer, or with a flag on its way to the platform."""
-        return (lane.state in (LaneState.PAUSED, LaneState.TAKEOVER, LaneState.QUEUED) or lane.pending is not None or bool(lane.waiting)
+        return (lane.state in (LaneState.PAUSED, LaneState.TAKEOVER, LaneState.QUEUED) or _waits_on_player(lane)
                 or bool(lane.gave_up_later) or bool(self.deck.sending(lane.id)))
 
     def _opinion(self, parent: Lane, lanes: list[Lane], which: str, why: str) -> None:

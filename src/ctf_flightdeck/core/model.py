@@ -171,6 +171,11 @@ class Pending:
     detail: str
     flag: str | None = None
     at: float = 0.0  # set by the deck
+    # an L1 flag no engine vouched for (often the challenge's decoy) may wait aside: once the
+    # player has not answered it for the deck's bench_after, the lane goes on working while it
+    # waits, so a decoy never keeps a model off the challenge while the player is away
+    can_aside: bool = False
+    aside: bool = False  # it waits aside now: the lane works on; any other wait comes first
 
 
 class Actor(StrEnum):

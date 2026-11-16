@@ -764,3 +764,21 @@ def test_on_a_running_event_loop_autopilot_acts_after_the_event_without_being_as
 
     world = asyncio.run(play())
     assert world.deck.lanes["L01"].state is LaneState.KILLED
+
+
+def test_a_lane_whose_l1_flag_waits_aside_is_worked_by_the_rules_as_any_working_lane():
+    """A decoy L1 found (welcome-mat, 2026-11-16) waited for the player under autopilot, and
+    no model tried the challenge. Unanswered for bench_after it waits aside, the lane works
+    on, and a loop on it is handled as anywhere else."""
+    world = engaged()
+    world.release(ch("a"))
+    lane = world.lane("a")
+    world.deck.report(lane.id, TurnReport(turn=False, flag="t{decoy}", claimed=False, aside=True))
+    world.alert(lane.id, AlertKind.LOOP)
+    world.pilot.step()
+    assert lane.state is LaneState.WAITING  # its question is the player's: left alone
+    world.clock.advance(world.deck.config.bench_after)
+    world.deck.recheck_waits()
+    assert lane.state is LaneState.RUNNING and lane.pending.aside
+    world.pilot.step()
+    assert (lane.state, lane.result) == (LaneState.KILLED, "by autopilot; parked")

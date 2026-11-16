@@ -2151,6 +2151,35 @@ def test_an_l1_engine_that_solves_it_waits_for_approval_before_any_model_call(tm
     run(main())
 
 
+def test_an_l1_flag_the_handout_holds_waits_then_waits_aside_and_the_model_starts(tmp_path):
+    # the engine read the flag out of the handout: it may be the challenge's decoy (a planted
+    # flag.txt), so it waits for the player and no model is asked. Unanswered for bench_after
+    # it waits aside, and the model starts: under autopilot nobody answers, and a decoy that
+    # held the lane kept every model off the challenge (welcome-mat, 2026-11-16)
+    server = FakeModelServer(responder=lambda record: text_reply("looking at the note"))
+
+    async def main():
+        with server:
+            handouts = {"note": handout(tmp_path)}
+            lab = Lab(tmp_path, server, handouts=handouts, l1=l1_stage(tmp_path, handouts, {"reader": SOLVES}),
+                      bench_after=3600)
+            lab.release()
+            lane = lab.lane()
+            await until(lambda: lane.pending is not None, "the L1 flag's approval", timeout=30)
+            assert (lane.pending.flag, lane.pending.can_aside, lane.pending.aside) == ("t{note}", True, False)
+            await asyncio.sleep(0.3)
+            assert server.requests == [] and lane.state is LaneState.WAITING
+            lab.deck.config = dataclasses.replace(lab.deck.config, bench_after=0)  # the hour has passed
+            lab.deck.recheck_waits()  # the run calls this every few seconds
+            assert lane.state is LaneState.RUNNING and lane.pending.aside
+            await until(lambda: len(server.requests) >= 1, "the model's first call while the flag waits aside", timeout=30)
+            assert lane.pending.flag == "t{note}"
+            assert lab.deck.apply(iv.Approve(lane.id)).ok and lane.state is LaneState.SOLVED
+            await lab.finish()
+
+    run(main())
+
+
 def test_when_l1_does_not_solve_it_the_model_hears_what_the_engines_found(tmp_path):
     server = FakeModelServer(responder=lambda record: tool_call_reply("submit_flag", {"flag": "t{note}"}))
 
