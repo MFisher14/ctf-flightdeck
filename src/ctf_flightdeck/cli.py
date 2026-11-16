@@ -426,10 +426,11 @@ class Submit(StrEnum):
 class Agent(StrEnum):
     claude = "claude"
     codex = "codex"
+    acp = "acp"
 
 
 AGENT_HELP = ("Lanes are this coding-agent CLI (its own API key or subscription and its own models: [agents] in your config) instead of "
-              "flightdeck's own loop.")
+              "flightdeck's own loop; acp: the agent [agents.acp] names, spoken to over the Agent Client Protocol.")
 HEADLESS_HELP = (
     "No console: the run writes status.json in its run folder, approvals wait (nothing is approved), and SIGTERM or "
     "Ctrl-C stops it as quitting does."

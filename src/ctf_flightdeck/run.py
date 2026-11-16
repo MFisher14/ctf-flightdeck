@@ -124,7 +124,6 @@ from urllib.parse import quote
 
 from .agent.client import ChatClient
 from .agent.driver import COMPACT_AT, AgentDriver
-from .agent.egress import CLI_API
 from .agent.fallback import api_name, build_client
 from .agent.l1stage import L1Stage
 from .agent.workspace import DockerWorkspace, HostWorkspace, Workspace, docker_unavailable
@@ -223,7 +222,7 @@ class RunOptions:
     bench_after: float = BENCH_AFTER  # seconds a lane waits for a flag or budget answer before it gives its slot up (P91)
     host_reading: Callable[[Path], Reading] | None = None  # how the governor reads the machine; None: governor.probe
     confirm: Callable[[str], bool] | None = None  # asks the player yes or no (the pull policy "confirm"); None: nobody to ask
-    agent: str | None = None  # "claude" | "codex": lanes are that coding-agent CLI instead of flightdeck's own loop
+    agent: str | None = None  # "claude" | "codex" | "acp": lanes are that coding agent instead of flightdeck's own loop
     agent_auth: str | None = None  # the CLI's credential: claude "api-key" | "oauth-token", codex "api-key" | "login"
     autopilot: bool | None = None  # engage autopilot when the board is released; None: the config's [autopilot] engage
     budget_dollars: float | None = None  # the run budget autopilot needs, in dollars; None: the config's
@@ -1100,7 +1099,7 @@ def prepare_run(options: RunOptions) -> Run:
                 "reaches its instance, and on the host it reaches whatever its CLI can reach, so flightdeck "
                 "cannot hold it to that: play this event with flightdeck's own lanes (no --agent)"
             )
-        agent = _find_agent(options.agent, model, options.agent_auth)
+        agent = _find_agent(options.agent, model, options.agent_auth, config)
         plan.notes.append(f"lanes are {options.agent} on {model} ({agent.auth})" if agent.auth else f"lanes are {options.agent} on {model}")
         plan.notes.extend(agent.warnings)
         unpriced = [m for m in ladder if m not in config.prices]
@@ -1112,6 +1111,12 @@ def prepare_run(options: RunOptions) -> Run:
                 f"codex reports its tokens but no cost, and your config has no price for {', '.join(unpriced)}: a lane on "
                 f"{on} shows its dollars as unknown{asks}; a table like [prices.{json.dumps(unpriced[0])}] in your config "
                 "(input and output, in dollars per million tokens) prices one"
+            )
+        if options.agent == "acp" and config.lanes.dollar_cap:
+            plan.notes.append(
+                f"an ACP agent reports no cost in general, so an acp lane's dollars show as unknown and it asks you once "
+                f"before it carries on without its ${config.lanes.dollar_cap:g} cap (unless the agent reports its cost in "
+                "USD); it reports no tokens either, so a token cap is never reached"
             )
     else:
         try:
@@ -1142,7 +1147,7 @@ def prepare_run(options: RunOptions) -> Run:
     manifests = _l1_manifests(options.pack)
     if runtime == "docker" and agent is not None:
         # the CLI must be in the image its lanes run in: the pack's under lane_tools
-        _check_image_has(*agent_lane_image(config, has_pack=manifests is not None), agent.kind)
+        _check_image_has(*agent_lane_image(config, has_pack=manifests is not None), agent.program or agent.kind)
     if runtime == "docker" and manifests is not None and config.l1.image:
         _check_l1_image(config.l1.image)
     team = _team_channel(options, plan)
@@ -1297,7 +1302,7 @@ def prepare_run(options: RunOptions) -> Run:
     def workspace(lane: Lane, challenge: Challenge) -> Workspace:
         root = run_dir / lane.id.lower() / "work"
         if runtime == "docker":
-            reach, later = lane_reach(urls[challenge.id], instance, api=CLI_API[agent.kind] if agent is not None else ())
+            reach, later = lane_reach(urls[challenge.id], instance, api=agent.api if agent is not None else ())
             return DockerWorkspace(
                 root,
                 handouts[challenge.id],
@@ -2490,8 +2495,13 @@ DEFAULT_AGENT_LADDERS = {"claude": ("sonnet", "opus")}  # Claude Code's own mode
 
 def _agent_ladder(kind: str, config: Config, notes: list[str]) -> tuple[str, ...]:
     """The models a `kind` lane may use, weakest first: [agents] in the config, else the default."""
-    if kind not in ("claude", "codex"):
-        raise RunError(f"--agent must be claude or codex, not {kind!r}")
+    if kind not in ("claude", "codex", "acp"):
+        raise RunError(f"--agent must be claude, codex or acp, not {kind!r}")
+    if kind == "acp" and config.acp is None:
+        raise RunError(
+            f'--agent acp needs [agents.acp] in {config.source}: the agent\'s command line and its models, like '
+            'command = ["my-agent", "--acp", "--model", "{model}"] and models = ["model-a", "model-b"] (docs/GUIDE.md)'
+        )
     ladder = config.agents.get(kind)
     if ladder:
         return ladder
@@ -2505,10 +2515,19 @@ def _agent_ladder(kind: str, config: Config, notes: list[str]) -> tuple[str, ...
     return ladder
 
 
-def _find_agent(kind: str, model: str, auth: str | None):
+def _find_agent(kind: str, model: str, auth: str | None, config: Config | None = None):
     from .agent.external import AgentError, find_agent
 
     try:
+        if kind == "acp":
+            from .agent.acp import find_acp_agent
+
+            if auth is not None:
+                raise RunError("--agent-auth is for claude and codex: an ACP agent's credential is [agents.acp] env")
+            acp = config.acp if config is not None else None
+            if acp is None:
+                raise RunError("--agent acp needs [agents.acp] in your config")
+            return find_acp_agent(acp.command, model, env=acp.env, api=acp.api, hold=acp.hold, environ=_environment())
         return find_agent(kind, model, auth=auth, environ=_environment())
     except AgentError as exc:
         raise RunError(str(exc)) from None
@@ -2550,7 +2569,8 @@ def image_lacks(image: str, program: str) -> str | None:
     docker = shutil.which("docker") or "docker"
     try:
         probe = subprocess.run(
-            [docker, "run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "sh", image, "-c", f"command -v {program}"],
+            [docker, "run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "sh", image, "-c", 'command -v "$1"',
+             "sh", program],
             capture_output=True, text=True, timeout=120,
         )
     except subprocess.TimeoutExpired:

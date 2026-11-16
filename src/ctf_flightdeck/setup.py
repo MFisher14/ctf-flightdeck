@@ -1000,6 +1000,10 @@ def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
     from .agent.external import AgentError, find_agent
     from .run import DEFAULT_AGENT_LADDERS
 
+    acp = config.acp if config is not None else None
+    if kind == "acp" and acp is None:
+        return [Check("agent", False, "no [agents.acp] in your config",
+                      'add [agents.acp] with command = ["<program>", ...] and models = ["<model>", ...] (docs/GUIDE.md)')]
     ladder = (config.agents.get(kind) if config is not None else None) or DEFAULT_AGENT_LADDERS.get(kind)
     if not ladder:
         return [Check("agent", False, f"no model ladder for {kind} lanes", f'add [agents] {kind} = ["<model>", ...] to your config')]
@@ -1010,7 +1014,12 @@ def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
             merged = environment(environ)
         except KeysError as exc:
             return [Check("agent", False, str(exc), "fix the keys file")]
-        found = find_agent(kind, ladder[0], environ=merged)
+        if acp is not None and kind == "acp":
+            from .agent.acp import find_acp_agent
+
+            found = find_acp_agent(acp.command, ladder[0], env=acp.env, api=acp.api, hold=acp.hold, environ=merged)
+        else:
+            found = find_agent(kind, ladder[0], environ=merged)
     except AgentError as exc:
         return [Check("agent", False, str(exc), _agent_fix(kind, str(exc)))]
     checks = [Check("agent", True, f"{kind} at {found.executable}" + (f": {found.auth}" if found.auth else ""))]
@@ -1022,14 +1031,16 @@ AGENT_CREDENTIALS = {  # how each CLI gets its credential, as find_agent reads i
     "claude": "set ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token` makes one), in the keys file or "
               "the environment",
     "codex": "set CODEX_API_KEY in the keys file or the environment, or run `codex login` (host runtime only)",
+    "acp": "set each variable [agents.acp] env names, in the keys file or the environment",
 }
 
 
 def _agent_fix(kind: str, problem: str) -> str:
     """What to do about find_agent's `problem`: install the CLI only when it is the CLI that is
     missing, fix the ladder when its model name is refused, else how that CLI gets its credential."""
-    if "not found on PATH" in problem:
-        return f"install {kind}, or put the folder that has it on PATH"
+    if "not found on PATH" in problem or "not a program" in problem:
+        return f"install {kind}, or put the folder that has it on PATH" if kind != "acp" else (
+            "install the agent, or fix [agents.acp] command in your config")
     if "is not a model name" in problem:
         return f"give {kind} a model name its CLI takes: [agents] {kind} in your config"
     return AGENT_CREDENTIALS.get(kind, f"give {kind} its credential")
@@ -1041,6 +1052,8 @@ def _agent_image_check(kind: str, config) -> Check:
     from .run import agent_lane_image, image_lacks
 
     image, key = agent_lane_image(config, has_pack=config.l1.pack is not None)
+    if kind == "acp" and config.acp is not None:
+        kind = config.acp.command[0]  # the agent's program, looked up in the image
     problem = image_lacks(image, kind)
     if problem is None:
         return Check("agent image", True, f"{image} has {kind}")

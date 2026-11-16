@@ -1499,6 +1499,8 @@ disengage and why), and neither it nor the flight card counts autopilot's interv
 `--agent claude` (or `codex`) runs lanes as that coding-agent CLI, on any board or event, behind
 the same controls. Each uses its own models (`[agents]` in your config: claude defaults to
 `sonnet`, then `opus`; codex needs a ladder) and its own credential, never your `[api]` key.
+`--agent acp` runs any other agent that speaks the Agent Client Protocol
+([ACP agents](#acp-agents) below).
 
 - **claude** takes `ANTHROPIC_API_KEY` (the Anthropic API, billed per token) or
   `CLAUDE_CODE_OAUTH_TOKEN` (your Claude subscription; `claude setup-token` makes one).
@@ -1543,6 +1545,48 @@ with the real CLIs yet. What that run settled, and what a lane does about it:
   the model has no price.
 - With a subscription, claude says when a usage limit is near or reached; the lane notes it,
   with the time it resets.
+
+### ACP agents
+
+An agent with an Agent Client Protocol mode (or an adapter that gives it one) can run lanes:
+name it in your config and play with `--agent acp`.
+
+```toml
+[agents.acp]
+command = ["your-acp-agent", "--model", "{model}"]
+models = ["model-a", "model-b"]
+env = ["YOUR_AGENT_API_KEY"]
+api = ["https://api.example.com"]
+hold = ["AGENT.md", ".your-agent"]
+```
+
+- `command` is the program and its arguments. `{model}` in an argument is the lane's model, so
+  escalating starts the agent again on the next one. With one model, `{model}` may be left out.
+- `models` is the ladder, weakest first. `[prices]` may name its models, but an ACP agent reports
+  no tokens, so a price has nothing to count.
+- `env` names the variables that hold the agent's credential. Each must be set, in your keys
+  file or environment. They are passed by name, and their values are shown as `[NAME]` wherever
+  the lane would show them. Nothing else of your environment is passed.
+- `api` is the agent's model API, which a docker lane's network reaches. A docker acp lane
+  without it is refused.
+- `hold` names more files or folders that configure the agent from its working directory. They
+  are moved out of the workspace before it starts, as `CLAUDE.md` and `.codex/` are.
+
+The agent's HOME is a folder of the lane's, outside the workspace, so a login it saved in your
+own home is not seen: give it a key through `env`. An agent that asks to be logged in ends its
+lane, saying so; flightdeck never logs it in.
+
+flightdeck answers the agent's permission requests itself, by the policy of a claude lane:
+commands run; reads, searches and edits only in the lane's workspace (no edit in `.flightdeck`);
+web fetches, mode switches and anything it cannot place are refused, with a note on the lane.
+It always picks "allow once", so no answer lets later calls past the policy. The agent can also
+read and write files through flightdeck, in the workspace only, never through a symlink.
+
+An ACP agent reports no cost in general, so its lane's dollars are unknown, and a dollar cap
+asks you once before the lane carries on without it. An agent that reports its cost in USD has
+it counted. It reports no tokens, so a token cap is never reached. `flightdeck doctor --agent acp`
+checks the agent and its variables. ACP lanes have been tested against a stand-in agent built
+from the protocol (version 1) only, not yet with a real one.
 
 With a pack ([Your solvers first](#your-solvers-first-l1)), a coding-agent lane runs your L1
 engines before its CLI is started, by the same rules as flightdeck's own lanes. While a flag an

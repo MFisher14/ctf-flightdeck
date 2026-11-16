@@ -165,6 +165,7 @@ from ..pricing import Price, call_cost
 from ..text import untrusted
 from . import owntext, prompts, sharing
 from .driver import MAX_IDLE_TURNS, Outage, Takeover, WorkspaceFactory, _may_pass, outage_hold
+from .egress import CLI_API
 from .flaggate import CLAIMED_ONLY, FlagGate, Outputs
 from .held import Secrets as _Secrets
 from .facts import FirstLooks, Look
@@ -185,13 +186,15 @@ from .workspace import (
     take_snapshot,
 )
 
-KINDS = ("claude", "codex")
+KINDS = ("claude", "codex")  # the CLIs find_agent knows; an ACP agent (agent/acp.py) is the player's own command line
+ACP = "acp"
 CLAUDE_TOOLS = ("Bash", "Read", "Edit", "Write", "Glob", "Grep")
 CLAUDE_AUTH = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")  # the CLI's own order: in -p mode the API key wins
 CODEX_KEY = "CODEX_API_KEY"
 SECRET_NAMES = (*CLAUDE_AUTH, CODEX_KEY)  # the agent's credentials (CODEX_HOME, a login's folder, is a path, not one)
-AGENT_HOME = {"claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME"}  # where each CLI reads its own configuration
-CONTAINER_HOME = {"claude": "/tmp/flightdeck-claude-home", "codex": "/tmp/flightdeck-codex-home"}
+# where each CLI reads its own configuration; an ACP agent's is not known, so its whole HOME is kept out of the workspace
+AGENT_HOME = {"claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME", ACP: "HOME"}
+CONTAINER_HOME = {"claude": "/tmp/flightdeck-claude-home", "codex": "/tmp/flightdeck-codex-home", ACP: "/tmp/flightdeck-acp-home"}
 """docker: each CLI's own configuration folder (AGENT_HOME) in the lane's container, outside
 /work, where nothing in the workspace (a file the agent writes there, an archive it
 unpacks) can configure the CLI. /tmp: every image has it, writable whatever its user."""
@@ -199,6 +202,7 @@ CLI_ENV: Mapping[str, Mapping[str, str]] = {
     # flightdeck's own settings for the CLI process (not secrets): no telemetry, no self-update mid-run
     "claude": {"DISABLE_TELEMETRY": "1", "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
     "codex": {},
+    ACP: {},
 }
 
 STOP_GRACE = 3.0  # seconds between SIGINT, SIGTERM and SIGKILL when a CLI is stopped
@@ -298,12 +302,16 @@ class CliAgent:
     extra_env holds the agent's own auth variables, read by NAME from the player's
     environment: their values are secrets, so they are left out of repr() and comparison."""
 
-    kind: str  # "claude" | "codex"
+    kind: str  # "claude" | "codex" | "acp"
     executable: str  # resolved path (host runtime); a docker lane uses the CLI in its image
     model: str  # the model the player chose; a lane runs lane.model (the deck's ladder)
     extra_env: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
     auth: str = ""  # how the CLI authenticates and what that bills, for pre-flight (a name, never a value)
     warnings: tuple[str, ...] = ()  # for the player before lanes start
+    api: tuple[str, ...] = ()  # its model API's origins: what a docker lane's network reaches besides the instance
+    program: str = ""  # acp: the program as the config names it, looked up in a docker lane's image
+    args: tuple[str, ...] = ()  # acp: its arguments, {model} standing for the lane's model
+    hold: frozenset[str] = frozenset()  # acp: more names (lower case) of files that configure it from the workspace
 
 
 def find_agent(kind: str, model: str, *, environ: Mapping[str, str] = os.environ, auth: str | None = None) -> CliAgent:
@@ -334,7 +342,8 @@ def find_agent(kind: str, model: str, *, environ: Mapping[str, str] = os.environ
         extra, how, warnings = _claude_auth(environ, auth)
     else:
         extra, how, warnings = _codex_auth(environ, auth)
-    return CliAgent(kind, str(Path(found).absolute()), model, MappingProxyType(dict(extra)), how, tuple(warnings))
+    return CliAgent(kind, str(Path(found).absolute()), model, MappingProxyType(dict(extra)), how, tuple(warnings),
+                    api=CLI_API[kind])
 
 
 def _check_model(model: str) -> None:
@@ -515,23 +524,25 @@ def lane_rules() -> str:
 # ---------------------------------------------------------------------- agent configuration in a workspace
 
 
-def hold_agent_config(root: Path, batch: int) -> list[str]:
+def hold_agent_config(root: Path, batch: int, extra: frozenset[str] = frozenset()) -> list[str]:
     """Move every file and folder under root whose name configures a coding-agent CLI
     (HELD_NAMES) to root/.flightdeck/held/<batch>/, keeping its path, its name ending in
     HELD_SUFFIX (claude takes up a CLAUDE.md in any folder it reads files in). Returns the
     paths moved, relative to root (a folder ends in /). Never follows a symlink: a symlink
     with such a name is moved itself. flightdeck's own .flightdeck is not looked in. OSError
-    when one cannot be moved: then the CLI must not start."""
+    when one cannot be moved: then the CLI must not start. `extra`: more such names, lower
+    case (an ACP agent's, from [agents.acp] hold)."""
     moved: list[str] = []
     top = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        _hold_walk(root, top, [], batch, moved, [0])
+        _hold_walk(root, top, [], batch, moved, [0], HELD_NAMES | extra)
     finally:
         os.close(top)
     return moved
 
 
-def _hold_walk(root: Path, dir_fd: int, parts: list[str], batch: int, moved: list[str], seen: list[int]) -> None:
+def _hold_walk(root: Path, dir_fd: int, parts: list[str], batch: int, moved: list[str], seen: list[int],
+               names: frozenset[str] = HELD_NAMES) -> None:
     try:
         with os.scandir(dir_fd) as listing:
             entries = sorted(listing, key=lambda e: e.name)
@@ -549,7 +560,7 @@ def _hold_walk(root: Path, dir_fd: int, parts: list[str], batch: int, moved: lis
             folder = not link and entry.is_dir(follow_symlinks=False)
         except OSError:
             continue
-        if name.lower() in HELD_NAMES:
+        if name.lower() in names:
             target = open_dir(root, [PRIVATE, "held", str(batch), *parts], create=True)
             try:
                 os.rename(name, name + HELD_SUFFIX, src_dir_fd=dir_fd, dst_dir_fd=target)
@@ -562,7 +573,7 @@ def _hold_walk(root: Path, dir_fd: int, parts: list[str], batch: int, moved: lis
             except OSError:
                 continue
             try:
-                _hold_walk(root, sub, [*parts, name], batch, moved, seen)
+                _hold_walk(root, sub, [*parts, name], batch, moved, seen, names)
             finally:
                 os.close(sub)
 
@@ -1406,12 +1417,14 @@ class _Run:
         has none."""
         workspace = self.workspace
         assert isinstance(workspace, DockerWorkspace)
-        code, out = await _docker_call("exec", workspace.name, "sh", "-c", 'command -v "$1"', "sh", self.kind)
+        program = self.driver.agent.program or self.kind
+        code, out = await _docker_call("exec", workspace.name, "sh", "-c", 'command -v "$1"', "sh", program)
         found = out.strip().splitlines()[-1].strip() if out.strip() else ""
         if code != 0 or not found.startswith("/") or any(c.isspace() for c in found):
+            what = f"{program} CLI" if program == self.kind else program
             raise WorkspaceError(
-                f"the lane image {workspace.image} has no {self.kind} CLI (command -v {self.kind} found nothing in the "
-                f"lane's container): use an image with {self.kind} installed, or the host runtime"
+                f"the lane image {workspace.image} has no {what} (command -v {program} found nothing in the "
+                f"lane's container): use an image with {program} installed, or the host runtime"
             )
         return found
 
@@ -1431,7 +1444,7 @@ class _Run:
                 if self.over():  # an engine's flag solved it (or the lane was killed meanwhile): no CLI starts
                     return
         try:
-            moved = await asyncio.to_thread(hold_agent_config, root, self.spawns)
+            moved = await asyncio.to_thread(hold_agent_config, root, self.spawns, self.driver.agent.hold)
         except OSError as exc:
             raise WorkspaceError(f"could not move agent configuration out of the {self.kind} CLI's way: {exc}") from None
         if moved:
@@ -2540,10 +2553,11 @@ class ExternalDriver:
         and the first look is not told of one. A run starts coding-agent lanes only under
         "auto" (run.py: a CLI reaches whatever it can reach), so this holds the brief to the
         policy should that ever change."""
-        if agent.kind not in KINDS:
+        if agent.kind not in (*KINDS, ACP):
             raise ValueError(f"unknown agent kind {agent.kind!r}")
         self.agent = agent
-        own = {name: value for name, value in agent.extra_env.items() if name in SECRET_NAMES}
+        # an ACP agent's variables are the ones the player named for its credential: every one is a secret
+        own = {name: value for name, value in agent.extra_env.items() if name in SECRET_NAMES or agent.kind == ACP}
         self.redact = _Secrets({**own, **(secrets or {})})
         self.workspaces = workspaces
         self.run_id = run_id
@@ -2589,7 +2603,18 @@ class ExternalDriver:
                     "a docker codex lane needs CODEX_API_KEY: your saved codex login is on this machine, not in the "
                     "lane's container"
                 )
-        kind = _ClaudeRun if self.agent.kind == "claude" else _CodexRun
+            if self.agent.kind == ACP and not self.agent.api:
+                raise WorkspaceError(
+                    "a docker acp lane reaches only its instance and its agent's model API, and [agents.acp] api names "
+                    'no API: add its origin, like api = ["https://api.example.com"]'
+                )
+        kind: type[_Run]
+        if self.agent.kind == ACP:
+            from .acp import AcpRun  # it speaks ACP on top of _Run
+
+            kind = AcpRun
+        else:
+            kind = _ClaudeRun if self.agent.kind == "claude" else _CodexRun
         run = kind(self, lane, challenge, workspace, model)
         self.runs[lane.id] = run
         run.task = loop.create_task(run.main(), name=f"flightdeck {self.agent.kind} lane {lane.id}")

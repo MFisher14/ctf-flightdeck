@@ -452,7 +452,9 @@ console in a few minutes, without reading the architecture:
 
 Planned in a milestone and not built:
 
-- **ACP agents.** The coding-agent lanes are the `claude` and `codex` CLIs only.
+- **ACP agents, against a real agent.** `--agent acp` runs the agent `[agents.acp]` names over the
+  Agent Client Protocol, version 1 (P100). It has met a fake agent built from the protocol's
+  schema only: no real agent or adapter has been run with it yet.
 - **A real capture of the `claude` and `codex` streams.** The driver is tested against a fake CLI
   built from their docs, and so is a coding-agent lane's fenced network (below). Claude Code's
   stream was compared with a real run on 2026-11-14 (P86: 2.1.325, a prompt with no tools), and
@@ -542,7 +544,8 @@ Phase 1 agent model (D5a): flightdeck's own loop against an OpenAI-compatible en
 - Team mode: claims, teammate-solved stop, live-box courtesy.
 
 Not done in M2: evaluating ACP, the per-origin egress allowlist and a real capture of the CLI
-streams (under "Still open" above; the egress allowlist was built later, issue #14).
+streams (under "Still open" above; the egress allowlist was built later, issue #14; ACP lanes
+were built after 0.6.0, P100).
 
 ### M3: detectors and practice
 

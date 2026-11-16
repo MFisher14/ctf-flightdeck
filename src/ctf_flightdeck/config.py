@@ -281,6 +281,17 @@ class GovernorConfig:
 
 
 @dataclass(frozen=True)
+class AcpConfig:
+    """[agents.acp]: an agent that speaks the Agent Client Protocol on its stdio (P100)."""
+
+    command: tuple[str, ...]  # the program and its arguments; {model} in an argument is the lane's model
+    models: tuple[str, ...]  # the ladder, weakest first
+    env: tuple[str, ...] = ()  # names of environment variables the agent gets (its credential): values are secrets
+    api: tuple[str, ...] = ()  # origins of its model API, which a docker lane's network reaches
+    hold: tuple[str, ...] = ()  # more names of files and folders that configure it from the workspace
+
+
+@dataclass(frozen=True)
 class Config:
     api: ApiConfig
     models: tuple[str, ...]  # the ladder, weakest to strongest
@@ -290,6 +301,7 @@ class Config:
     source: Path | None  # the file it was read from
     l1: L1Config = L1Config()
     agents: dict[str, tuple[str, ...]] = field(default_factory=dict)  # coding-agent CLI -> its model ladder, weakest first
+    acp: AcpConfig | None = None  # [agents.acp], when the config has one (its ladder is agents["acp"] too)
     fallback: FallbackConfig | None = None  # [fallback], when the config has one
     light: LightConfig = LightConfig()  # [light]; rules only when the config has none
     light_jobs: tuple[str, ...] = DEFAULT_JOBS  # [light] jobs: the jobs a run gives the light model
@@ -349,7 +361,7 @@ def parse_config(text: str, source: Path) -> Config:
 def _config(path: Path, doc: dict) -> Config:
     _known(path, (), doc, _TABLES)
     ladder = _ladder(path, _table(path, doc, "models"))
-    agents = _agents(path, _table(path, doc, "agents"))  # before [prices], which may name their models
+    agents, acp = _agents(path, _table(path, doc, "agents"))  # before [prices], which may name their models
     light, jobs, tables = _light_tables(path, _table(path, doc, "light"))
     api = _api(path, _table(path, doc, "api"), ladder)
     return Config(
@@ -363,6 +375,7 @@ def _config(path: Path, doc: dict) -> Config:
         autopilot=_autopilot(path, _table(path, doc, "autopilot")),
         governor=_governor(path, _table(path, doc, "governor")),
         agents=agents,
+        acp=acp,
         fallback=_fallback(path, _table(path, doc, "fallback"), ladder) if "fallback" in doc else None,
         light=light,
         light_jobs=jobs,
@@ -707,6 +720,14 @@ dir = "~/.local/share/ctf-flightdeck/runs"  # a folder per run: the event log an
 # above.
 # claude = ["sonnet", "opus"]
 # codex = ["your-codex-model"]
+# An agent that speaks the Agent Client Protocol on its stdio (`--agent acp`): its command line
+# ({model} in an argument is the lane's model), its ladder, and the names of the variables that
+# hold its credential (passed by name, shown as [NAME]). api: its model API, for docker lanes.
+# [agents.acp]
+# command = ["your-acp-agent", "--model", "{model}"]
+# models = ["model-a", "model-b"]
+# env = ["YOUR_AGENT_API_KEY"]
+# api = ["https://api.example.com"]
 
 [light]
 # The light model: a small model for a run's small jobs (jobs, below). "rules" (the default) uses
@@ -1334,19 +1355,85 @@ def _wrong_stop(path: Path, table: dict, default: int) -> int:
 
 
 AGENT_KINDS = ("claude", "codex")
+ACP_MODEL = "{model}"  # in an [agents.acp] command argument: the lane's model
+ACP_RESERVED_ENV = ("HOME", "PATH", "TMPDIR")  # a lane's own: [agents.acp] env never passes the player's
 
 
-def _agents(path: Path, table: dict) -> dict[str, tuple[str, ...]]:
-    """[agents]: a model ladder per coding-agent CLI (`play --agent`), weakest first."""
-    _known(path, ("agents",), table, AGENT_KINDS)
+def _agents(path: Path, table: dict) -> tuple[dict[str, tuple[str, ...]], AcpConfig | None]:
+    """[agents]: a model ladder per coding-agent CLI (`play --agent`), weakest first; and
+    [agents.acp], an ACP agent's command line and ladder (its ladder is in the first too)."""
+    _known(path, ("agents",), table, (*AGENT_KINDS, "acp"))
     out = {}
+    acp = None
     for kind, value in table.items():
+        if kind == "acp":
+            acp = _acp(path, value)
+            out[kind] = acp.models
+            continue
         if not isinstance(value, list) or not value or not all(isinstance(m, str) and _plain(m) for m in value):
             raise _error(path, ("agents", kind), f"must be a non-empty list of model names, weakest first{_got(value)}")
         if len(set(value)) != len(value):
             raise _error(path, ("agents", kind), "names a model twice")
         out[kind] = tuple(value)
-    return out
+    return out, acp
+
+
+def _acp(path: Path, table: object) -> AcpConfig:
+    where = ("agents", "acp")
+    if not isinstance(table, dict):
+        raise _error(path, where, f"must be a table (command, models, and env, api, hold if needed){_got(table)}")
+    _known(path, where, table, ("command", "models", "env", "api", "hold"))
+    for key in ("command", "models"):
+        if key not in table:
+            raise _error(path, where, f"needs {key}: " + (
+                'the agent\'s command line as a list, like ["my-agent", "--acp"]' if key == "command"
+                else "its model ladder, weakest first"))
+    command = table["command"]
+    if (not isinstance(command, list) or not command
+            or not all(isinstance(arg, str) and arg and all(ch.isprintable() for ch in arg) for arg in command)):
+        raise _error(path, (*where, "command"), "must be a non-empty list of arguments, the program first, with no control "
+                                                f"characters{_got(command)}")
+    if command[0].startswith("-") or not _plain(command[0]) or ACP_MODEL in command[0]:
+        raise _error(path, (*where, "command"), "must start with the program: a name on PATH or an absolute path, with no "
+                                                "spaces, not starting with -")
+    if "/" in command[0] and not command[0].startswith(("/", "~")):
+        raise _error(path, (*where, "command"), "names its program by a relative path: give a name on PATH, or an "
+                                                "absolute path (a relative one is whatever folder flightdeck runs in)")
+    models = table["models"]
+    if not isinstance(models, list) or not models or not all(isinstance(m, str) and m and _plain(m) for m in models):
+        raise _error(path, (*where, "models"), f"must be a non-empty list of model names, weakest first{_got(models)}")
+    if len(set(models)) != len(models):
+        raise _error(path, (*where, "models"), "names a model twice")
+    if len(models) > 1 and not any(ACP_MODEL in arg for arg in command):
+        raise _error(path, (*where, "models"), f"names {len(models)} models, and command has no {ACP_MODEL} to start the "
+                                               "agent on one: put {model} in an argument, or name one model")
+    env = _names(path, table, (*where, "env"), "environment variable names", _is_env_name)
+    reserved = [name for name in env if name in ACP_RESERVED_ENV]
+    if reserved:
+        raise _error(path, (*where, "env"), f"names {reserved[0]}, which a lane sets itself")
+    api = _names(path, table, (*where, "api"), "URLs (https://host or https://host:port)", _is_origin)
+    hold = _names(path, table, (*where, "hold"), "file or folder names (no /)",
+                  lambda name: _plain(name) and "/" not in name and name not in (".", "..", ".flightdeck"))
+    return AcpConfig(command=tuple(command), models=tuple(models), env=env, api=api, hold=hold)
+
+
+def _names(path: Path, table: dict, key: tuple[str, ...], what: str, ok) -> tuple[str, ...]:
+    value = table.get(key[-1], [])
+    if not isinstance(value, list) or not all(isinstance(item, str) and ok(item) for item in value):
+        raise _error(path, key, f"must be a list of {what}{_got(value)}")
+    if len(set(value)) != len(value):
+        raise _error(path, key, "names one twice")
+    return tuple(value)
+
+
+def _is_origin(value: str) -> bool:
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018 - raises on a bad port
+    except ValueError:
+        return False
+    return parts.scheme in ("https", "http") and bool(parts.hostname) and parts.path in ("", "/") and not (
+        parts.query or parts.fragment or parts.username or parts.password)
 
 
 def _l1(path: Path, table: dict) -> L1Config:
