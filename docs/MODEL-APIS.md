@@ -21,8 +21,12 @@ machine: `flightdeck models`, and the measured results in [MODELS.md](MODELS.md)
 
 A model on Ollama or an MLX server (`--provider local` or `mlx`) costs nothing, so `init` writes
 no dollar cap for it, and no provider's safety classifier stands in front of it. A `custom`
-server on this machine keeps the $2 cap, since it may pass calls on to a paid API: set
-`dollar_cap = false` under `[lanes]` when it is free.
+server on this machine (`127.0.0.1`, `localhost` or `::1`) gets no dollar cap either: it reports
+no cost and flightdeck has no price for it, so a cap would stop each lane on its first turn to
+ask about spend it cannot count. The token cap still ends each lane at 400,000 tokens. A local
+proxy that passes calls on to a paid API is the exception, and `init` says so: set `dollar_cap`
+under `[lanes]` and the models' prices under `[prices]` for it. A `custom` server anywhere else
+keeps the $2 cap.
 
 For Ollama and an MLX server, `init` suggests the ladder that did best in flightdeck's benchmark
 ([MODELS.md](MODELS.md) names the models and says how to serve them): the default at its prompt,

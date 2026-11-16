@@ -590,8 +590,10 @@ def answers_for(provider: str, ladder: Sequence[str], runtime: str, *, base_url:
     and key variable unless others are given (custom has neither of its own, so both must
     be: ValueError), Anthropic's prices for an Anthropic ladder, no dollar cap for a server
     that costs nothing (a cap would only stop every lane once to ask about a cost nobody
-    reports), and for an OpenAI-compatible server on this machine the longer timeout and the
-    reply cap, since a local model can take minutes for one reply."""
+    reports): Ollama, an MLX server, and a custom server on this machine (P92; the token cap
+    stays, and server_lines says what a local proxy to a paid API should set), and for an
+    OpenAI-compatible server on this machine the longer timeout and the reply cap, since a
+    local model can take minutes for one reply."""
     from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
     from .light import on_this_machine
 
@@ -604,20 +606,28 @@ def answers_for(provider: str, ladder: Sequence[str], runtime: str, *, base_url:
     here = dialect == "openai" and on_this_machine(base_url)
     return Answers(
         base_url, key_env, tuple(ladder), runtime, max_lanes,
-        dollar_cap=None if provider in LOCAL_PROVIDERS else 2.0,
+        dollar_cap=None if provider in LOCAL_PROVIDERS or (provider == "custom" and here) else 2.0,
         provider=dialect, prices=anthropic_prices(ladder) if dialect == "anthropic" else {},  # the refusal fallback's models too
         fallback=fallback, light=light,
         timeout=LOCAL_TIMEOUT if here else None, max_tokens=LOCAL_MAX_TOKENS if here else None,
     )
 
 
+LOCAL_PROXY_NOTE = (
+    "dollar cap: none, for a server on this machine (the token cap still holds); if it passes calls on to a paid API, "
+    "set dollar_cap under [lanes] and the models' prices under [prices]"
+)
+
+
 def server_lines(answers: Answers, provider: str) -> list[str]:
     """What a player is told about a model server on this machine once its config is written:
-    how long a lane's call may take and how long its reply may be, what Ollama does with a
+    for a custom one, that it has no dollar cap and what a proxy to a paid API should set; how long a lane's call may take and how long its reply may be, what Ollama does with a
     lane's context, and the command that starts the MLX server. Nothing for a remote API."""
     from .config import LOCAL_MAX_TOKENS, LOCAL_TIMEOUT
 
     lines = []
+    if provider == "custom" and answers.dollar_cap is None:
+        lines.append(LOCAL_PROXY_NOTE)
     if answers.timeout is not None:
         lines.append(f"lane calls: {LOCAL_TIMEOUT} s per try and replies of up to {LOCAL_MAX_TOKENS} tokens, for a server "
                      "on this machine: a local model can take minutes for one reply (the default 180 s gave up on Gemma 4 "

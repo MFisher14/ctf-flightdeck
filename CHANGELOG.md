@@ -4,6 +4,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 
 ## Unreleased
 
+- `flightdeck init` and the home screen's setup write no dollar cap for a custom
+  OpenAI-compatible server on this machine (`127.0.0.1`, `localhost` or `::1`), as they already
+  did for Ollama and MLX: a lane no longer stops on its first turn to ask about a budget nothing
+  can price. The token cap still holds. The setup notes say, in one line, that a local proxy to
+  a paid API should set `dollar_cap` and `[prices]`.
 - A lane's session no longer answers one call late. Output a program wrote before a send (a
   debugger still loading, say) comes with the send's read but no longer ends it, so the read
   waits for the reply, and `until` is looked for only in what came after the send. A secret of
