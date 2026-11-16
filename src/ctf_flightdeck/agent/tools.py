@@ -352,7 +352,10 @@ class Toolbox:
     async def _python(self, args: dict[str, Any], turn: int, index: int) -> ToolResult:
         code = _required(args, "code", "python")
         first = next((line.strip() for line in code.splitlines() if line.strip()), "")
-        action = f"python: {first}"
+        # the whole code, as a shell step carries its whole command: with its first line only,
+        # three different scripts that each began "import csv" were one command run three
+        # times to the loop detector, which killed a lane decoding Morse (2026-11-16)
+        action = f"python: {code.strip()}"
         missing = getattr(self.workspace, "python_missing", None)  # a docker lane whose image has no python3
         if missing:
             raise _Mistake(missing, action)

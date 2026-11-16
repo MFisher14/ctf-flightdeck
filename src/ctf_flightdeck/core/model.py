@@ -373,7 +373,7 @@ class EventKind(StrEnum):
     WARNING = "warning"  # something did not happen as asked, with the reason
     L1 = "l1"  # a no-model solver ran on a challenge: engine, status, flags, seconds, notes
     SPEND = "spend"  # tokens or dollars spent outside a turn (a reply dropped at escalation, a judge): why, model
-    SLOT = "slot"  # a lane gave its slot up while it waits for a live-box answer, waits for one again, or took one (P83)
+    SLOT = "slot"  # a lane gave its slot up while it waits for a live-box answer, waits for one again, or took one (P83); its flag waits aside (P101)
     ROUTE = "route"  # a light model routed a challenge at a lane's start: its family, a category guess, by whom
 
 

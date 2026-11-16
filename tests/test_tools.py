@@ -206,7 +206,8 @@ def test_python_saves_the_code_in_the_workspace_and_runs_it_there(box, lane, pyt
     result = call(box, "python", {"code": code}, turn=4, index=1)
     assert result.content == f"exit 0\n{lane.root.resolve()}\nline 1\n"
     assert (lane.root / ".flightdeck" / "py" / "turn4-1.py").read_text() == code
-    assert result.action == "python: import os"
+    # the whole code, as a shell step carries its whole command (lines joined by ⏎, as there)
+    assert result.action == "python: import os ⏎ print(os.getcwd()) ⏎ print(open('notes.txt').readline().strip())"
 
 
 def test_python_failures_and_timeouts_read_like_shell_ones(box, python3):

@@ -550,3 +550,15 @@ def test_hint_quiet_when_the_lane_writes_a_table_keyed_by_dots_and_dashes():
     det = HintDetector(CFG)
     ch = fx.challenge(category="misc", description=LAMP)
     assert det.check(fx.lane(*LAMP_STEPS, LAMP_TABLE), ch, 0.0) is None
+
+
+def test_three_different_python_scripts_with_the_same_first_line_are_no_loop():
+    # a real lane decoding Morse ran three scripts that each began "import csv", and the
+    # python tool's step said only that first line: the loop detector killed it (2026-11-16)
+    det = LoopDetector(CFG)
+    ch = fx.challenge(category="misc")
+    scripts = [f"python: import csv\nrows = list(csv.reader(open('lamp_log.csv')))\nprint(rows[{i}])" for i in range(3)]
+    assert det.check(fx.lane("$ ls", *scripts), ch, 0.0) is None
+    same = fx.lane("$ ls", *[scripts[0]] * 3)
+    signal = det.check(same, ch, 0.0)
+    assert signal is not None and signal.kind is AlertKind.LOOP  # the same script three times still is

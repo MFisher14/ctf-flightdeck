@@ -320,7 +320,7 @@ def _reads_source(text: str, sources: tuple[str, ...]) -> bool:
     low = text.lower()
     if not _mentions_source(low, sources) and not any(s in low for s in ("grep", "rg", "ag", "ack", "*")):
         return False  # names no source and searches nothing: no need to parse it
-    if text.startswith("python: "):  # the python tool: its first line
+    if text.startswith("python: "):  # the python tool: its code
         return _mentions_source(low, sources) and any(f in low for f in ("open(", "read_text(", "read_bytes("))
     command = command_of(text)
     if command is None:

@@ -1757,8 +1757,10 @@ class Deck:
         waited = int(self.now - self._wait_began.get(lane.id, self.now))
         self._note(lane, f"{pending.flag} has waited {waited} s for you: it waits aside now, and the lane works on "
                          "meanwhile (approve or decline it whenever you like)")
-        self._emit(EventKind.PENDING, f"{lane.id}: {pending.flag} waits aside; the lane works on meanwhile",
-                   lane.id, lane.challenge_id, data={"kind": pending.kind.value, "flag": pending.flag, "aside": True})
+        # a slot event, not a pending one: no new question came up (every reader of PENDING
+        # events counts one as a question for the player), the lane works on in its slot
+        self._emit(EventKind.SLOT, f"{lane.id}: {pending.flag} waits aside; the lane works on meanwhile",
+                   lane.id, lane.challenge_id, data={"slot": "aside", "for": pending.kind.value, "flag": pending.flag})
         index = next((i for i, p in enumerate(lane.waiting) if not p.aside), None)
         if index is not None:  # something else waits first: it is the question now, and the lane waits on for it
             lane.pending = lane.waiting.pop(index)

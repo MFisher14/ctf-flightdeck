@@ -3151,10 +3151,14 @@ def test_an_l1_flag_no_engine_vouched_for_waits_then_waits_aside_while_the_lane_
     assert driver.started() == ["c0"]
     assert lane.actions[-1].text == ("t{decoy} has waited 60 s for you: it waits aside now, and the lane works on "
                                      "meanwhile (approve or decline it whenever you like)")
-    (aside,) = [e for e in events(deck, EventKind.PENDING) if e.data.get("aside")]
-    assert aside.data == {"kind": "submit", "flag": "t{decoy}", "aside": True}
+    (aside,) = events(deck, EventKind.SLOT)  # no PENDING event: no new question came up
+    assert aside.data == {"slot": "aside", "for": "submit", "flag": "t{decoy}"}
+    assert len(events(deck, EventKind.PENDING)) == 1
     deck.recheck_waits()  # once
-    assert len([e for e in events(deck, EventKind.PENDING) if e.data.get("aside")]) == 1
+    assert len(events(deck, EventKind.SLOT)) == 1
+    from ctf_flightdeck.core.summary import _flag_fates
+    # the lanes' shared record reads the log and the events as one: a real run broke it here
+    assert _flag_fates(deck, lane) == {"t{decoy}": ["waits for approval"]}
     assert deck.apply(iv.Decline(lane.id)).ok
     assert lane.state is LaneState.RUNNING and lane.pending is None and deck.not_flag("c0", "t{decoy}") is not None
 
