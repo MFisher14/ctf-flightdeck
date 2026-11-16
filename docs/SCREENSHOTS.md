@@ -25,7 +25,7 @@ shell prompt and the command typed at it.
 
 ## The simple layout
 
-![The simple layout: a short header with the event, the team tag, three lanes that need you and the run's dollars, where only flightdeck and the need-you count have a coloured block; one list of six lanes with their alert chip, challenge, state, cost and last action; under the list, the found flag with 1 to submit it and 0 not to; a key line of approve, decline, open, commands, help and quit](screenshots/simple.png)
+![The simple layout: a short header with the event, the team tag, three lanes that need you and the run's dollars, where only flightdeck and the need-you count have a coloured block; one list of six lanes with their alert chip, challenge, state, cost and last action; under the list, the found flag with 1 to submit it and 0 not to; a key line of 1 0 answer, open, commands, help and quit](screenshots/simple.png)
 
 What the console opens in: one list of lanes, sorted by what needs you. The header says only what
 is not the usual, and only what asks you to look has a coloured block in it; the line under the
