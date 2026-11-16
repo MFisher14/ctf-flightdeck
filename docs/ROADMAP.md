@@ -3,6 +3,20 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Built, not released: what the real runs found, fixed (2026-11-16)
+
+Three proposals (P101 to P103) from the practice-set runs of 0.7.0; the lines for players are
+under "Unreleased" in [CHANGELOG.md](../CHANGELOG.md).
+
+- **A decoy no longer holds a challenge** (P101). Every real run missed welcome-mat: under
+  autopilot its planted decoy, read out by an L1 engine, waited for an approval nobody gave, and
+  no model tried the challenge. Unanswered for a minute such a flag now waits aside and the lane
+  works on.
+- **L1 engines get a head start** (P102, `[l1] model_after`, 60 s). The solver pack's intake ran
+  its full 300 s on two practice challenges before any model started.
+- **The hint check sees Morse by its shape** (P103). A lane decoding Morse with its own table was
+  called off the hint.
+
 ## Released: 0.7.0, timeline replay, ACP agents and real agent runs (2026-11-16)
 
 Two proposals (P99, P100) and what running the real agents found; the lines for players are

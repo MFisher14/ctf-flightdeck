@@ -4,7 +4,8 @@ Most players have a folder of scripts that solve the easy, familiar challenges w
 all: a decoder for layered base64, a script that carves files, an RSA small-exponent attack.
 flightdeck calls these **L1**. Each lane runs the ones that fit its challenge before its first
 model call (a coding-agent lane: before its CLI is started), so a solve can cost no tokens, and
-when they find nothing the lane's model starts with what they reported.
+when they find nothing the lane's model starts with what they reported. Engines get a head start
+of a minute (`model_after`): one still at work after it runs on while the model starts.
 
 You can bring your own, use flightdeck's solver pack, or both in turn. This page is the contract
 between a pack and flightdeck.
@@ -88,6 +89,7 @@ Give flightdeck your pack with `play --pack FOLDER`, or once in your config:
 [l1]
 pack = "~/ctf/solvers"
 concurrency = 4          # engines run at once on one challenge
+model_after = 60         # seconds engines run before the lane's model starts anyway; 0: wait for all
 ```
 
 ## Start from the scripts you have
@@ -268,7 +270,13 @@ flightdeck's environment. `--keep` keeps the copies, `--workdir DIR` says where 
 A lane routes its challenge through the pack and runs every engine it reaches, before its first
 model call. Then:
 
-- A flag an engine found becomes the lane's flag, like one its model found.
+- A flag an engine found becomes the lane's flag, like one its model found. A flag the engine did
+  not vouch for (a match in what a text engine printed, or one the challenge's own files hold,
+  such as a planted `flag.txt` it read out) waits for you even under `submit = "auto"`. If you
+  have not answered it after a minute, it waits aside and the lane's model starts anyway, so a
+  decoy never holds the challenge while you are away.
+- Engines still running after `model_after` seconds (60) run on while the model starts; the
+  model is told which, and hears what they found when they finish.
 - If no engine solved the challenge, the lane goes on to its model, which is told what the
   engines reported.
 - The run log records every engine that ran and what it reported, and `flightdeck gaps` reads it

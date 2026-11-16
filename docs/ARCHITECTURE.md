@@ -770,7 +770,11 @@ and `l1/manifest.engines_folder()`, which every search for a pack's engines goes
 Where: `agent/l1stage.py`.
 
 With `[l1] pack` (or `--pack`), a lane runs the engines routed to its challenge before its first
-model call. Both drivers call the one stage (`run_stage`), each giving it its own parts
+model call, for at most `[l1] model_after` seconds (60; 0: as long as they take). Past it the model
+starts with a note naming the engines still at work (`prompts.l1_running`), and a task the lane
+keeps (`StageLane.keep`; cancelled when the lane closes) finishes the stage: the engines' flags go
+to the deck as below, and what they found reaches the model as a note and every fresh context
+(`StageLane.later`). Both drivers call the one stage (`run_stage`), each giving it its own parts
 (`StageLane`): `AgentDriver` before a lane's first model call, `ExternalDriver` before a lane's
 CLI is first started, after the search of the handout as it came. Each result is an `l1` event; a flag an engine returns as its result is claimed
 (`TurnReport.claimed`), so it waits for the player under `confirm` and goes to the platform at once
@@ -781,8 +785,11 @@ description, or the handout as it came, searched before the engines run; the lan
 the model's context says what they found, fenced as data, and keeps saying so after an escalation or
 a refresh.
 
-A coding-agent lane starts no CLI while a flag an engine found waits for the player, and none at
-all once that flag solved the challenge. What the engines found goes into the CLI's opening brief,
+A flag an engine gives that it does not vouch for (scraped, or the challenge's own text) is
+reported with `TurnReport.aside`: if it waits for the player and is not answered within
+`bench_after`, it waits aside (`Pending.aside`, P101) and the lane works on; a decoy never holds
+the challenge while the player is away. A coding-agent lane starts no CLI while a flag an engine
+found waits for the player (and is not aside), and none at all once that flag solved the challenge. What the engines found goes into the CLI's opening brief,
 in a fence of its own after the challenge's, and into the brief of each later start (an
 escalation); the lane's secrets layer takes the secrets flightdeck holds out of an engine's notes
 before they are logged, shown or told to the agent.

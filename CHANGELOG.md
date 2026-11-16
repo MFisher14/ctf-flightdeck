@@ -2,6 +2,18 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+- A flag an L1 engine read out of the challenge (often its planted decoy) no longer holds the
+  lane while you are away: unanswered for a minute it waits aside, still yours to approve or
+  decline, and the lane's model starts. Under autopilot such a decoy kept every model off the
+  challenge.
+- L1 engines get a head start of 60 seconds (`[l1] model_after`); past it the lane's model starts
+  and the engines run on, and the model hears what they find. A slow engine no longer holds the
+  model for its whole time limit. `model_after = 0` waits for every engine, as before.
+- The "ignores the hint" check sees Morse by its shape, a run of dots and dashes or a table keyed
+  by them, so a lane decoding Morse with its own code is no longer called off the hint.
+
 ## 0.7.0 (2026-11-16)
 
 Archived boards replay wave by wave in `play`, and any agent that speaks the Agent Client
