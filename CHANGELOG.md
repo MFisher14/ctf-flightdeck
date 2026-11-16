@@ -2,7 +2,15 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Unreleased
+## 0.6.0 (2026-11-16)
+
+Lanes that keep a program running: sessions for gdb, radare2, an interpreter or `nc`, on a
+terminal when asked. Events on more platforms: GZCTF and noCTF presets, `flightdeck start` for
+the json-api ones, and ctfd-whale, rCTF v2 and GZCTF instances. Settings and health on the home
+screen and as `/settings` in a run; the bar recalls what was sent, and `ctrl+g` opens it in your
+editor; the same call made in a row folds into one row. A lane waiting on you gives its slot to
+the queue. The claude lane was checked against the real Claude Code CLI, and the console went
+through three review rounds and was driven in a pseudo-terminal, as a beginner and as an expert, before the release.
 
 - `flightdeck init` and the home screen's setup write no dollar cap for a custom
   OpenAI-compatible server on this machine (`127.0.0.1`, `localhost` or `::1`), as they already

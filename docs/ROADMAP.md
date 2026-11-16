@@ -3,10 +3,10 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
-## Built, not released: thirty proposals, P69 to P98 (2026-11-14)
+## Released: 0.6.0, lane sessions and more platforms (2026-11-16)
 
-Proposals built and waiting for a release, in the order of their numbers in
-[DECISIONS.md](DECISIONS.md) (P69 to P98); the lines for players are under Unreleased in
+Thirty proposals, in the order of their numbers in [DECISIONS.md](DECISIONS.md) (P69 to P98),
+and the review fixes made before the release; the lines for players are under 0.6.0 in
 [CHANGELOG.md](../CHANGELOG.md).
 
 - **A take-over whose shell fails gives the console back** (P69). No `docker` to run, a
@@ -152,6 +152,11 @@ Proposals built and waiting for a release, in the order of their numbers in
   simple layout's key line, in the list and in its view, matching the numbers and words of the
   why line and the card (`1 more budget  0 stop the lane`); `a` and `d` still act. A budget
   wait about a model with no price says so when the lane gives its slot up.
+
+Not verified yet: noCTF, GZCTF, rCTF v2, ctfd-whale and GZCTF's containers have met fakes only,
+never a real site; gdb and radare2 have not been run in a session; the console was driven in a
+pseudo-terminal with a terminal emulator, not looked at in each terminal program or in tmux; and the claude lane's whole `practice --agent claude`
+run is not done.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 
