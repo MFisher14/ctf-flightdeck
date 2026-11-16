@@ -370,11 +370,14 @@ def _kind(mode: int) -> str:
 def _own_places() -> list[tuple[Path, str, bool]]:
     """(path, what it is, whether what is inside it is kept out too): flightdeck's config
     folder and its keys file, which never go into a handout a lane reads."""
+    from . import confighome
+
     places: list[tuple[Path, str, bool]] = []
-    try:
-        places.append((Path.home() / ".config" / "ctf-flightdeck", "flightdeck's config folder", True))
-    except RuntimeError:  # no home directory: there is no such folder to keep out
-        pass
+    for where in (confighome.folder, confighome.old_folder):  # $XDG_CONFIG_HOME's, and ~/.config's, which may still hold files
+        try:
+            places.append((where(), "flightdeck's config folder", True))
+        except RuntimeError:  # no home directory: there is no such folder to keep out
+            pass
     try:
         places.append((keys_path(), "flightdeck's keys file", False))
     except KeysError:

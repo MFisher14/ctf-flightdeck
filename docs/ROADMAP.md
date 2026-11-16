@@ -130,6 +130,10 @@ Proposals built and waiting for a release, in the order of their numbers in
   and in the mock, Enter and esc both opened the console under two names; the key line now
   says `enter  open the console` alone, and esc and q still close it. An empty board keeps
   both, since there Enter opens `/new`.
+- **The config folder follows `$XDG_CONFIG_HOME`** (P94, proposed). The config, the keys file
+  and the themes are in `$XDG_CONFIG_HOME/ctf-flightdeck` when that is set, as notes and packs
+  already follow their XDG variables; `~/.config/ctf-flightdeck` stays the default. A file left
+  at the old place is still found, and every command says once where (doctor in its own line).
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

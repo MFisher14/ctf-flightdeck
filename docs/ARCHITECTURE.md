@@ -1341,6 +1341,17 @@ half way never leaves half a config; a new config is first made empty with the u
 Unknown keys fail loudly. Keys are read from the environment, else
 `~/.config/ctf-flightdeck/keys.env` (`keys.py`, chmod 600).
 
+The config folder (`confighome.py`, P94) is `$XDG_CONFIG_HOME/ctf-flightdeck` when that is an
+absolute path, else `~/.config/ctf-flightdeck`; `config.default_config_path` and
+`keys.keys_path` ask it for their file unless `$FLIGHTDECK_CONFIG` or `$FLIGHTDECK_KEYS` names
+one. When `$XDG_CONFIG_HOME` moves the folder, each file is looked for at both places: one only
+at `~/.config/ctf-flightdeck` is read (and written) there, and with one at both places the new
+one is read. `confighome.notes` says which, a line per file, and a line for a `themes` folder
+left beside the config that is not read; the CLI's root callback prints them on stderr once per
+command (none for the config when the command was given `--config` or `--path`: `_ByPanel.resolve_command`
+keeps the command's arguments for it), and doctor shows them as a `config folder` check instead (not essential). They name
+paths only, never what is in a file.
+
 `flightdeck init` (`setup.py`) writes `timeout = 600` and `max_tokens = 8192` for a server on this
 machine, suggests a ladder for Ollama and MLX and a light model for `--light ollama|mlx` (from
 flightdeck's benchmark, docs/MODELS.md; never written unless the player takes it), and writes `thinking = false`

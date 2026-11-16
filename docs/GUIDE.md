@@ -1597,7 +1597,14 @@ anywhere.
 `flightdeck init` writes `~/.config/ctf-flightdeck/config.toml` (or the file `$FLIGHTDECK_CONFIG`
 names). `flightdeck config` checks it, and `flightdeck config --example` prints every setting with
 its default. API keys and access tokens come from your environment, else from
-`~/.config/ctf-flightdeck/keys.env` (or the file `$FLIGHTDECK_KEYS` names). Each run writes a
+`~/.config/ctf-flightdeck/keys.env` (or the file `$FLIGHTDECK_KEYS` names). When
+`$XDG_CONFIG_HOME` is set to an absolute path, the config folder is
+`$XDG_CONFIG_HOME/ctf-flightdeck` instead: the config, the keys file and your themes all go
+there. If you set it after flightdeck had already written files in `~/.config/ctf-flightdeck`,
+nothing is lost: a file found only at the old place is still read from there, and a file at both
+places is read from the new one. Either way every command says which, once, on stderr (doctor
+says it in its `config folder` line), until you move or remove the old file. A command you give
+`--config` (or `--path`) reads that file and says nothing of the config folder's. Each run writes a
 folder under
 `~/.local/share/ctf-flightdeck/runs/` (`[run] dir`, or `--run-dir`). flightdeck keeps notes of its
 own in `~/.local/state/ctf-flightdeck/` (or under `$XDG_STATE_HOME`). `l1 import` writes manifests

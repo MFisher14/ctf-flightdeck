@@ -785,6 +785,7 @@ def _checks(config_path: Path | None, environ: Mapping[str, str], agent: str | N
             checks.append(Check("config", False, str(exc), "fix it, or run `flightdeck init --force` to write a new one"))
         else:
             checks.append(Check("config", True, f"{path}: {len(config.models)} model(s), runtime {config.lanes.runtime}"))
+    checks += _config_home_check(environ, config_named=config_path is not None or None)
     if config is not None:
         checks += _key_check("api key", config.api.key_env, environ, "the config's API needs no key")
         if config.fallback is not None:
@@ -1192,6 +1193,22 @@ def _l1_check(pack: Path) -> Check:
         return Check("l1 pack", False, f"{pack} has no engines (no .manifest.toml files)",
                      "`flightdeck l1 import` writes manifests for a folder of scripts")
     return Check("l1 pack", True, f"{pack}: {len(engines)} engine(s)")
+
+
+def _config_home_check(environ: Mapping[str, str], *, config_named: bool | None) -> list[Check]:
+    """The `config folder` check, only when $XDG_CONFIG_HOME moved flightdeck's config folder
+    and a file of it is still at ~/.config/ctf-flightdeck: where each was found, and whether it
+    is read (confighome.notes). Not essential: a run reads the file that line names."""
+    from . import confighome
+
+    try:
+        lines = confighome.notes(environ, config_named=config_named)
+    except (OSError, RuntimeError):
+        return []
+    if not lines:
+        return []
+    return [Check("config folder", False, "; ".join(lines),
+                  f"keep flightdeck's files in {confighome.show(confighome.folder(environ))}", essential=False)]
 
 
 def _key_check(name: str, variable: str, environ: Mapping[str, str], none_needed: str, *,
