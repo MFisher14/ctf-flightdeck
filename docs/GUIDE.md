@@ -1087,11 +1087,27 @@ challenge's text and files given to a model (a lane does both, and flightdeck do
 event that forbids either: a rule that allows asking a model about a concept and forbids
 giving it the challenge is a no); the label your team declared to the event for its AI use, if
 the event asks for one (Enter for none); how the challenges arrive (**ctfd**: the site runs CTFd, and flightdeck pulls the board
-and submits flags; **by hand**: any other site, and on rCTF, noCTF or GZCTF the menu points you to `flightdeck http example`, which pulls and submits there too); the site's address; what a flag looks like
+and submits flags; **by hand**: any other site; **json api**: the site runs rCTF, rCTF v2, noCTF or GZCTF, and flightdeck
+pulls and submits there as on CTFd); the site's address; what a flag looks like
 (`PP` for `PP{...}`); whether a flag waits for you or goes at once; and your CTFd access token
 (on the site: Settings, Access Tokens, Generate). The token goes into your keys file under a
 variable of this event's own, never into the event's folder, and is never shown. Then it says
 whether the solver pack is installed (and offers to install it), and launches.
+
+**rCTF, noCTF and GZCTF.** The json api choice asks which of the four the site runs, then its
+address. On rCTF and GZCTF the address can be any page of the site, pasted from the browser:
+their routes are under the site's root, so start keeps only the site's part and says so; a GZCTF
+game's page (`https://ctf.example.org/games/3`) also gives the game's number, which is asked for
+otherwise. On noCTF the address is its API's, which may not be the page's: the browser's network
+tab shows the host the requests to `/challenges` go to. The token question says where that
+platform keeps it: rCTF's is your team's login link (the profile page, Team Invite), pasted whole;
+noCTF's is the session token the page keeps once you sign in (the browser's storage for the site,
+`noctf-session-token`); GZCTF's is the value of its `GZCTF_Token` cookie. It goes into your keys
+file as `RCTF_TOKEN_<NAME>`, `NOCTF_TOKEN_<NAME>` or `GZCTF_TOKEN_<NAME>`, bound to the site as a
+CTFd token is. The event file is the one `flightdeck http example --preset NAME` prints, with your
+answers in it, so `flightdeck http check ~/ctf/example-ctf/event.toml` tries it before you play:
+it signs in and lists the challenges, and submits nothing. Away from a terminal: `--preset NAME`
+(rctf, rctf2, noctf or gzctf; it means `--platform http`), `--url`, and `--game NUMBER` for GZCTF.
 
 For the flag format you can also paste an example flag from the rules: `CTF{s0me_t3xt}` is read
 as `CTF{...}` (any text between the braces), and start says what it understood. Anything with a
@@ -1301,7 +1317,8 @@ flightdeck talks to CTFd and to a Game Master. For any other platform there are 
 hand: a folder board (`platform = "manual"` in `event.toml`), and you submit the flags on the
 site. By a table of routes, when the platform's own web page talks JSON to the site:
 `platform = "http"` and an `[http]` table in `event.toml`, with rCTF, noCTF and GZCTF as ready
-presets ([Boards](BOARDS.md#a-board-from-a-platform-with-a-json-api)); no code runs, and
+presets ([Boards](BOARDS.md#a-board-from-a-platform-with-a-json-api)), which `flightdeck start`
+writes for you when you choose json api ([Events and teams](#events-and-teams)); no code runs, and
 `flightdeck preflight` shows every request and where your token goes. On GZCTF your token is the
 `GZCTF_Token` cookie your browser holds once you have signed in, and a site that encrypts its
 flags gets none from flightdeck: each comes back to you, to submit on the site.

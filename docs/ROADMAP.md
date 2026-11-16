@@ -134,6 +134,12 @@ Proposals built and waiting for a release, in the order of their numbers in
   and the themes are in `$XDG_CONFIG_HOME/ctf-flightdeck` when that is set, as notes and packs
   already follow their XDG variables; `~/.config/ctf-flightdeck` stays the default. A file left
   at the old place is still found, and every command says once where (doctor in its own line).
+- **`flightdeck start` sets up an event on rCTF, rCTF v2, noCTF or GZCTF** (P95). The platform
+  menu's third answer asks which of the four, the address (a page's path is cut where the
+  routes are under the site's root; a GZCTF game's page gives the game) and the token, kept
+  under a site-bound `RCTF_TOKEN_<NAME>`-style variable. The event file carries the `[http]`
+  table `flightdeck http example --preset NAME` prints. The home screen's form asks the same.
+  Not built: a table of your own routes from start, and asking the site which platform it runs.
 
 ## Released: 0.5.0, the calm console, themes, plugins and the http platform (2026-11-14)
 

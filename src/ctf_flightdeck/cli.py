@@ -257,6 +257,7 @@ def _start_new(new) -> None:
         raise typer.Exit(2)
 
     answers = new.answers
+    token_name = starts.token_name(answers.platform, answers.preset)  # "your CTFd access token", "your rCTF token"
     try:
         starts.write(new.folder, answers)
     except starts.StartError as exc:
@@ -269,20 +270,20 @@ def _start_new(new) -> None:
         if new.token:
             keys.save(answers.token_env, new.token)
     except keys.KeysError as exc:
-        fail(f"{exc}. The event is set up, but its token is not kept: put {answers.token_env}=<your CTFd access token> in "
+        fail(f"{exc}. The event is set up, but its token is not kept: put {answers.token_env}=<{token_name}> in "
              f"{keys.keys_path()} (chmod 600), then `flightdeck` resumes this event")
     try:
         if new.vpn is not None:
             vpn_cli.ensure_tool(vpn.keep(new.folder, new.vpn))
     except vpn.VPNError as exc:
         fail(f"{exc}. The event is set up without its VPN file: `flightdeck vpn add {new.folder} FILE` keeps one")
-    if answers.platform == "ctfd" and not new.token:
+    if answers.platform in starts.SIGNS_IN and not new.token:
         try:
             there = keys.source(answers.token_env) is not None
         except keys.KeysError as exc:
             fail(str(exc))
         if not there:
-            fail(f"no token yet: put {answers.token_env}=<your CTFd access token> in {keys.keys_path()} (chmod 600), "
+            fail(f"no token yet: put {answers.token_env}=<{token_name}> in {keys.keys_path()} (chmod 600), "
                  f"then `flightdeck` resumes this event")
     play(board=new.folder)
 

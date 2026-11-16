@@ -276,19 +276,195 @@ def test_a_by_hand_event_starts_empty_says_how_to_add_a_challenge_and_launches(t
     assert [call["board"] for call in setup] == [folder]  # an empty board plays: challenges are added in the console
 
 
-def test_the_platform_question_names_the_http_presets_so_by_hand_is_not_the_only_way_off_ctfd(tmp_path, monkeypatch, setup):
+def test_the_platform_question_offers_the_json_api_platforms_so_by_hand_is_not_the_only_way_off_ctfd(tmp_path, monkeypatch, setup):
     """"by hand: any other site" left a player on rCTF, noCTF or GZCTF submitting every flag
-    on the site, with no word of the presets that pull and submit there. The menu names the
-    command, and each preset it names is one `flightdeck http example` takes."""
-    from ctf_flightdeck import http_cli
+    on the site. The menu offers them as a choice of its own, and the next question names each
+    preset the http platform has, in the order its numbers answer it."""
     from ctf_flightdeck.platform.http import PRESETS
 
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
-    result = run(input=f"Example CTF\n{tmp_path / 'example'}\ny\n\n2\n\n\nn\nn\n")
-    menu = result.output.split("How does flightdeck get this event's challenges?", 1)[1].split("Choose 1 or 2", 1)[0]
-    assert "`flightdeck http example --preset NAME > event.toml` (rctf, rctf2, noctf or gzctf)" in menu
-    for name in PRESETS:
-        assert name in menu and http_cli.example_profile(False, name).count(f'preset = "{name}"') == 1
+    result = run(input=f"Example CTF\n{tmp_path / 'example'}\ny\n\n3\n")
+    menu = result.output.split("How does flightdeck get this event's challenges?", 1)[1].split("Choose 1, 2 or 3", 1)[0]
+    assert "3  json api  the site runs rCTF, rCTF v2, noCTF or GZCTF" in menu
+    presets = result.output.split("Which platform does the event's site run?", 1)[1].split("Choose 1 to 4", 1)[0]
+    for number, name in enumerate(PRESETS, 1):
+        assert f"  {number}  {start.PRESET_LABELS[name]} " in presets and start.preset_answer(str(number)) == name
+
+
+# ---------------------------------------------------------------------- a JSON-API platform (P95)
+
+
+LINK = "https://ctf.example.org/login?token=c3ludGhldGljK3Rva2VuPQ%3D%3D"  # synthetic: an rCTF login link no site issued
+
+
+@pytest.mark.parametrize("preset", ["rctf", "rctf2", "noctf", "gzctf"])
+def test_a_json_api_event_file_is_the_presets_example_filled_in_and_passes_preflight(tmp_path, monkeypatch, preset):
+    """The event file start writes for rCTF, noCTF or GZCTF carries the [http] table
+    `flightdeck http example --preset NAME` writes (with the event's game), names a token
+    variable the http platform takes, and is refused by nothing in preflight."""
+    from ctf_flightdeck import http_cli
+    from ctf_flightdeck.config import load_config
+    from ctf_flightdeck.preflight import check
+
+    game = "3" if preset == "gzctf" else None
+    token_env = start.token_variable("Example CTF", start.token_prefix("http", preset))
+    monkeypatch.setenv(token_env, "synthetic-token")
+    answers = start.EventAnswers(name="Example CTF", platform="http", url="https://ctf.example.org", token_env=token_env,
+                                 submit="auto", preset=preset, game=game)
+    written = start.write(tmp_path / "event", answers)
+    text = written.read_text()
+    assert http_cli.preset_table(preset, game, keys_file=True).strip() in text and "in quotes" not in text
+    profile, policies = load_profile(written)
+    assert (profile.platform, profile.url, profile.token_env, profile.http.preset, profile.http.game) == (
+        "http", "https://ctf.example.org", token_env, preset, game)
+    assert profile.board == tmp_path / "event" / "board" and profile.platform_automation
+    assert policies.submit is Policy.AUTO and policies.pull is Policy.AUTO
+    config = tmp_path / "config.toml"
+    config.write_text('[models]\nladder = ["m"]\n[lanes]\nruntime = "host"\n')
+    problems = check(profile, policies, max_lanes=1, model_config=load_config(config), runtime="host", environ={token_env: "x"})
+    assert [problem.message for problem in problems if problem.refuse] == []
+
+
+def test_a_json_api_platforms_token_variable_is_one_the_http_platform_takes_and_never_a_ctfd_one():
+    from ctf_flightdeck.platform.http import PRESETS, parse_config
+
+    for preset in PRESETS:
+        name = start.token_variable("Example CTF", start.token_prefix("http", preset))
+        assert parse_config({"preset": preset, **({"game": "1"} if preset == "gzctf" else {})}).names_token(name)
+        assert not name.startswith("CTFD_")
+    assert start.token_prefix("http", "rctf2") == "RCTF_TOKEN_" and start.token_prefix("http", "noctf") == "NOCTF_TOKEN_"
+    assert start.token_prefix("ctfd") == "CTFD_TOKEN_"
+
+
+@pytest.mark.parametrize(("preset", "typed", "url", "game"), [
+    ("rctf", "ctf.example.org", "https://ctf.example.org", None),
+    ("rctf", "https://ctf.example.org/challs", "https://ctf.example.org", None),  # the page pasted from the browser
+    ("rctf2", "https://ctf.example.org:8443/scores?page=2", "https://ctf.example.org:8443", None),
+    ("gzctf", "https://ctf.example.org/games/03/challenges", "https://ctf.example.org", "3"),  # the game's page: the game too
+    ("gzctf", "https://ctf.example.org/games/0", "https://ctf.example.org", None),  # no game 0
+    ("noctf", "https://api.example.org/v1", "https://api.example.org/v1", None),  # noCTF's is its API's address: as typed
+])
+def test_a_json_api_events_address_is_the_one_its_routes_are_under(preset, typed, url, game):
+    got, from_url, said = start.http_url_read(preset, typed)
+    assert (got, from_url) == (url, game)
+    assert (said is None) == (url == typed or "://" not in typed)
+    if game is not None:
+        assert said.endswith(f"and the game is {game}, from its page's address")
+
+
+@pytest.mark.parametrize(("typed", "game"), [("3", "3"), (" 012 ", "12")])
+def test_a_games_number_is_its_pages_number(typed, game):
+    assert start.game_answer(typed) == game
+
+
+@pytest.mark.parametrize("typed", ["", "0", "three", "-1", "1 2", "1234567890", "3/challenges", "１"])
+def test_a_game_that_is_not_a_pages_number_is_refused(typed):
+    with pytest.raises(start.StartError, match="the game's number"):
+        start.game_answer(typed)
+
+
+def test_a_preset_table_has_its_game_exactly_when_its_routes_name_one():
+    from ctf_flightdeck import http_cli
+
+    with pytest.raises(ValueError, match="name the game"):
+        http_cli.preset_table("gzctf")
+    with pytest.raises(ValueError, match="name no game"):
+        http_cli.preset_table("rctf", "3")
+    with pytest.raises(ValueError, match="no preset"):
+        http_cli.preset_table("ctfd")
+    assert 'game = "7"' in http_cli.preset_table("gzctf", "7") and 'game = "1"' not in http_cli.preset_table("gzctf", "7")
+    assert "in quotes" in http_cli.preset_table("rctf") and "in quotes" not in http_cli.preset_table("rctf", keys_file=True)
+
+
+def http_answers(folder, *, preset_number, url, more="", token=""):
+    """At a terminal: the name, the folder, the AI rules (y), no label, the JSON-API choice, the
+    preset, the address, [more] (the game, a line each), no flag format, confirm, the token (hidden),
+    no VPN file, no solver pack and no launch."""
+    return f"Example CTF\n{folder}\ny\n\n3\n{preset_number}\n{url}\n{more}\n1\n{token}\n\nn\nn\n"
+
+
+def test_at_a_terminal_start_sets_up_an_rctf_event_and_keeps_its_login_link_out_of_sight(tmp_path, monkeypatch, setup):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    folder = tmp_path / "example"
+    result = run(input=http_answers(folder, preset_number=1, url="https://ctf.example.org/challs", token=LINK))
+    assert result.exit_code == 0, result.output
+    profile, policies = load_profile(folder / "event.toml")
+    assert (profile.platform, profile.http.preset, profile.url, profile.token_env) == (
+        "http", "rctf", "https://ctf.example.org", "RCTF_TOKEN_EXAMPLE_CTF")
+    assert policies.submit is Policy.CONFIRM
+    assert "address: rCTF's routes are under the site's root, so the address is https://ctf.example.org" in result.output
+    assert "Paste your team's login link, whole" in result.output  # the question says where rCTF keeps it, not CTFd's Settings
+    assert keys.load_keys(tmp_path / "keys.env") == {"RCTF_TOKEN_EXAMPLE_CTF": LINK}
+    assert LINK not in result.output and "c3ludGhldGlj" not in (folder / "event.toml").read_text()
+    assert "pulled from https://ctf.example.org when you play (rCTF's API, by the http platform)" in result.output
+    assert "type /new" not in result.output  # the board is pulled, not filled by hand
+    assert f"check: `flightdeck http check {folder / 'event.toml'}` signs in, lists the challenges" in result.output
+
+
+def test_a_gzctf_events_game_comes_from_its_pages_address_or_is_asked_for(tmp_path, monkeypatch, setup):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: True)
+    from_page = run(input=http_answers(tmp_path / "one", preset_number=4, url="https://ctf.example.org/games/3/challenges",
+                                       more="", token="synthetic-cookie"))
+    assert from_page.exit_code == 0, from_page.output
+    assert "The game's number" not in from_page.output and "and the game is 3, from its page's address" in from_page.output
+    one = load_profile(tmp_path / "one" / "event.toml")[0]
+    assert (one.url, one.http.game, one.token_env) == ("https://ctf.example.org", "3", "GZCTF_TOKEN_EXAMPLE_CTF")
+    asked = run(input=http_answers(tmp_path / "two", preset_number=4, url="other.example.org", more="0\n5\n", token=""))
+    assert asked.exit_code == 0, asked.output
+    assert "The game's number" in asked.output and "give the game's number" in asked.output  # 0 is no game: asked again
+    assert load_profile(tmp_path / "two" / "event.toml")[0].http.game == "5"
+    assert "token: not set yet. Put GZCTF_TOKEN_EXAMPLE_CTF_2=<your GZCTF token> in" in asked.output
+    assert "the value of the GZCTF_Token cookie" in asked.output.split("token: not set yet", 1)[1]
+
+
+HTTP = ("--name", "Example CTF", "--url", "https://ctf.example.org", "--ai-allowed")
+
+
+def test_away_from_a_terminal_a_json_api_event_takes_its_preset_game_and_token_as_options(tmp_path, monkeypatch, setup):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: False)
+    monkeypatch.setenv("MY_NOCTF", "synthetic-session-token")
+    folder = tmp_path / "example"
+    result = run(str(folder), *HTTP, "--preset", "noctf", "--token-env", "MY_NOCTF", "--submit", "auto")  # --preset alone: the http platform
+    assert result.exit_code == 0, result.output
+    profile, policies = load_profile(folder / "event.toml")
+    assert (profile.platform, profile.http.preset, profile.token_env, policies.submit) == ("http", "noctf", "NOCTF_TOKEN_EXAMPLE_CTF", Policy.AUTO)
+    assert keys.load_keys(tmp_path / "keys.env") == {"NOCTF_TOKEN_EXAMPLE_CTF": "synthetic-session-token"}
+    assert "synthetic-session-token" not in result.output and setup == []
+    gz = run(str(tmp_path / "gz"), *HTTP, "--platform", "http", "--preset", "GZCTF", "--game", "4")
+    assert gz.exit_code == 0, gz.output
+    assert load_profile(tmp_path / "gz" / "event.toml")[0].http.game == "4"
+
+
+@pytest.mark.parametrize(("options", "said"), [
+    (("--platform", "http"), "--preset rctf|rctf2|noctf|gzctf"),
+    (("--preset", "gzctf"), "give --game NUMBER"),
+    (("--preset", "rctf", "--game", "3"), "--game is for GZCTF (--preset gzctf): rCTF's routes name no game"),
+    (("--platform", "manual", "--preset", "rctf"), "--preset is for --platform http"),
+    (("--platform", "ctfd", "--game", "3"), "--game is for --platform http"),
+    (("--preset", "fbctf"), "--preset: answer 1 (rCTF), 2 (rCTF v2), 3 (noCTF), 4 (GZCTF)"),
+    (("--preset", "gzctf", "--url", "https://ctf.example.org/games/3", "--game", "4"), "--game 4 and the address's game (3) differ"),
+])
+def test_a_json_api_answer_that_does_not_fit_stops_start_before_anything_is_written(tmp_path, monkeypatch, setup, options, said):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: False)
+    folder = tmp_path / "example"
+    result = run(str(folder), "--name", "Example CTF", "--ai-allowed", *(() if "--url" in options else ("--url", "https://ctf.example.org")),
+                 *options)
+    assert result.exit_code == 2 and said in result.output, result.output
+    assert not folder.exists() and not (tmp_path / "keys.env").exists()
+
+
+def test_an_rctf_event_at_another_site_of_the_same_name_gets_a_token_variable_of_its_own(tmp_path, monkeypatch, setup):
+    monkeypatch.setattr(cli, "_at_terminal", lambda: False)
+    monkeypatch.setenv("ONE", "synthetic-one")
+    monkeypatch.setenv("TWO", "synthetic-two")
+    first = run(str(tmp_path / "ctf" / "one"), *HTTP, "--preset", "rctf", "--token-env", "ONE")
+    assert first.exit_code == 0, first.output
+    events.remember(tmp_path / "ctf" / "one")
+    second = run(str(tmp_path / "ctf" / "two"), "--name", "Example CTF", "--url", "https://other.example.org", "--ai-allowed",
+                 "--preset", "rctf", "--token-env", "TWO")
+    assert second.exit_code == 0, second.output
+    assert load_profile(tmp_path / "ctf" / "two" / "event.toml")[0].token_env == "RCTF_TOKEN_EXAMPLE_CTF_2"
+    assert keys.load_keys(tmp_path / "keys.env") == {"RCTF_TOKEN_EXAMPLE_CTF": "synthetic-one", "RCTF_TOKEN_EXAMPLE_CTF_2": "synthetic-two"}
 
 
 def test_start_offers_the_solver_pack_and_a_failed_install_does_not_undo_the_event(tmp_path, monkeypatch, setup):
@@ -419,7 +595,7 @@ def test_a_token_is_for_a_ctfd_event_and_a_pipe_is_not_a_terminal(tmp_path, monk
     monkeypatch.setattr(cli, "_at_terminal", lambda: False)
     monkeypatch.setenv("EXAMPLE_TOKEN", SECRET)
     by_hand = run(str(tmp_path / "hand"), "--name", "Hand CTF", "--platform", "manual", "--ai-allowed", "--token-env", "EXAMPLE_TOKEN")
-    assert by_hand.exit_code == 2 and "--token-env is for --platform ctfd" in by_hand.output
+    assert by_hand.exit_code == 2 and "--token-env is for --platform ctfd or http" in by_hand.output
     assert not (tmp_path / "hand").exists() and not (tmp_path / "keys.env").exists()
     monkeypatch.setattr(cli, "_at_terminal", lambda: True)
     at_a_terminal = run(str(tmp_path / "example"), *CTFD, "--token-stdin", input=f"{SECRET}\n")

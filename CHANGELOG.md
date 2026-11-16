@@ -273,6 +273,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   opening the screen again shows what they found until `r` checks again. `/config` works as
   before; `/settings` is no longer another name for it, and `/settings lanes 8` says to type
   `/config lanes 8`.
+- `flightdeck start` and the home screen's "Start a new CTF" set up an event on rCTF, rCTF v2,
+  noCTF or GZCTF: choose `3  json api`, then the platform, and give the site's address (on
+  GZCTF the game's page gives the game too) and your token, which the question says where to
+  find. The event file is the one `flightdeck http example --preset NAME` prints, filled in;
+  the token goes to your keys file as `RCTF_TOKEN_<NAME>`, `NOCTF_TOKEN_<NAME>` or
+  `GZCTF_TOKEN_<NAME>`, never shown. Without a terminal: `--preset NAME`, `--url` and, for
+  GZCTF, `--game NUMBER`. By hand is still `2`.
 
 ## 0.5.0 (2026-11-14)
 
