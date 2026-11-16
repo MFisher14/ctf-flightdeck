@@ -6,6 +6,8 @@
 #   advice      what to do instead, used in the redirect suggestion text
 #   description cues: words/phrases a description uses when it points at this technique
 #   actions     cues a lane's commands, tools, libraries or file names show when it follows it
+#   shapes      optional: names of built-in recognisers (detect/hints.py SHAPES) for work that
+#               names no tool, e.g. "morse": a run of dots and dashes, or a table keyed by them
 #
 # Description cues are matched as whole words after normalisation (accents dropped, lower
 # case, runs of other characters collapsed to one space; the last word may take a plural s or
@@ -38,6 +40,7 @@ name = "Morse code"
 advice = "Decode the signal as Morse code (dots and dashes) to letters."
 description = ["morse", "dots and dashes", "dot dash", "cw signal", "telegraph", "di dah", "shorts and longs", "longs and shorts", "long and short tones", "long and short beeps", "long and short flashes"]
 actions = ["morse", "morse-decoder", "cw", "morsedecoder", "from_morse"]
+shapes = ["morse"]
 
 [[technique]]
 id = "dtmf"
