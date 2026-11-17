@@ -448,8 +448,9 @@ def test_a_theme_that_is_no_theme_or_cannot_be_used_is_a_warning_and_the_theme_i
     asyncio.run(main())
 
 
-def test_theme_takes_the_players_own_theme_says_how_to_keep_it_and_reads_its_file_again_when_asked_again(tmp_path):
+def test_theme_takes_the_players_own_theme_saves_it_and_reads_its_file_again_when_asked_again(tmp_path):
     folder, config = own_themes(tmp_path), tmp_path / "config.toml"
+    config.write_text("[console]\n")
     world, app = busy_console(themes_folder=folder, config_path=str(config))
 
     async def main() -> None:
@@ -459,7 +460,8 @@ def test_theme_takes_the_players_own_theme_says_how_to_keep_it_and_reads_its_fil
             app.run_command("/theme dusk", None)
             await pilot.pause()
             await pilot.pause()
-            assert app._status[:2] == ("theme dusk for this run. To keep it: /theme, then s", "information")
+            assert app._status[:2] == (f"theme dusk, saved in your config file: {config}", "information")  # #55: kept for the next run
+            assert 'theme = "dusk"' in config.read_text()
             assert (theme.active().name, theme.active().accent, theme.active().border) == ("dusk", "#ff5fd7", NORD.border)
             assert "#ff5fd7" in screen_colors(app) and NORD.accent not in screen_colors(app)  # dusk's own accent (the focused pane's border)
             assert color_of(app, "last action", row_of(app, "last action")) == NORD.muted  # and its base's other colours

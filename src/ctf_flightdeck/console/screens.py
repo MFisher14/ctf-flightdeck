@@ -554,7 +554,7 @@ class WelcomeScreen(FittedModal, ModalScreen[bool]):
 @dataclass(frozen=True)
 class Settings:
     """What /config's dialog shows and answers: lanes at once as typed, what happens to a flag
-    (`submit`), the console's layout and theme, and whether the last two are also saved."""
+    (`submit`), the console's layout and theme, and whether lanes, layout and theme are also saved."""
 
     lanes: str
     submit: str
@@ -564,9 +564,9 @@ class Settings:
 
 
 class ConfigPrompt(FittedModal, ModalScreen["Settings | None"]):
-    """/config: the settings in one place. Lanes at once and what happens to a flag a lane
-    finds, which last for this run; and the console's layout and theme, which last for this
-    run unless the list under them says to save them: then they go in the config file too.
+    """/config: the settings in one place. Lanes at once, the console's layout and its theme,
+    which are saved in the config file too unless the list under them says this run only
+    (#55); and what happens to a flag a lane finds, which lasts for this run only.
     The answer is a Settings, or None; nothing changes before the answer.
 
     `themes`: the names the theme list offers (the one in use is added when it is not among
@@ -620,11 +620,11 @@ class ConfigPrompt(FittedModal, ModalScreen["Settings | None"]):
                                  id="config-layout")
                     yield Select([(Text(name), name) for name in self.themes], value=now.theme, allow_blank=False, id="config-theme")
                 if self.config_path:
-                    yield Static(Text("Keep that layout and those colours:"), classes="muted group")
-                    yield Select([(Text("for this run"), False), (Text("for this run, and saved in your config file"), True)],
+                    yield Static(Text("Keep lanes at once, that layout and those colours:"), classes="muted group")
+                    yield Select([(Text("saved in your config file, for the next run too"), True), (Text("for this run only"), False)],
                                  value=now.save, allow_blank=False, id="config-save")
             with Container(id="config-foot"):
-                where = (f"Lanes and flags last for this run. Your config file keeps their defaults: {self.config_path}" if self.config_path
+                where = (f"What happens to a flag lasts for this run only. Your config file: {self.config_path}" if self.config_path
                          else "These last for this run: this console has no config file.")
                 yield Static(Text(where), classes="muted group")
                 yield Static(_keys(("enter", "apply"), ("ctrl+s", "apply from any field"), ("tab", "next field"), ("esc", "cancel")),
@@ -666,12 +666,13 @@ class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
 
     The row the cursor is on is handed to `preview`, which draws the console in it; the dialog
     sits at the right edge over a console that is not dimmed, so what is tried can be seen.
-    Enter keeps the row for this run and `s` keeps it and has it saved: the answer is
-    (name, save). esc is None, and whoever opened the dialog puts back what was there. A row
+    Enter keeps the row and has it saved (#55), and `r` keeps it for this run only: the
+    answer is (name, save). `s` does what Enter does, as it did before Enter saved. esc is None, and whoever opened the dialog puts back what was there. A row
     with a problem says it under its name and cannot be reached by the cursor or by a click.
 
     `save_to` is the config file a choice is saved in. With none ("": the mock with no
-    config) the dialog has no `s` row, and `s` says why instead of doing nothing.
+    config) Enter keeps the row for this run, there is no `r` row, and `s` says why it saves
+    nothing instead of doing nothing.
 
     The keys are always on screen: the title and the rows under the list are docked, and the
     list between them scrolls when the terminal is too short for it (FittedModal).
@@ -701,7 +702,8 @@ class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
     Picker.-short #picker-note { display: none; }
     """
     SHORT_UNDER = 24  # rows: with fewer the dialog gives up its blank rows and the note, and the list keeps what is left
-    BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("s", "save", "keep and save")]
+    BINDINGS = [Binding("escape", "cancel", "cancel"), Binding("r", "this_run", "this run only"),
+                Binding("s", "save", "keep and save", show=False)]  # s: what Enter does, as it was before 0.9.0
 
     def __init__(self, what: str, choices: list[Choice], *, in_use: str, preview: Callable[[str], None], save_to: str = "",
                  note: str | Callable[[int], str] = "") -> None:
@@ -728,9 +730,11 @@ class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
         grid.add_column(no_wrap=True)
         grid.add_column()
         grid.add_row(theme.key_chip("↑↓"), Text(f"try a {self.what} on the console behind this"))
-        grid.add_row(theme.key_chip("enter"), Text("keep it for this run"))
         if self.save_to:
-            grid.add_row(theme.key_chip("s"), Text("keep it, and save it in your config"))
+            grid.add_row(theme.key_chip("enter"), Text("keep it, and save it in your config"))
+            grid.add_row(theme.key_chip("r"), Text("keep it for this run only"))
+        else:
+            grid.add_row(theme.key_chip("enter"), Text("keep it for this run"))
         grid.add_row(theme.key_chip("esc"), Text("back to what it was"))
         return grid
 
@@ -791,7 +795,16 @@ class Picker(FittedModal, ModalScreen["tuple[str, bool] | None"]):
 
     @on(OptionList.OptionSelected)
     def _kept(self, event: OptionList.OptionSelected) -> None:
-        self._answer((str(event.option.id), False))
+        self._answer((str(event.option.id), bool(self.save_to)))  # saved when there is a config to save in (#55)
+
+    def action_this_run(self) -> None:
+        if self.answered:
+            return
+        option = self.query_one(OptionList).highlighted_option
+        if option is None:
+            self._say(f"No {self.what} is chosen yet: move to one with ↑ or ↓.")
+        else:
+            self._answer((str(option.id), False))
 
     def _answer(self, answer: tuple[str, bool] | None) -> None:
         """Close with `answer`, the first time only: dismissing a dialog that is closed already

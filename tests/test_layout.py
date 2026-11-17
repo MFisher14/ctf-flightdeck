@@ -852,7 +852,7 @@ def test_the_lane_list_fits_its_columns_to_its_width_whenever_that_changes():
     drive(app, script, SIZE)
 
 
-def test_layout_refuses_any_other_word_and_says_where_to_keep_a_layout():
+def test_layout_refuses_any_other_word_and_tries_to_save_the_one_it_takes():
     deck, app = three_lanes("simple", config_path="/somewhere/config.toml")
 
     async def script(pilot):
@@ -864,15 +864,16 @@ def test_layout_refuses_any_other_word_and_says_where_to_keep_a_layout():
         app.run_command("/layout DECK", None)
         await pilot.pause()
         assert app.layout == "deck"
-        assert "layout deck for this run. To keep it: /layout, then s" in status_line(app)
+        # #55: /layout NAME saves; this config file is not there, so it says so and how to make one
+        assert "layout deck for this run; it was not saved: there is no config at /somewhere/config.toml: run `flightdeck init` first" in status_line(app)
 
     drive(app, script, SIZE)
 
 
 PLAYERS_CONFIG = "/home/player/.config/flightdeck/config.toml"  # no such file: only its name is said
 ANSWERS = (  # (the board is a platform's, typed, the status line's whole text)
-    (False, "/theme nord", "theme nord for this run. To keep it: /theme, then s"),
-    (False, "/layout deck", "layout deck for this run. To keep it: /layout, then s"),
+    (False, "/theme nord", f"theme nord for this run; it was not saved: there is no config at {PLAYERS_CONFIG}: run `flightdeck init` first"),
+    (False, "/layout deck", f"layout deck for this run; it was not saved: there is no config at {PLAYERS_CONFIG}: run `flightdeck init` first"),
     (False, "/config file", f"your config file: {PLAYERS_CONFIG}"),
     (False, "/theme nope", "/theme names no theme: built in are flightdeck, light, nord, gruvbox, dracula; your own is NAME.toml in "
                            "/home/player/.config/flightdeck/themes"),
@@ -884,7 +885,7 @@ ANSWERS = (  # (the board is a platform's, typed, the status line's whole text)
 @pytest.mark.parametrize("platform, typed, said", ANSWERS, ids=[typed for _, typed, _ in ANSWERS])
 def test_an_answer_too_long_for_one_row_of_the_status_line_goes_on_in_the_next(size, platform, typed, said):
     """What a command answers is read whole on an 80-column terminal: the part that matters
-    (how to keep a theme, where an own theme goes) is at its end."""
+    (why a theme was not saved, where an own theme goes) is at its end."""
     from pathlib import Path
 
     deck, app = console(by_hand=not platform, layout="simple", config_path=PLAYERS_CONFIG, themes_folder=Path(PLAYERS_CONFIG).parent / "themes")

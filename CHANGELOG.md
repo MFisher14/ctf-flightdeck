@@ -2,6 +2,14 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+- What you set in the console now stays for the next run (#55). In the `/theme` and `/layout`
+  lists Enter saves the choice in your config, and `r` keeps it for this run only. `/theme NAME`
+  and `/layout NAME` save too, and so does `/config lanes N`. `/config`'s dialog saves lanes at
+  once, the layout and the theme unless you choose `for this run only`. Auto approve is never
+  saved: it lasts for the run you turn it on in.
+
 ## 0.8.0 (2026-11-16)
 
 What the real practice-set runs of 0.7.0 found, fixed: a planted decoy no longer keeps a challenge

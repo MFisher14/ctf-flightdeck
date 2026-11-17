@@ -84,8 +84,9 @@ def note(app) -> str:
     return "".join(region_text(app, "#picker-note").split())
 
 
-ALL_KEYS = ["↑↓ try a theme on the console behind this", "enter keep it for this run", "s keep it, and save it in your config",
+ALL_KEYS = ["↑↓ try a theme on the console behind this", "enter keep it, and save it in your config", "r keep it for this run only",
             "esc back to what it was"]
+NO_CONFIG_KEYS = ["↑↓ try a theme on the console behind this", "enter keep it for this run", "esc back to what it was"]
 
 
 def said_in(app) -> str:
@@ -166,7 +167,7 @@ def test_the_cursor_draws_the_console_behind_the_list_in_the_theme_it_is_on_and_
                 # what was on screen already, a transcript's line too, and the dialog's own rows and keys
                 assert color_of(app, "written before the list", written) == palette.accent, name
                 assert color_of(app, "built in", row_of(app, "flightdeck  built in")) == palette.muted, name
-                assert color_of(app, "enter", row_of(app, "keep it for this run")) == palette.ink, name
+                assert color_of(app, "enter", row_of(app, "keep it, and save it")) == palette.ink, name
             assert theme.active().accent == "#ff5fd7" and "#ff5fd7" in seen["dusk"]  # the player's own file
             await press(pilot, "up")  # and back up, past it again
             assert cursor(app) == "dracula" and theme.active() is themes.BUILTIN["dracula"]
@@ -199,26 +200,27 @@ def test_esc_typed_right_after_a_cursor_key_still_puts_the_old_theme_back(tmp_pa
     drive(app, script, SIZE)
 
 
-def test_a_key_typed_right_after_enter_or_s_does_not_change_the_theme_kept(tmp_path):
+def test_a_key_typed_right_after_enter_or_r_does_not_change_the_theme_kept(tmp_path):
     config = a_config(tmp_path)
     deck, app = three_lanes("simple", themes_folder=own_themes(tmp_path), config_path=str(config))
 
     async def script(pilot):
         focus = await open_focus(pilot, app, "L01")
         await typed(pilot, app, "/theme")
-        await at_once(pilot, app, "down", "enter", "enter")  # the second Enter is for a list that has answered: it closes nothing more
+        await at_once(pilot, app, "down", "r", "enter")  # the Enter is for a list that has answered: it saves nothing, closes nothing more
         assert app.screen is focus and theme.active() is themes.BUILTIN["light"]
-        assert app._status[:2] == ("theme light for this run. To keep it: /theme, then s", "information") and config.read_text() == CONFIG
+        assert app._status[:2] == ("theme light for this run only. To keep it: /theme, then enter", "information")
+        assert config.read_text() == CONFIG
         await typed(pilot, app, "/theme")
         assert cursor(app) == "light"
-        await at_once(pilot, app, "down", "down", "s")
+        await at_once(pilot, app, "down", "down", "enter", "up")
         assert app.screen is focus and theme.active() is themes.BUILTIN["gruvbox"] and load_console(config).theme == "gruvbox"
         assert app._status[:2] == (f"theme gruvbox, saved in your config file: {config}", "information")
 
     drive(app, script, SIZE)
 
 
-def test_enter_keeps_the_theme_for_this_run_and_writes_nothing(tmp_path):
+def test_r_keeps_the_theme_for_this_run_only_and_writes_nothing(tmp_path):
     config = a_config(tmp_path)
     world, app = busy_console(themes_folder=own_themes(tmp_path), config_path=str(config))
 
@@ -228,21 +230,21 @@ def test_enter_keeps_the_theme_for_this_run_and_writes_nothing(tmp_path):
             await typed(pilot, app, "/theme")
             await press(pilot, "down", "down")
             assert cursor(app) == "nord"
-            await press(pilot, "enter")
+            await press(pilot, "r")
             assert isinstance(app.screen, FleetScreen) and theme.active() is NORD and app.theme == "fd-nord"
-            assert app._status[:2] == ("theme nord for this run. To keep it: /theme, then s", "information")
+            assert app._status[:2] == ("theme nord for this run only. To keep it: /theme, then enter", "information")
             assert NORD.page in screen_colors(app) and not screen_colors(app) & not_default(NORD)
             assert config.read_text() == CONFIG
-            # the list again: the cursor is on what is in use now, and enter there changes nothing
+            # the list again: the cursor is on what is in use now, and r there changes nothing
             await typed(pilot, app, "/theme")
             assert cursor(app) == "nord" and "nord  built in, in use" in dialog(app)
-            await press(pilot, "enter")
+            await press(pilot, "r")
             assert theme.active() is NORD and config.read_text() == CONFIG
 
     asyncio.run(main())
 
 
-def test_s_keeps_the_theme_and_saves_it_and_the_next_console_opens_in_it(tmp_path):
+def test_enter_keeps_the_theme_and_saves_it_and_the_next_console_opens_in_it(tmp_path):
     config = a_config(tmp_path)
     world, app = busy_console(themes_folder=own_themes(tmp_path), config_path=str(config))
 
@@ -252,16 +254,16 @@ def test_s_keeps_the_theme_and_saves_it_and_the_next_console_opens_in_it(tmp_pat
             await typed(pilot, app, "/theme")
             await press(pilot, "end")
             assert cursor(app) == "dusk"
-            await press(pilot, "s")
+            await press(pilot, "enter")  # #55: Enter saves
             assert isinstance(app.screen, FleetScreen) and theme.active().name == "dusk"
             assert app._status[:2] == (f"theme dusk, saved in your config file: {config}", "information")
             assert config.read_text() == CONFIG + '\n[console]\ntheme = "dusk"\n'
             # saved again from the list, where the cursor is on it: the file says so already
             stamp = os.stat(config).st_mtime_ns
             await typed(pilot, app, "/theme")
-            await press(pilot, "s")
+            await press(pilot, "enter")
             assert app._status[0] == f"theme dusk, saved in your config file: {config}" and os.stat(config).st_mtime_ns == stamp
-            # and another one over it: the same line, changed
+            # and another one over it: the same line, changed; s does what Enter does, as it did before Enter saved
             await typed(pilot, app, "/theme")
             await press(pilot, "home", "down", "s")
             assert theme.active().name == "light" and config.read_text() == CONFIG + '\n[console]\ntheme = "light"\n'
@@ -297,7 +299,7 @@ def test_a_save_that_fails_says_why_leaves_the_file_as_it_was_and_the_run_keeps_
         async with app.run_test(size=SIZE) as pilot:
             await pilot.pause()
             await typed(pilot, app, "/theme")
-            await press(pilot, "down", "down", "s")
+            await press(pilot, "down", "down", "enter")
             assert isinstance(app.screen, FleetScreen)
             assert app._status[:2] == (f"theme nord for this run; it was not saved: {reason.format(path=config)}", "warning")
             assert_warning(app, "theme nord for this run; it was not saved:")
@@ -318,7 +320,7 @@ def test_a_config_that_cannot_be_written_keeps_the_theme_for_the_run_and_says_so
         async with app.run_test(size=SIZE) as pilot:
             await pilot.pause()
             await typed(pilot, app, "/theme")
-            await press(pilot, "down", "s")
+            await press(pilot, "down", "enter")
             assert app._status[:2] == (f"theme light for this run; it was not saved: cannot write the config {config} (Permission denied): "
                                        "it is as it was", "warning")
             assert theme.active() is themes.BUILTIN["light"]
@@ -359,7 +361,7 @@ def test_with_no_config_file_the_list_has_no_save_key_and_s_says_why(tmp_path):
             await typed(pilot, app, "/theme")
             assert rows(app) == ["flightdeck  built in, in use", "light  built in", "nord  built in", "gruvbox  built in", "dracula  built in"]
             assert note(app) == "This console has no config file, so a theme lasts for this run.".replace(" ", "")
-            assert keys(app) == [key for key in ALL_KEYS if not key.startswith("s ")]
+            assert keys(app) == NO_CONFIG_KEYS
             await press(pilot, "down", "s")
             assert isinstance(app.screen, Picker) and cursor(app) == "light"  # still open, on the same row
             said = " ".join(region_text(app, "#picker-said").split())
@@ -457,7 +459,8 @@ def test_the_lists_keys_are_on_screen_on_a_short_terminal_and_the_list_scrolls_t
 
 
 def test_a_click_keeps_a_row_and_a_row_that_cannot_be_used_takes_no_click(tmp_path):
-    world, app = busy_console(themes_folder=own_themes(tmp_path), config_path=str(a_config(tmp_path)))
+    config = a_config(tmp_path)
+    world, app = busy_console(themes_folder=own_themes(tmp_path), config_path=str(config))
 
     async def main() -> None:
         async with app.run_test(size=SIZE) as pilot:
@@ -470,14 +473,14 @@ def test_a_click_keeps_a_row_and_a_row_that_cannot_be_used_takes_no_click(tmp_pa
             await pilot.click(OptionList, offset=(4, row_of(app, "gruvbox  built in") - rows.y))
             await pilot.pause()
             assert isinstance(app.screen, FleetScreen) and theme.active() is themes.BUILTIN["gruvbox"]
-            assert app._status[0] == "theme gruvbox for this run. To keep it: /theme, then s"
+            assert app._status[0] == f"theme gruvbox, saved in your config file: {config}"  # a click is Enter: kept and saved
 
     asyncio.run(main())
 
 
 def test_on_a_terminal_the_mock_saves_the_theme_picked_in_the_config_it_opened_in(tmp_path):
     """The real command on a pty, through the driver a terminal window gets and with the keys
-    typed one at a time, as a player types them: `/theme`, down, `s`, then `ctrl+q`. The mock
+    typed one at a time, as a player types them: `/theme`, down, Enter, then `ctrl+q`. The mock
     reads its look from the config $FLIGHTDECK_CONFIG names, and saves there."""
     import time
 
@@ -502,7 +505,7 @@ def test_on_a_terminal_the_mock_saves_the_theme_picked_in_the_config_it_opened_i
         keys(b"q")
         keys(*(letter.encode() for letter in "/theme"), b"\r")
         wait_for(lambda: "keep it, and save it in your config" in shown(), "the list of themes, with its save key", term)
-        keys(b"\x1b[B", b"s")  # down to `light`, and save
+        keys(b"\x1b[B", b"\r")  # down to `light`, and Enter: kept and saved (#55)
         wait_for(lambda: config.read_text() == CONFIG + '\n[console]\ntheme = "light"\n', "the theme saved", term, timeout=20.0)
         wait_for(lambda: "theme light, saved in your config file:" in shown(), "the status line saying so", term, timeout=20.0)
         os.write(term.master, b"\x11")  # ctrl+q
@@ -569,25 +572,25 @@ def test_esc_typed_right_after_a_cursor_key_still_puts_the_old_layout_back(tmp_p
     drive(app, script, SIZE)
 
 
-def test_enter_keeps_the_layout_for_this_run_and_s_saves_it(tmp_path):
+def test_r_keeps_the_layout_for_this_run_only_and_enter_saves_it(tmp_path):
     config = a_config(tmp_path, CONFIG + '\n[console]\n# layout = "simple"\ntheme = "nord"\n')
     deck, app = three_lanes("simple", config_path=str(config))
 
     async def script(pilot):
         await typed(pilot, app, "/layout")
-        await press(pilot, "down", "enter")
+        await press(pilot, "down", "r")
         await pilot.pause()
         assert isinstance(app.screen, FleetScreen) and app.layout == "deck" and columns(app, "lanes") == DECK_COLUMNS
-        assert "layout deck for this run. To keep it: /layout, then s" in status_line(app)
+        assert "layout deck for this run only" in status_line(app)
         assert config.read_text() == CONFIG + '\n[console]\n# layout = "simple"\ntheme = "nord"\n'
         await typed(pilot, app, "/layout")
         assert cursor(app) == "deck" and "deck  the board and every column, in use" in dialog(app)
-        await press(pilot, "s")  # on the layout in use: saved as it is
+        await press(pilot, "enter")  # on the layout in use: saved as it is
         assert app.layout == "deck" and app._status[:2] == (f"layout deck, saved in your config file: {config}", "information")
         assert config.read_text() == CONFIG + '\n[console]\n# layout = "simple"\nlayout = "deck"\ntheme = "nord"\n'
         assert (load_console(config).layout, load_console(config).theme) == ("deck", "nord")
         await typed(pilot, app, "/layout")
-        await press(pilot, "up", "s")
+        await press(pilot, "up", "enter")
         await pilot.pause()
         assert app.layout == "simple" and columns(app, "lanes") == SIMPLE_COLUMNS
         assert config.read_text() == CONFIG + '\n[console]\n# layout = "simple"\nlayout = "simple"\ntheme = "nord"\n'
@@ -682,15 +685,17 @@ def test_a_status_line_said_on_a_narrow_terminal_drops_narrow_once_it_is_made_wi
     drive(app, script, (60, 30))
 
 
-def test_layout_with_a_word_still_switches_at_once_and_opens_no_list(tmp_path):
+def test_layout_and_theme_with_a_word_switch_at_once_open_no_list_and_save(tmp_path):
     config = a_config(tmp_path)
     deck, app = three_lanes("simple", config_path=str(config))
 
     async def script(pilot):
         await typed(pilot, app, "/layout deck")
-        assert isinstance(app.screen, FleetScreen) and app.layout == "deck" and config.read_text() == CONFIG
+        assert isinstance(app.screen, FleetScreen) and app.layout == "deck"
+        assert config.read_text() == CONFIG + '\n[console]\nlayout = "deck"\n'  # #55: kept for the next run
         await typed(pilot, app, "/theme nord")
-        assert isinstance(app.screen, FleetScreen) and theme.active() is NORD and config.read_text() == CONFIG
+        assert isinstance(app.screen, FleetScreen) and theme.active() is NORD
+        assert config.read_text() == CONFIG + '\n[console]\nlayout = "deck"\ntheme = "nord"\n'
 
     drive(app, script, SIZE)
 
@@ -704,8 +709,8 @@ def test_a_picker_hands_each_row_the_cursor_reaches_to_preview_and_answers_with_
     choices = [Choice("one", "the first"), Choice("two", "", "two.toml: is not a theme\x1b[2J"), Choice("three", "the third")]
 
     async def script(pilot):
-        for keys, answer in ((("down", "enter"), ("three", False)), (("down", "s"), ("three", True)), (("escape",), None),
-                             (("enter",), ("one", False)), (("s",), ("one", True))):
+        for keys, answer in ((("down", "enter"), ("three", True)), (("down", "r"), ("three", False)), (("down", "s"), ("three", True)),
+                             (("escape",), None), (("enter",), ("one", True)), (("r",), ("one", False)), (("s",), ("one", True))):
             tried.clear()
             app.push_screen(Picker("thing", choices, in_use="one", preview=tried.append, save_to="/somewhere/config.toml"), answers.append)
             await pilot.pause()
@@ -713,6 +718,10 @@ def test_a_picker_hands_each_row_the_cursor_reaches_to_preview_and_answers_with_
             await press(pilot, *keys)
             assert answers[-1] == answer and not isinstance(app.screen, Picker)
             assert tried == (["one", "three"] if "down" in keys else ["one"]), keys  # never the row that cannot be used
+        app.push_screen(Picker("thing", choices, in_use="one", preview=tried.append), answers.append)
+        await pilot.pause()
+        await press(pilot, "enter")  # no config to save in: Enter keeps it for this run
+        assert answers[-1] == ("one", False) and not isinstance(app.screen, Picker)
         app.push_screen(Picker("thing", choices, in_use="one", preview=tried.append), answers.append)
         await pilot.pause()
         shown = "\n".join(dialog(app))
@@ -724,8 +733,8 @@ def test_a_picker_hands_each_row_the_cursor_reaches_to_preview_and_answers_with_
 
 @pytest.mark.parametrize("keys, answer", [
     (("down", "escape"), None), (("down", "down", "escape"), None), (("down", "s"), ("three", True)),
-    (("enter", "enter"), ("one", False)), (("down", "enter", "enter"), ("three", False)), (("down", "enter", "up"), ("three", False)),
-    (("down", "s", "enter"), ("three", True)),
+    (("enter", "enter"), ("one", True)), (("down", "enter", "enter"), ("three", True)), (("down", "enter", "up"), ("three", True)),
+    (("down", "s", "enter"), ("three", True)), (("down", "r", "enter"), ("three", False)), (("r", "r"), ("one", False)),
 ], ids=lambda value: " ".join(map(str, value or ("esc",))))
 def test_a_picker_answers_once_and_tries_nothing_after_it_whatever_keys_were_typed_ahead(keys, answer):
     """Keys queued with no wait between them: the row a cursor key reached is told to the dialog after the key that
@@ -786,17 +795,19 @@ def test_config_shows_the_layout_and_the_theme_in_use_and_every_theme_by_name(tm
 
     async def script(pilot):
         await typed(pilot, app, "/config")
-        assert (field(app, "layout").value, field(app, "theme").value, field(app, "save").value) == ("simple", "nord", False)
-        assert options(app, "layout") == ["simple", "deck"] and options(app, "save") == [False, True]
+        # #55: saved unless the player says this run only
+        assert (field(app, "layout").value, field(app, "theme").value, field(app, "save").value) == ("simple", "nord", True)
+        assert options(app, "layout") == ["simple", "deck"] and options(app, "save") == [True, False]
         # by name only: no theme file is opened for the list, so one that cannot be used is offered, and refused when it is asked for
         assert options(app, "theme") == ["flightdeck", "light", "nord", "gruvbox", "dracula", "broken", "dusk"]
         said = prompt_text(app)
         for part in ("Settings", "Console: its layout and its colours (/layout and /theme try each one first):",
-                     "simple: the lanes and what needs you", "Keep that layout and those colours:", "for this run",
+                     "simple: the lanes and what needs you", "Keep lanes at once, that layout and those colours:",
+                     "saved in your config file, for the next run too",
                      "enter apply ctrl+s apply from any field tab next field esc cancel"):
             assert part in said, (part, said)
         # (a path has no space to wrap at: the same letters, in order)
-        assert f"Lanes and flags last for this run. Your config file keeps their defaults: {config}".replace(" ", "") in said.replace(" ", "")
+        assert f"What happens to a flag lasts for this run only. Your config file: {config}".replace(" ", "") in said.replace(" ", "")
         await press(pilot, "escape")
         assert isinstance(app.screen, FleetScreen) and app.layout == "simple" and theme.active() is NORD and config.read_text() == CONFIG
 
@@ -820,29 +831,57 @@ def test_config_with_no_config_file_has_nothing_to_save_in_and_a_theme_the_lists
     drive(app, script, SIZE)
 
 
-def test_config_sets_the_layout_and_the_theme_for_this_run_beside_the_runs_other_settings(tmp_path):
+def test_config_sets_the_layout_and_the_theme_for_this_run_only_beside_the_runs_other_settings(tmp_path):
     config = a_config(tmp_path)
     deck, app = three_lanes("simple", config_path=str(config), themes_folder=own_themes(tmp_path))
 
     async def script(pilot):
         await typed(pilot, app, "/config")
         field(app, "theme").value = "dusk"
-        await press(pilot, "enter")  # in the lanes field, where the dialog opens
+        field(app, "save").value = False
+        await press(pilot, "ctrl+s")
         assert theme.active().name == "dusk" and "#ff5fd7" in screen_colors(app) and app.layout == "simple"
-        assert app._status[:2] == ("Theme dusk for this run", "information") and config.read_text() == CONFIG
+        assert app._status[:2] == ("Theme dusk for this run only", "information") and config.read_text() == CONFIG
         await typed(pilot, app, "/config")
-        assert field(app, "theme").value == "dusk"
+        assert field(app, "theme").value == "dusk" and field(app, "save").value is True  # asked again each time
         field(app, "lanes").value = "6"
         field(app, "layout").value = "deck"
         field(app, "theme").value = "light"
-        await press(pilot, "tab", "ctrl+s")  # from a list: Enter there opens it
+        field(app, "save").value = False
+        await press(pilot, "ctrl+s")
         await pilot.pause()
         assert (app.layout, theme.active().name, deck.config.max_lanes) == ("deck", "light", 6)
         assert columns(app, "lanes") == DECK_COLUMNS and themes.BUILTIN["light"].page in screen_colors(app)
-        assert app._status[:2] == ("Lanes at once: 6 for the rest of this run. Layout deck and theme light for this run", "information")
+        assert app._status[:2] == ("Lanes at once: 6 for the rest of this run. Layout deck and theme light for this run only", "information")
         assert config.read_text() == CONFIG
 
     drive(app, script, SIZE)
+
+
+def test_config_saves_lanes_the_layout_and_the_theme_unless_told_this_run_only_and_the_next_run_reads_them(tmp_path):
+    """#55: what the dialog sets is kept for the next run; what happens to a flag never is."""
+    config = a_config(tmp_path)
+    deck, app = three_lanes("simple", config_path=str(config), themes_folder=own_themes(tmp_path))
+
+    async def script(pilot):
+        await typed(pilot, app, "/config")
+        await pilot.pause()
+        field(app, "lanes").value = "6"
+        field(app, "submit").value = "auto"
+        field(app, "layout").value = "deck"
+        field(app, "theme").value = "nord"
+        await press(pilot, "enter")  # in the lanes field, where the dialog opens
+        await pilot.pause()
+        assert (deck.config.max_lanes, deck.config.submit, app.layout, theme.active()) == (6, "auto", "deck", NORD)
+        said = app._status[0]
+        assert said.startswith(f"Lanes at once: 6, saved in your config file: {config}") and "Layout deck and theme nord, saved" in said
+        assert config.read_text() == CONFIG.replace('runtime = "host"\n', 'runtime = "host"\nmax_lanes = 6\n') + (
+            '\n[console]\nlayout = "deck"\ntheme = "nord"\n')
+        assert "submit" not in config.read_text()  # auto approve is never carried into another run
+
+    drive(app, script, SIZE)
+    loaded = load_config(config)  # what the next run reads
+    assert (loaded.lanes.max_lanes, loaded.lanes.submit, loaded.console.layout, loaded.console.theme) == (6, "confirm", "deck", "nord")
 
 
 def test_config_saves_the_layout_and_the_theme_when_asked_to_and_what_is_in_use_when_nothing_else_changed(tmp_path):
@@ -858,15 +897,19 @@ def test_config_saves_the_layout_and_the_theme_when_asked_to_and_what_is_in_use_
         # both, as the dialog showed them: the config then says what the console is in
         assert app._status[:2] == (f"Layout simple and theme nord, saved in your config file: {config}", "information")
         assert config.read_text() == CONFIG + '\n[console]\nmouse = false\nlayout = "simple"\ntheme = "nord"\n'
-        app.run_command("/layout deck", None)  # for this run
-        app.run_command("/theme dusk", None)
-        await pilot.pause()
+        await typed(pilot, app, "/layout")
+        await press(pilot, "down", "r")  # for this run only
+        await typed(pilot, app, "/theme")
+        await press(pilot, "end", "r")
         await typed(pilot, app, "/config")
-        assert (field(app, "layout").value, field(app, "theme").value, field(app, "save").value) == ("deck", "dusk", False)
-        field(app, "save").value = True  # and nothing else: keep what the console is in
+        assert (field(app, "layout").value, field(app, "theme").value, field(app, "save").value) == ("deck", "dusk", True)
+        field(app, "save").value = False  # an answer that differs, so the dialog acts, then saved: keep what the console is in
+        field(app, "save").value = True
+        field(app, "lanes").value = "5"
         await press(pilot, "ctrl+s")
-        assert app._status[0] == f"Layout deck and theme dusk, saved in your config file: {config}"
-        assert config.read_text() == CONFIG + '\n[console]\nmouse = false\nlayout = "deck"\ntheme = "dusk"\n'
+        assert app._status[0].endswith(f"Layout deck and theme dusk, saved in your config file: {config}")
+        assert config.read_text() == CONFIG.replace('runtime = "host"\n', 'runtime = "host"\nmax_lanes = 5\n') + (
+            '\n[console]\nmouse = false\nlayout = "deck"\ntheme = "dusk"\n')
         console = load_console(config)
         assert (console.layout, console.theme, console.mouse, console.palette.accent) == ("deck", "dusk", False, "#ff5fd7")
 
@@ -910,10 +953,11 @@ def test_a_save_from_config_that_fails_is_a_warning_and_the_run_keeps_what_was_s
         await pilot.pause()
         assert (deck.config.max_lanes, app.layout) == (6, "deck") and columns(app, "lanes") == DECK_COLUMNS
         assert app._status[:2] == (
-            "Lanes at once: 6 for the rest of this run. Layout deck and theme flightdeck for this run; it was not saved: flightdeck could "
-            f'not place the line in {config}, which was left as it is: write layout = "deck" and theme = "flightdeck" under [console] yourself',
+            f"Lanes at once: 6, saved in your config file: {config}. Layout deck and theme flightdeck for this run; it was not saved: flightdeck "
+            f'could not place the line in {config}, which was left as it is: write layout = "deck" and theme = "flightdeck" under [console] yourself',
             "warning")
-        assert config.read_text() == "console.mouse = false\n" + CONFIG
+        # the lanes line went in; the [console] one could not, and nothing else changed
+        assert config.read_text() == "console.mouse = false\n" + CONFIG.replace('runtime = "host"\n', 'runtime = "host"\nmax_lanes = 6\n')
 
     drive(app, script, SIZE)
 
