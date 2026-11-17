@@ -2,6 +2,12 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Unreleased
+
+- An ACP agent (`--agent acp`) in Docker lanes need only be in the lane image: flightdeck no longer
+  looks for it on your machine too. The guide has a Dockerfile for Claude Code's ACP adapter, which
+  played the practice set in Docker lanes (12 of 14 solved, $0.06).
+
 ## 0.8.0 (2026-11-16)
 
 What the real practice-set runs of 0.7.0 found, fixed: a planted decoy no longer keeps a challenge
