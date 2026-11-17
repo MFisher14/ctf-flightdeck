@@ -1017,12 +1017,15 @@ def _agent_checks(kind: str, config, environ: Mapping[str, str]) -> list[Check]:
         if acp is not None and kind == "acp":
             from .agent.acp import find_acp_agent
 
-            found = find_acp_agent(acp.command, ladder[0], env=acp.env, api=acp.api, hold=acp.hold, environ=merged)
+            found = find_acp_agent(acp.command, ladder[0], env=acp.env, api=acp.api, hold=acp.hold, environ=merged,
+                                   docker=config.lanes.runtime == "docker")  # then the agent image check looks in the image
         else:
             found = find_agent(kind, ladder[0], environ=merged)
     except AgentError as exc:
         return [Check("agent", False, str(exc), _agent_fix(kind, str(exc)))]
-    checks = [Check("agent", True, f"{kind} at {found.executable}" + (f": {found.auth}" if found.auth else ""))]
+    where = (f"{found.executable}, in the lane image (Docker lanes run it there)"
+             if kind == "acp" and config.lanes.runtime == "docker" else found.executable)
+    checks = [Check("agent", True, f"{kind} at {where}" + (f": {found.auth}" if found.auth else ""))]
     checks += [Check("agent note", False, warning, essential=False) for warning in found.warnings]
     return checks
 

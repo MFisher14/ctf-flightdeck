@@ -241,6 +241,25 @@ def test_find_acp_agent_fails_loudly_on_a_missing_program_or_credential(tmp_path
         find_acp_agent(("fake-acp",), "--evil", environ={"PATH": str(fake.bin)})
 
 
+def test_a_docker_acp_agent_is_looked_for_in_the_lane_image_not_on_this_machine(tmp_path):
+    """A docker lane runs the agent inside its container (container_cli finds it there), so an
+    agent installed only in the lane image is enough: this machine's PATH is not searched."""
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    environ = {"PATH": str(empty), "ACP_KEY": SECRET}
+    with pytest.raises(AgentError, match="not found on PATH"):  # the host runtime still needs it here
+        find_acp_agent(("in-image-agent", "--model", "{model}"), "small", env=("ACP_KEY",), environ=environ)
+    agent = find_acp_agent(("in-image-agent", "--model", "{model}"), "small", env=("ACP_KEY",), environ=environ, docker=True)
+    assert agent.executable == agent.program == "in-image-agent" and dict(agent.extra_env) == {"ACP_KEY": SECRET}
+    assert acp_argv(agent.executable, agent.args, "big") == ["in-image-agent", "--model", "big"]
+    absolute = find_acp_agent(("/opt/acp/bin/agent",), "small", environ=environ, docker=True)  # a path in the image
+    assert absolute.program == "/opt/acp/bin/agent"
+    with pytest.raises(AgentError, match="relative path: give a name on the lane image's PATH"):
+        find_acp_agent(("bin/agent",), "small", environ=environ, docker=True)
+    with pytest.raises(AgentError, match="env names ACP_KEY, and it is not set"):  # its credential is still needed
+        find_acp_agent(("in-image-agent",), "small", env=("ACP_KEY",), environ={"PATH": str(empty)}, docker=True)
+
+
 # ====================================================================== the policy
 
 
@@ -720,6 +739,43 @@ def test_doctor_with_agent_acp_finds_the_agent_and_names_a_missing_table_or_cred
     assert missing["agent"].fix == "set each variable [agents.acp] env names, in the keys file or the environment"
     none = {c.name: c for c in doctor(run_config(tmp_path), environ=environ, agent="acp")}
     assert not none["agent"].ok and none["agent"].detail == "no [agents.acp] in your config"
+
+
+DOCKER_ACP_TABLE = ('[agents.acp]\ncommand = ["in-image-agent", "--model", "{model}"]\nmodels = ["small"]\n'
+                    'env = ["ACP_KEY"]\napi = ["https://api.example.com"]\n')
+
+
+def test_play_and_doctor_with_docker_acp_lanes_need_the_agent_in_the_image_only(tmp_path, monkeypatch):
+    """The agent is not on this machine's PATH; play asks the lane image for it (image_lacks,
+    the probe docker runs) and doctor says where it is looked for."""
+    from ctf_flightdeck import run as run_module
+    from ctf_flightdeck.run import RunError, RunOptions, prepare_run
+    from ctf_flightdeck.setup import _agent_checks
+
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", f"{empty}{os.pathsep}/usr/bin{os.pathsep}/bin")
+    monkeypatch.setenv("ACP_KEY", SECRET)
+    monkeypatch.delenv("FLIGHTDECK_TEST_UNSET_KEY", raising=False)
+    cfg = run_config(tmp_path, DOCKER_ACP_TABLE)
+    cfg.write_text(cfg.read_text().replace('runtime = "host"', 'runtime = "docker"'))
+    asked: list[tuple[str, str]] = []
+    monkeypatch.setattr(run_module, "_check_docker", lambda image: None)  # Docker itself is not what is tested
+    monkeypatch.setattr(run_module, "image_lacks", lambda image, program: asked.append((image, program)) or (
+        None if program == "in-image-agent" else f"the lane image {image} has no {program} CLI"))
+    run = prepare_run(RunOptions(board=run_board(tmp_path), config=cfg, agent="acp"))
+    run.close()
+    assert asked == [(load_config(cfg).lanes.image, "in-image-agent")]
+    assert run.driver.agent.executable == "in-image-agent" and run.driver.agent.api == ("https://api.example.com",)
+    monkeypatch.setattr(run_module, "image_lacks", lambda image, program: f"the lane image {image} has no {program} CLI")
+    with pytest.raises(RunError, match="has no in-image-agent CLI"):  # an image without it still stops the run
+        prepare_run(RunOptions(board=run_board(tmp_path), config=cfg, agent="acp"))
+    checks = {c.name: c for c in _agent_checks("acp", load_config(cfg), {"PATH": str(empty), "ACP_KEY": SECRET})}
+    assert checks["agent"].ok and checks["agent"].detail.startswith(
+        "acp at in-image-agent, in the lane image (Docker lanes run it there)")
+    on_host = run_config(tmp_path, DOCKER_ACP_TABLE)  # the host runtime still looks on this machine
+    checks = {c.name: c for c in _agent_checks("acp", load_config(on_host), {"PATH": str(empty), "ACP_KEY": SECRET})}
+    assert not checks["agent"].ok and "not found on PATH" in checks["agent"].detail
 
 
 def test_an_extension_notification_is_skipped_quietly_and_an_unknown_one_is_noted_once(tmp_path):

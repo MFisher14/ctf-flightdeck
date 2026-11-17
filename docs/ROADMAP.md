@@ -483,8 +483,10 @@ console in a few minutes, without reading the architecture:
 
 Planned in a milestone and not built:
 
-- **ACP agents in docker, and other agents.** `--agent acp` (P100) has met one real agent, Claude
-  Code's ACP adapter, on the host. Not run yet: an ACP lane in docker, and any other agent.
+- **Other ACP agents.** `--agent acp` (P100) has met one real agent, Claude Code's ACP adapter: on
+  the host (2026-11-16) and in docker lanes behind the fenced network (2026-11-17: 12 of 14 solved,
+  the other two's flags found, $0.06), where the agent need only be in the lane image. Not run yet:
+  any other agent.
 - **A real capture of the `claude` and `codex` streams.** The driver is tested against a fake CLI
   built from their docs, and so is a coding-agent lane's fenced network (below). Claude Code's
   stream was compared with a real run on 2026-11-14 (P86: 2.1.325, a prompt with no tools), and

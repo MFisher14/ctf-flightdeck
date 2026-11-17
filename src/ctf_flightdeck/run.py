@@ -1099,7 +1099,7 @@ def prepare_run(options: RunOptions) -> Run:
                 "reaches its instance, and on the host it reaches whatever its CLI can reach, so flightdeck "
                 "cannot hold it to that: play this event with flightdeck's own lanes (no --agent)"
             )
-        agent = _find_agent(options.agent, model, options.agent_auth, config)
+        agent = _find_agent(options.agent, model, options.agent_auth, config, docker=runtime == "docker")
         plan.notes.append(f"lanes are {options.agent} on {model} ({agent.auth})" if agent.auth else f"lanes are {options.agent} on {model}")
         plan.notes.extend(agent.warnings)
         unpriced = [m for m in ladder if m not in config.prices]
@@ -2515,7 +2515,7 @@ def _agent_ladder(kind: str, config: Config, notes: list[str]) -> tuple[str, ...
     return ladder
 
 
-def _find_agent(kind: str, model: str, auth: str | None, config: Config | None = None):
+def _find_agent(kind: str, model: str, auth: str | None, config: Config | None = None, *, docker: bool = False):
     from .agent.external import AgentError, find_agent
 
     try:
@@ -2527,7 +2527,8 @@ def _find_agent(kind: str, model: str, auth: str | None, config: Config | None =
             acp = config.acp if config is not None else None
             if acp is None:
                 raise RunError("--agent acp needs [agents.acp] in your config")
-            return find_acp_agent(acp.command, model, env=acp.env, api=acp.api, hold=acp.hold, environ=_environment())
+            return find_acp_agent(acp.command, model, env=acp.env, api=acp.api, hold=acp.hold, environ=_environment(),
+                                  docker=docker)  # docker: the agent is looked for in the lane image, not here
         return find_agent(kind, model, auth=auth, environ=_environment())
     except AgentError as exc:
         raise RunError(str(exc)) from None

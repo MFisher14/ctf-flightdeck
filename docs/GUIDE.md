@@ -1609,7 +1609,47 @@ api = ["https://api.anthropic.com"]
 hold = ["CLAUDE.md", ".claude"]
 ```
 
-Not run yet: an ACP lane in docker, and any other agent.
+**In Docker** the agent runs inside the lane's container, so it must be in the lane image, and it
+need not be on your machine: `command` names it as the image has it (a name on the image's PATH,
+or an absolute path in the image), and `flightdeck doctor --agent acp` looks for it there. The
+lane's network reaches the origins `api` names and the challenge's instance, nothing else. Claude
+Code's ACP adapter needs Node 22, newer than Debian's, so this image takes Node from the official
+Node image (build it after `flightdeck image build`; with a pack whose image is your lanes' toolkit,
+`[l1] lane_tools`, build it `FROM` that image and set `[l1] image` instead):
+
+```dockerfile
+FROM node:22-trixie-slim AS acp
+RUN npm install -g --prefix /opt/acp @agentclientprotocol/claude-agent-acp@0.99.1 && npm cache clean --force
+
+FROM ctf-flightdeck-lane:1
+COPY --from=acp /usr/local/bin/node /usr/local/bin/node
+COPY --from=acp /opt/acp /opt/acp
+RUN ln -s /opt/acp/bin/claude-agent-acp /usr/local/bin/claude-agent-acp && node --version
+```
+
+```sh
+docker build -t ctf-flightdeck-lane-acp:1 .   # in a folder with that Dockerfile
+```
+
+```toml
+[lanes]
+runtime = "docker"
+image = "ctf-flightdeck-lane-acp:1"
+
+[agents.acp]
+command = ["claude-agent-acp"]
+models = ["claude-haiku-5-5"]
+env = ["ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"]
+api = ["https://api.anthropic.com"]
+hold = ["CLAUDE.md", ".claude"]
+```
+
+Tried for real in Docker (2026-11-17): the same adapter 0.99.1 on Node 22.23.5 and Haiku 5.5, in
+docker lanes behind the fenced network, played the practice set: 12 of 14 solved and both others'
+right flags found (a headless run leaves them waiting for your approval), $0.06 in the cost it
+reported.
+
+Not run yet: any agent other than Claude Code's adapter.
 
 With a pack ([Your solvers first](#your-solvers-first-l1)), a coding-agent lane runs your L1
 engines before its CLI is started, by the same rules as flightdeck's own lanes. While a flag an

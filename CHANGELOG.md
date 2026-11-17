@@ -14,6 +14,9 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   after it refused any change of your account, a click of yours on the site too) is sent once
   more after 12 seconds. Before, a stop refused so was given up, and your account's one
   container kept every other challenge out until it expired.
+- An ACP agent (`--agent acp`) in Docker lanes need only be in the lane image: flightdeck no longer
+  looks for it on your machine too. The guide has a Dockerfile for Claude Code's ACP adapter, which
+  played the practice set in Docker lanes (12 of 14 solved, $0.06).
 
 ## 0.8.0 (2026-11-16)
 
