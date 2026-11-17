@@ -41,7 +41,8 @@ def leftovers():
         FAKES.pop().kill_leftovers()
 
 
-async def until(cond, what: str, timeout: float = 10.0) -> None:
+async def until(cond, what: str, timeout: float = 30.0) -> None:
+    # 30 s: only a wait that fails takes it; a loaded CI runner took more than 10 for one turn (PR #57)
     end = time.monotonic() + timeout
     while not cond():
         if time.monotonic() > end:
