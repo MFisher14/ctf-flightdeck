@@ -501,9 +501,12 @@ the guardrail Autopilot needs: nothing reached but a challenge's own instance.
 
 ## Later (not scheduled)
 
-- **ctfd-whale against a real CTFd.** Built against a fake of its source (P80); a run
-  against a local CTFd with the plugin (Redis, a Docker socket and an frp or trp router
-  beside it) is still to do before anyone relies on it.
+- **ctfd-whale against a real CTFd.** Done 2026-11-17 for the frp router: a local CTFd 3.7.7
+  with the plugin at 2cc84a9 (Redis, a one-node Docker swarm, frp 0.51.3), two made-up
+  challenges, a pull, every route, and a headless run that started, solved, stopped and
+  started again, all as built. It found one thing, fixed: a change refused as "Request Too
+  Fast!" (the plugin's 10 s lock) is sent once more (P80's later note). Left: the trp router
+  (its TLS forms are from its source only), and an event's own site.
 - **Phone control.** Today: run flightdeck in tmux and attach over SSH (the console has a compact
   layout from 64 columns down). Option: serve the same console in a browser (textual-serve);
   touches D4 and must be locked down. Best: push a notification when a lane needs you, with approve and decline from the

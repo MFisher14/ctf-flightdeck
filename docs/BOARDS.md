@@ -806,7 +806,7 @@ max_running = 3                 # the most kept running at once: the site's cap 
 | `docker_per_team` | [CTFd-Docker-Plugin](https://github.com/andyjsmith/CTFd-Docker-Plugin) or a fork of it | `container` | Seen working at an event |
 | `ctfd_owl` | [ctfd-owl](https://github.com/D0g3-Lab/H1ve/tree/master/CTFd/plugins/ctfd-owl) | `dynamic_check_docker` | Built from the plugin's source; never run against a site |
 | `chall_manager` | [ctfd-chall-manager](https://github.com/ctfer-io/ctfd-chall-manager) | `dynamic_iac` | Built from the plugin's source; never run against a site |
-| `ctfd_whale` | [ctfd-whale](https://github.com/frankli0324/ctfd-whale) | `dynamic_docker` | Built from the plugin's source; tested against fakes only |
+| `ctfd_whale` | [ctfd-whale](https://github.com/frankli0324/ctfd-whale) | `dynamic_docker` | Built from the plugin's source; run against a real CTFd 3.7.7 with it and its frp router (2026-11-17); its trp router only from source |
 | `rctf` | [rCTF v2](https://github.com/otter-sec/rctf)'s own instancer, with `platform = "http"` and `preset = "rctf2"` | (none: the preset marks them) | Built from rCTF's API reference; never run against a site |
 | `gzctf` | [GZCTF](https://github.com/GZTimeWalker/GZCTF)'s own containers, with `platform = "http"` and `preset = "gzctf"` | (none: the preset marks them) | Built from GZCTF's source; tested against a fake only, never a real GZCTF |
 
@@ -845,7 +845,9 @@ one, and tell us what happened in an issue.
   instant between flightdeck's status and its start is removed by that start. Its stop also
   takes whatever runs, so flightdeck asks first and stops only its own. The plugin refuses a
   second change within a minute, so flightdeck leaves 60 seconds between two; a stop right
-  after a start waits that long. The address comes in the form the site's router writes:
+  after a start waits that long. For 10 seconds after it refuses a change (yours on the site
+  too) it refuses every change of your account as "Request Too Fast!"; flightdeck then waits
+  12 seconds and sends that one once more. The address comes in the form the site's router writes:
   `nc host port`, a link, a pwntools `remote("host", port, ssl=True)`, an `https://` URL or
   `[ssl] host port`. The pwntools line with `ssl=True` and the `[ssl]` line are TLS endpoints,
   given to the lane as `tls://host:port`; a pwntools line with any other argument is not read,
