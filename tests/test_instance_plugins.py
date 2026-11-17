@@ -1,10 +1,12 @@
 """The ctfd_owl, chall_manager and ctfd_whale shapes of [instances], against fakes of the
 three plugins shaped from their public source (tests/fake_instance_plugins.py) inside the
-fake CTFd on 127.0.0.1. Nothing real is asked, and no plugin was run: these tests show
-flightdeck against what the plugins' code says, not against a site."""
+fake CTFd on 127.0.0.1. Nothing real is asked: these tests show flightdeck against what the
+plugins' code says. ctfd-whale was also run for real once (a local CTFd 3.7.7 with the plugin,
+2026-11-17), and REAL_WHALE below holds what it answered then, byte for byte."""
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from ctf_flightdeck.platform.instances import InstanceBusy, InstanceClient, InstanceError, InstanceRefused, _within, parse_config
@@ -367,6 +369,114 @@ def test_whale_changes_are_a_minute_apart_and_a_client_that_does_not_wait_is_ref
         with pytest.raises(InstanceRefused, match=r"refused instance stop for challenge 1: Frequency limit, You should wait at least 1 min\.") as caught:
             hasty.stop("boxed")
         assert not caught.value.full and fake.whale.container is not None
+
+
+def test_whale_a_change_refused_as_too_fast_is_sent_once_more_after_the_plugins_lock():
+    clock = Clock()
+    with FakeCTFd(board(WHALE_TYPE)) as fake:
+        ours = client(fake, "ctfd_whale", clock)
+        ours.start("boxed")
+        clock.sleep(60)
+        fake.whale.locked_until = clock.now + 10  # a click of the player's on the site was refused just now: the lock is held
+        ours.stop("boxed")  # refused before whale did anything, so sent again once the lock is free, and done
+        assert fake.whale.container is None and fake.whale.removed == [1]
+        assert [method for method, _ in asked(fake, WHALE_ROUTE)] == ["GET", "POST", "GET", "GET", "DELETE", "DELETE"]
+        assert clock.naps[-1] == 12.0  # the lock's 10 s, and the 2 s whale waits for it
+
+
+def test_whale_too_fast_twice_is_a_refusal_and_nothing_is_sent_a_third_time():
+    clock = Clock()
+    with FakeCTFd(board(WHALE_TYPE)) as fake:
+        fake.whale.lock = 100  # held past the client's wait
+        ours = client(fake, "ctfd_whale", clock)
+        fake.whale.boot(1)
+        fake.whale.locked_until = clock.now + 100
+        with pytest.raises(InstanceRefused, match=r"refused instance stop for challenge 1: Request Too Fast!") as caught:
+            ours.stop("boxed")
+        assert not caught.value.full and fake.whale.container is not None
+        assert [method for method, _ in asked(fake, WHALE_ROUTE)] == ["GET", "DELETE", "DELETE"]
+
+
+def test_too_fast_is_whales_alone_another_plugins_refusal_in_those_words_is_not_sent_again():
+    sent = []
+
+    def site(request: httpx.Request) -> httpx.Response:
+        sent.append(request.method)
+        return httpx.Response(403, json={"success": False, "message": "Request Too Fast!"})
+
+    routes = {action: ["POST", f"/box/{action}/{{id}}"] for action in ("start", "stop", "renew", "status")}
+    ours = InstanceClient("http://ctf.example.test", TOKEN, IDS, parse_config({**routes, "address_key": "host"}),
+                          transport=httpx.MockTransport(site), sleep=lambda seconds: None)
+    with pytest.raises(InstanceRefused, match="Request Too Fast!"):
+        ours.stop("boxed")
+    assert sent == ["POST"]  # who knows what that plugin did before it said so: sent once, as every request
+
+
+# ctfd-whale's answers byte for byte, as a real CTFd 3.7.7 with the plugin at 2cc84a9 and its frp router sent them on
+# 2026-11-17 (a local site with made-up challenges; frp_direct_ip_address 127.0.0.1, frp_http_domain_suffix
+# 127.0.0.1.nip.io, frp_http_port 8080)
+REAL_WHALE = {
+    "none": b'{"success": true, "data": {}}\n',
+    "created": b'{"success": true, "message": "Container created"}\n',
+    "http": b'{"success": true, "data": {"lan_domain": "2-49fd36ce-5c0c-42d0-b0b7-c31d63ae77f7", "user_access": "<a target='
+            b'\\"_blank\\" href=\\"http://49fd36ce-5c0c-42d0-b0b7-c31d63ae77f7.127.0.0.1.nip.io:8080/\\">Link to the Challenge</a>'
+            b'", "remaining_time": 3600}}\n',
+    "direct": b'{"success": true, "data": {"lan_domain": "2-71e63d72-d003-4f49-b954-ea637a8bcb13", "user_access": '
+              b'"nc 127.0.0.1 10032", "remaining_time": 3600}}\n',
+    "busy": b'{"success": false, "message": "Container already started but not from this challenge (<a target=\\"_blank\\" '
+            b'href=\\"/challenges#web-Whale Web-1\\">Whale Web</a>)"}\n',
+    "renewed": b'{"success": true, "message": "Container Renewed"}\n',
+    "destroyed": b'{"success": true, "message": "Container destroyed"}\n',
+    "limit": b'{"success": false, "message": "Frequency limit, You should wait at least 1 min."}\n',
+    "too fast": b'{"success": false, "message": "Request Too Fast!"}\n',
+}
+
+
+def real_whale(*answers: tuple[str, int, str]):
+    """A transport that answers with REAL_WHALE's bodies in this order, each (method, status,
+    body name), and checks each request's method."""
+    queue, sent = list(answers), []
+
+    def site(request: httpx.Request) -> httpx.Response:
+        method, status, name = queue.pop(0)
+        sent.append((request.method, request.url.params["challenge_id"]))
+        assert request.method == method and request.url.path == WHALE_ROUTE
+        return httpx.Response(status, content=REAL_WHALE[name], headers={"Content-Type": "application/json"})
+
+    return httpx.MockTransport(site), sent, queue
+
+
+def test_whale_reads_the_real_plugins_answers():
+    clock = Clock()
+    transport, sent, left = real_whale(
+        ("GET", 200, "none"), ("POST", 200, "created"), ("GET", 200, "http"),  # start: status, start, status
+        ("GET", 403, "busy"),  # another challenge's status while the account runs this one's
+        ("PATCH", 200, "renewed"), ("GET", 200, "http"),
+        ("GET", 200, "http"), ("DELETE", 403, "too fast"), ("DELETE", 200, "destroyed"),  # stop: status, then the lock
+        ("GET", 200, "direct"),
+        ("PATCH", 403, "limit"),
+    )
+    ours = InstanceClient("http://127.0.0.1:8000", TOKEN, {"web": 1, "direct": 2}, parse_config({"plugin": "ctfd_whale"}),
+                          transport=transport, clock=clock.time, sleep=clock.sleep, monotonic=clock.time)
+    got = ours.start("web")
+    assert got.url(web=True) == "http://49fd36ce-5c0c-42d0-b0b7-c31d63ae77f7.127.0.0.1.nip.io:8080" and got.expires_at == START + 3600
+    assert "<a" in got.said  # the plugin's words, shown as they came; only the host and the port were taken
+    with pytest.raises(InstanceBusy) as caught:
+        ours.status("direct")
+    assert "Whale Web" not in str(caught.value) and "<a" not in str(caught.value)
+    clock.sleep(60)
+    assert ours.renew("web") is None and ours.status("web").port == 8080
+    clock.sleep(60)
+    ours.stop("web")
+    assert clock.naps[-1] == 12.0
+    got = ours.status("direct")
+    assert (got.host, got.port, got.url(web=False)) == ("127.0.0.1", 10032, "tcp://127.0.0.1:10032")
+    clock.sleep(60)
+    with pytest.raises(InstanceRefused, match=r"Frequency limit, You should wait at least 1 min\.") as refused:
+        ours.renew("direct")  # what a client that kept no minute between its changes would hear
+    assert not refused.value.full and left == []
+    assert sent == [("GET", "1"), ("POST", "1"), ("GET", "1"), ("GET", "2"), ("PATCH", "1"), ("GET", "1"), ("GET", "1"),
+                    ("DELETE", "1"), ("DELETE", "1"), ("GET", "2"), ("PATCH", "2")]
 
 
 def test_whale_a_renew_puts_the_time_back_until_the_plugin_says_no_more():
