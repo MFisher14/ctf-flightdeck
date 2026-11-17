@@ -398,9 +398,17 @@ class ModelClient:
             what, detail = "the model API sent a reply that is not a JSON object", ""
         else:
             try:
-                return _parse(data)
+                reply = _parse(data)
             except _Malformed as bad:  # the ModelError is raised below, outside this block: it chains nothing
                 what, detail = bad.what, bad.detail
+            else:
+                why = _declined(data, reply)
+                if why is None:
+                    return reply
+                # a refusal is the model's answer, paid for, and never retried or sent on (D10, P23): as the
+                # Anthropic client says one, so does this one, instead of an empty reply the lane would read
+                raise ModelError(untrusted(self._redact(f"the model declined ({why})"), one_line=True), status=status,
+                                 declined=True, usage=reply.usage)
         message = f"{what} (HTTP {status})" + (f": {self._short(detail)}" if detail else "")
         raise self._error(message, status=status)
 
@@ -414,6 +422,26 @@ class ModelClient:
 
     def _error(self, message: str, *, status: int | None = None, retryable: bool = False) -> ModelError:
         return ModelError(untrusted(self._redact(message), one_line=True), status=status, retryable=retryable)
+
+
+DECLINED_FINISH = ("content_filter", "refusal")
+"""finish_reason values that mean the model, or its provider's filter, declined: OpenRouter
+normalises Anthropic's stop_reason "refusal" to "content_filter" and keeps the provider's own
+word in native_finish_reason; another API may say "refusal" itself."""
+
+
+def _declined(data: dict, reply: Reply) -> str | None:
+    """Why `reply` is a refusal, in a few words ("finish_reason content_filter, native
+    refusal"), or None when it is not one. A reply that calls a tool is never one: the
+    model went on working, whatever the finish reason says."""
+    if reply.tool_calls:
+        return None
+    choice = data["choices"][0]
+    native = _text(choice.get("native_finish_reason"))
+    if reply.finish_reason not in DECLINED_FINISH and native != "refusal":
+        return None
+    said = f"finish_reason {untrusted(reply.finish_reason, one_line=True)[:40] or 'none'}"
+    return said + (f", native {untrusted(native, one_line=True)[:40]}" if native and native != reply.finish_reason else "")
 
 
 class _Malformed(Exception):
