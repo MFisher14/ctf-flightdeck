@@ -71,10 +71,10 @@ def test_convert_writes_a_board_flightdeck_loads_with_the_handouts_and_the_answe
     assert sorted(c.challenge.id for c in board.challenges) == ["2099f-cry-also-made", "2099q-web-made-up"]
     assert [c.urls for c in board.challenges if c.urls] == [("http://localhost:21000",)]
     web = json.loads((out / "board" / "2099q-web-made-up" / "challenge.json").read_text())
-    assert web == {"name": "made-up", "category": "web", "points": 300, "description": "an invented challenge",
+    assert web == {"name": "made-up", "category": "web", "points": 500, "description": "an invented challenge",
                    "files": ["handout.bin"], "id": "2099q-web-made-up", "urls": ["http://localhost:21000"]}
     crypto = json.loads((out / "board" / "2099f-cry-also-made" / "challenge.json").read_text())
-    assert crypto["points"] == 0 and "urls" not in crypto
+    assert crypto["points"] == 500 and "urls" not in crypto  # one value for all, whatever the benchmark gave (300) or left out
     # the handout and nothing else: no solver, no Dockerfile, no flag anywhere in the board
     assert sorted(p.name for p in (out / "board" / "2099q-web-made-up").iterdir()) == ["challenge.json", "handout.bin"]
     every = "".join(p.read_text(errors="replace") for p in (out / "board").rglob("*") if p.is_file())

@@ -46,6 +46,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 SPLITS = ("development", "test")
+POINTS = 500
+"""Every challenge's points on the board. The benchmark scores each challenge alike (solved of
+N), and leaves points out of many; autopilot's effort budget grows with points (15 turns and
+60k tokens per 100), so one value for all gives every lane the same room: 75 turns and 300k
+tokens before the effort alert, under the per-lane dollar cap."""
 ID = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
 CONTAINER_PREFIX = "nyuctf-"
 
@@ -130,7 +135,7 @@ def convert(checkout: Path, split: str, out: Path, *, port_base: int = 20000) ->
                 raise ConvertError(f"{key}: the handout {name!r} is not a file inside its folder")
             shutil.copy2(source, target / Path(name).name)
             files.append(Path(name).name)
-        challenge = {"name": meta["name"], "category": meta["category"], "points": int(meta.get("points") or 0),
+        challenge = {"name": meta["name"], "category": meta["category"], "points": POINTS,
                      "description": meta.get("description", ""), "files": files, "id": cid}
         compose = sorted(folder.glob("docker-compose.y*ml"))
         if compose:
