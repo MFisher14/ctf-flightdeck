@@ -9,6 +9,11 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   and `/layout NAME` save too, and so does `/config lanes N`. `/config`'s dialog saves lanes at
   once, the layout and the theme unless you choose `for this run only`. Auto approve is never
   saved: it lasts for the run you turn it on in.
+- ctfd-whale has been run against a real CTFd with the plugin and its frp router, and works as
+  built. One fix from it: a change the plugin refuses as "Request Too Fast!" (for 10 seconds
+  after it refused any change of your account, a click of yours on the site too) is sent once
+  more after 12 seconds. Before, a stop refused so was given up, and your account's one
+  container kept every other challenge out until it expired.
 
 ## 0.8.0 (2026-11-16)
 
