@@ -21,6 +21,8 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
 - A model that declines through OpenRouter or another OpenAI-compatible API is now shown as a
   refusal, as one through Anthropic's API always was. Before, the lane read an empty reply,
   gave up after a few of them, and nobody was told a model had declined.
+- A lane that gave up while its flag waited aside no longer holds its slot until the run ends:
+  the next queued challenge starts, and the flag still waits for your answer.
 - `scripts/nyuctf_board.py` turns NYU CTF Bench's own checkout into a board, and starts and
   stops its challenge services on this machine (#50). The numbers are on
   [docs/BENCHMARK.md](docs/BENCHMARK.md).

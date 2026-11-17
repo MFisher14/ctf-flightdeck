@@ -880,6 +880,7 @@ class Deck:
                 waits = ("a candidate flag waits for you" if self._flag_waits(lane)
                          else "its flag is on its way to the platform: it ends once the answer is in")
                 self._note(lane, f"gave up ({rep.gave_up}), but {waits}")
+                self._rest_given_up(lane)
             else:
                 self._finish(lane, LaneState.GAVE_UP, rep.gave_up, then=ChallengeStatus.PARKED)
                 return
@@ -1769,8 +1770,31 @@ class Deck:
             self._became_current(lane)
             return
         self._sync_flag_alert(lane)
+        if lane.gave_up_later:  # its driver gave up: nothing to work on, so no slot to keep
+            self._wait_began.pop(lane.id, None)
+            lane.state = LaneState.RUNNING  # as _back_to_work has a lane open only for its flags' answers
+            self._rest_given_up(lane)
+            return
         if self._back_to_work(lane):
             self.driver.resume(lane)
+
+    def _rest_given_up(self, lane: Lane) -> None:
+        """A lane whose driver gave up, open only because its flag waits aside for the player,
+        takes no turn any more: it gives its slot up so a queued lane may start in it, and stays
+        open for the flag's answer, as _back_to_work keeps a benched lane that gave up. Before,
+        it held its slot as RUNNING until the run ended (the NYU CTF Bench run, #50). A lane
+        that waits for anything else (not aside) is benched by _maybe_bench as before."""
+        pending = lane.pending
+        if not lane.gave_up_later or lane.benched or lane.finished or pending is None or not pending.aside:
+            return
+        lane.benched = True
+        before = set(self.lanes)
+        self._fill()
+        started = [lane_id for lane_id in self.lanes if lane_id not in before]
+        said = f"its slot went to {', '.join(started)}" if started else "its slot is free, and no queued lane started in it"
+        self._note(lane, f"takes no more turns, and its flag waits aside for you: {said}")
+        self._emit(EventKind.SLOT, f"{lane.id} gave up while {pending.flag} waits aside for you: {said}",
+                   lane.id, lane.challenge_id, data={"slot": "given", "for": pending.kind.value, "started": started})
 
     def _keeps_slot(self, lane: Lane) -> str:
         """Why the waiting lane must keep its slot ("" when it may give it up): as many lanes
