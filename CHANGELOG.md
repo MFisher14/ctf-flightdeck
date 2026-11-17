@@ -18,6 +18,13 @@ What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs
   looks for it on your machine too. The guide has a Dockerfile for Claude Code's ACP adapter, which
   played the practice set in Docker lanes (12 of 14 solved, $0.06).
 
+- A model that declines through OpenRouter or another OpenAI-compatible API is now shown as a
+  refusal, as one through Anthropic's API always was. Before, the lane read an empty reply,
+  gave up after a few of them, and nobody was told a model had declined.
+- `scripts/nyuctf_board.py` turns NYU CTF Bench's own checkout into a board, and starts and
+  stops its challenge services on this machine (#50). The numbers are on
+  [docs/BENCHMARK.md](docs/BENCHMARK.md).
+
 ## 0.8.0 (2026-11-16)
 
 What the real practice-set runs of 0.7.0 found, fixed: a planted decoy no longer keeps a challenge
