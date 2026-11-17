@@ -3,6 +3,22 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Released: 0.9.0, settings that stay, real integrations, a public benchmark (2026-11-17)
+
+The lines for players are under 0.9.0 in [CHANGELOG.md](../CHANGELOG.md).
+
+- **What the console sets is saved** (P104, #55): Enter in `/theme` and `/layout` saves, `r` keeps
+  a choice for the run only, and `/config lanes N` saves lanes at once. Auto approve never is.
+- **ctfd-whale against a real CTFd** (P80 note): CTFd 3.7.7 with the plugin and its frp router.
+  It worked as built, apart from the plugin's 10-second account lock after a refused change,
+  which flightdeck now waits out once.
+- **An ACP agent in Docker lanes** (P100 note): found in the lane image, not on this machine;
+  Claude Code's ACP adapter played the practice set in Docker lanes (12 of 14, $0.06).
+- **NYU CTF Bench as a board** (D25, #50): `scripts/nyuctf_board.py`. Its first runs found that
+  a refusal through OpenRouter read as an empty reply, and that a lane which gave up while its
+  flag waited aside held its slot for good; both are fixed. The numbers go on
+  [BENCHMARK.md](BENCHMARK.md).
+
 ## Released: 0.8.0, what the real runs found, fixed (2026-11-16)
 
 Three proposals (P101 to P103) from the practice-set runs of 0.7.0; the lines for players are

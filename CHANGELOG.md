@@ -2,7 +2,11 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Unreleased
+## 0.9.0 (2026-11-17)
+
+What you set in the console stays, two integrations met the real thing, and the first run on a
+public benchmark found two bugs, both fixed here.
+
 
 - What you set in the console now stays for the next run (#55). In the `/theme` and `/layout`
   lists Enter saves the choice in your config, and `r` keeps it for this run only. `/theme NAME`

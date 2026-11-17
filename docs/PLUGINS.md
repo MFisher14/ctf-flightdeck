@@ -364,7 +364,7 @@ Each of these names the plugin and says what to do.
   `plugin myctf: /home/you/ctf/myctf/plugin.toml: no such file`; `... unknown key comand
   (known: name, api, command, version, description, token)`; `... says another name than
   [plugins.myctf] in your config: the two must match`; `plugin myctf speaks plugin API 2, and
-  this flightdeck (0.8.0) speaks 1: update flightdeck, or use the plugin's release for API 1`;
+  this flightdeck (0.9.0) speaks 1: update flightdeck, or use the plugin's release for API 1`;
   `plugin myctf: command names a file outside the plugin's folder`; `plugin myctf: command's
   program is not in the plugin's folder and not on PATH`.
 - **The profile names no plugin of yours:** `event.platform is not "ctfd", "manual",
