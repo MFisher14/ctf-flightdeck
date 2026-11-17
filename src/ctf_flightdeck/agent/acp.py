@@ -103,17 +103,27 @@ KNOWN_UPDATES = frozenset({
 
 
 def find_acp_agent(command: Sequence[str], model: str, *, env: Sequence[str] = (), api: Sequence[str] = (),
-                   hold: Sequence[str] = (), environ: Mapping[str, str] = os.environ) -> CliAgent:
+                   hold: Sequence[str] = (), environ: Mapping[str, str] = os.environ, docker: bool = False) -> CliAgent:
     """The ACP agent the player's [agents.acp] names, ready to run lanes on `model`, or
     AgentError naming what is missing. Its program is found on PATH's absolute folders only
     (as find_agent finds a CLI), or taken as the absolute path given; each variable `env`
-    names must be set, and its value goes to the agent, a secret (shown as [NAME])."""
+    names must be set, and its value goes to the agent, a secret (shown as [NAME]).
+
+    `docker`: the lanes run in Docker, where the agent runs inside the lane's container, so
+    its program is looked for in the lane image (run._check_image_has before the run,
+    ExternalLane.container_cli at each lane's start), never on this machine: an agent
+    installed only in the image is enough, and one installed only here is not."""
     if not command:
         raise AgentError("[agents.acp] command is empty: it needs the agent's program, then its arguments")
     _check_model(model)
     program, *args = command  # with no {model} in args, the ladder's one model is a name for the deck and [prices] only
     expanded = os.path.expanduser(program)
-    if os.path.isabs(expanded):
+    if docker:
+        if "/" in program and not program.startswith("/"):
+            raise AgentError(f"[agents.acp] command names {program} by a relative path: give a name on the lane image's "
+                             "PATH or an absolute path in it")
+        expanded = found = program  # a path in the image: ~ there is not this machine's home
+    elif os.path.isabs(expanded):
         if not (os.path.isfile(expanded) and os.access(expanded, os.X_OK)):
             raise AgentError(f"[agents.acp] command names {expanded}, which is not a program this user can run")
         found = expanded
