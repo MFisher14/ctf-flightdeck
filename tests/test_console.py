@@ -4206,17 +4206,21 @@ def test_slash_broadcast_tells_every_lane_from_a_lanes_chat_box_and_is_not_that_
     drive(app, script)
 
 
-def test_slash_config_shows_the_settings_and_changes_lanes_and_auto_approve_for_the_run():
+def test_slash_config_shows_the_settings_and_changes_lanes_and_auto_approve_for_the_run(tmp_path):
+    from ctf_flightdeck.config import load_config
+
+    config = tmp_path / "config.toml"
+    config.write_text('[api]\nbase_url = "http://127.0.0.1:11434/v1"\nkey_env = ""\n\n[models]\nladder = ["glm"]\n\n[lanes]\nruntime = "host"\n')
     deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=1))
     deck.release([Challenge(n, n.title(), "misc", 50) for n in ("alpha", "bravo", "charlie")], [QueueEntry(n, "glm") for n in ("alpha", "bravo", "charlie")])
-    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing, config_path="/home/player/.config/ctf-flightdeck/config.toml")
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing, config_path=str(config))
 
     async def script(pilot):
         await open_focus(pilot, app, "L01")
         await send(pilot, app, "/config")  # alone: the settings dialog, with what the run has now
         assert type(app.screen).__name__ == "ConfigPrompt"
         assert app.screen.query_one("#config-lanes").value == "1" and app.screen.query_one("#config-submit").value == "confirm"
-        assert "/home/player/.config/ctf-flightdeck/config.toml" in prompt_text(app)
+        assert str(config).replace(" ", "") in prompt_text(app).replace(" ", "")
         await press(pilot, "escape")
         assert deck.config.max_lanes == 1 and len(deck.active_lanes()) == 1  # esc changes nothing
         await send(pilot, app, "/config")
@@ -4224,7 +4228,8 @@ def test_slash_config_shows_the_settings_and_changes_lanes_and_auto_approve_for_
         app.screen.query_one("#config-submit").value = "auto"
         await press(pilot, "enter")
         assert len(deck.active_lanes()) == 2 and deck.config.submit == "auto"
-        assert "Lanes at once: 2" in status_line(app) and "Auto approve is on" in status_line(app)
+        assert app._status[0].startswith(f"Lanes at once: 2, saved in your config file: {config}. Auto approve is on")
+        assert load_config(config).lanes.max_lanes == 2 and load_config(config).lanes.submit == "confirm"  # #55: lanes kept, auto approve not
         await send(pilot, app, "/config")
         app.screen.query_one("#config-lanes").value = "lots"
         await press(pilot, "enter")
@@ -4233,12 +4238,14 @@ def test_slash_config_shows_the_settings_and_changes_lanes_and_auto_approve_for_
         await send(pilot, app, "/config submit confirm")
         await send(pilot, app, "/config lanes 1")
         await send(pilot, app, "/config file")
-        assert "your config file: /home/player/.config/ctf-flightdeck/config.toml" in status_line(app)
+        assert app._status[0] == f"your config file: {config}"
+        assert load_config(config).lanes.max_lanes == 1  # /config lanes N saves too
         await send(pilot, app, "/config lanes 2")
-        assert len(deck.active_lanes()) == 2 and "Lanes at once: 2 for the rest of this run" in status_line(app)
+        assert len(deck.active_lanes()) == 2 and app._status[0] == f"Lanes at once: 2, saved in your config file: {config}"
         assert "lanes 2/2" in region_text(app, "#header")
         await send(pilot, app, "/config lanes unlimited")
         assert len(deck.active_lanes()) == 3 and "lanes 3/∞" in region_text(app, "#header")
+        assert 'max_lanes = "unlimited"' in config.read_text()
         await send(pilot, app, "/config submit auto")
         assert deck.config.submit == "auto" and "Auto approve is on" in status_line(app)
         await send(pilot, app, "/config submit off")
@@ -4249,3 +4256,27 @@ def test_slash_config_shows_the_settings_and_changes_lanes_and_auto_approve_for_
         assert_warning(app, "/config takes nothing, 'file', 'lanes N|unlimited', or 'submit auto|confirm'")
 
     drive(app, script)
+    assert "submit" not in config.read_text()  # a run never starts with auto approve because of an earlier one
+
+
+def test_config_lanes_in_the_mock_is_for_this_run_and_with_no_config_file_says_so():
+    """The mock's lanes are its scenario's: a number set there is not written into the
+    player's config, which the mock reads its look from (#55)."""
+    deck = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=1))
+    app = FlightdeckApp(deck, refresh_seconds=None, on_exit=nothing, mock="MOCK · default", config_path="/nowhere/config.toml")
+
+    async def script(pilot):
+        app.run_command("/config lanes 3", None)
+        await pilot.pause()
+        assert deck.config.max_lanes == 3 and app._status[:2] == ("Lanes at once: 3 (the mock's lanes are its scenario's: not saved)", "information")
+
+    drive(app, script)
+    other = quiet_deck(DeckConfig(event="ev", models=("glm",), max_lanes=1))
+    plain = FlightdeckApp(other, refresh_seconds=None, on_exit=nothing)
+
+    async def no_file(pilot):
+        plain.run_command("/config lanes 3", None)
+        await pilot.pause()
+        assert plain._status[:2] == ("Lanes at once: 3 for this run (this console has no config file)", "information")
+
+    drive(plain, no_file)

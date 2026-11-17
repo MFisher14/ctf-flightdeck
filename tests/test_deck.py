@@ -3230,3 +3230,33 @@ def test_a_lane_that_ends_with_a_flag_aside_says_it_is_not_asked_any_more():
     assert deck.apply(iv.Kill(lane.id, requeue=False)).ok
     assert any(a.text == "ended with t{decoy} still waiting aside for you: it is not asked any more "
                          "(the run log has the L1 result that gave it)" for a in lane.actions)
+
+
+def test_a_lane_that_gives_up_while_its_flag_waits_aside_gives_its_slot_up_and_stays_open_for_the_answer():
+    """The NYU CTF Bench run (#50): a lane gave up while its L1 flag waited aside, and held its
+    slot as RUNNING, doing nothing, until the run ended, while queued challenges waited."""
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_aside(deck, lane, flag=good_flag("c0"))
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.state is LaneState.RUNNING and lane.pending.aside and driver.started() == ["c0"]
+    deck.report(lane.id, TurnReport(turn=False, gave_up="the model answered 3 times in a row without calling a tool"))
+    assert lane.benched and not lane.finished and lane.pending.aside  # open for the flag's answer, without a slot
+    assert driver.started() == ["c0", "c1"]  # the next challenge took the slot
+    (given,) = [e for e in events(deck, EventKind.SLOT) if e.data.get("slot") == "given"]
+    assert given.lane == lane.id and given.data["started"] == ["L02"]
+    assert deck.apply(iv.Approve(lane.id)).ok and lane.state is LaneState.SOLVED  # the player's yes still counts
+
+
+def test_a_flag_that_goes_aside_after_its_lane_gave_up_frees_the_slot_and_wakes_nothing():
+    deck, driver, clock = make_deck(n=3, max_lanes=1, bench_after=60)
+    lane = lane_on(deck, "c0")
+    ask_aside(deck, lane)
+    deck.report(lane.id, TurnReport(turn=False, gave_up="the model answered 3 times in a row without calling a tool"))
+    assert lane.state is LaneState.WAITING and not lane.finished  # the flag waits for the player
+    clock.t += 60
+    deck.recheck_waits()
+    assert lane.pending.aside and lane.benched and driver.named("resume") == []  # nothing to send back to work
+    assert driver.started() == ["c0", "c1"]
+    assert deck.apply(iv.Decline(lane.id)).ok and lane.state is LaneState.GAVE_UP  # no flag waits any more: it ends

@@ -2,6 +2,35 @@
 
 What changed for players, newest first. Milestones are in [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## 0.9.0 (2026-11-17)
+
+What you set in the console stays, two integrations met the real thing, and the first run on a
+public benchmark found two bugs, both fixed here.
+
+
+- What you set in the console now stays for the next run (#55). In the `/theme` and `/layout`
+  lists Enter saves the choice in your config, and `r` keeps it for this run only. `/theme NAME`
+  and `/layout NAME` save too, and so does `/config lanes N`. `/config`'s dialog saves lanes at
+  once, the layout and the theme unless you choose `for this run only`. Auto approve is never
+  saved: it lasts for the run you turn it on in.
+- ctfd-whale has been run against a real CTFd with the plugin and its frp router, and works as
+  built. One fix from it: a change the plugin refuses as "Request Too Fast!" (for 10 seconds
+  after it refused any change of your account, a click of yours on the site too) is sent once
+  more after 12 seconds. Before, a stop refused so was given up, and your account's one
+  container kept every other challenge out until it expired.
+- An ACP agent (`--agent acp`) in Docker lanes need only be in the lane image: flightdeck no longer
+  looks for it on your machine too. The guide has a Dockerfile for Claude Code's ACP adapter, which
+  played the practice set in Docker lanes (12 of 14 solved, $0.06).
+
+- A model that declines through OpenRouter or another OpenAI-compatible API is now shown as a
+  refusal, as one through Anthropic's API always was. Before, the lane read an empty reply,
+  gave up after a few of them, and nobody was told a model had declined.
+- A lane that gave up while its flag waited aside no longer holds its slot until the run ends:
+  the next queued challenge starts, and the flag still waits for your answer.
+- `scripts/nyuctf_board.py` turns NYU CTF Bench's own checkout into a board, and starts and
+  stops its challenge services on this machine (#50). The numbers are on
+  [docs/BENCHMARK.md](docs/BENCHMARK.md).
+
 ## 0.8.0 (2026-11-16)
 
 What the real practice-set runs of 0.7.0 found, fixed: a planted decoy no longer keeps a challenge

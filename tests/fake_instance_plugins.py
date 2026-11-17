@@ -72,6 +72,11 @@ challenge's number in the query:
 - POST, PATCH and DELETE refuse a second one within 60 seconds ("Frequency limit, You should
   wait at least 1 min."). The plugin keeps that clock in the session; this fake keeps one for
   the account. `limit = 0` turns it off.
+- They also take a lock of the account's for 10 seconds (Redis, decorators.frequency_limited),
+  and give it back only when the route answers well: one they refuse leaves it held, and any
+  POST, PATCH or DELETE of the account in those 10 seconds, from any session, is refused
+  before the plugin does anything, "Request Too Fast!". A real CTFd 3.7.7 with the plugin at
+  2cc84a9 did both on 2026-11-17 (and kept the 60 s per session, as its source says).
 """
 
 from __future__ import annotations
@@ -307,6 +312,8 @@ class FakeWhale:
         self.launch_fails = False  # the launch throws: the record is removed and the start refused
         self.slow: threading.Event | None = None  # set: a start's answer waits for it (the launch is inside the POST)
         self.limit = 60  # seconds between two changing requests; 0: no limit
+        self.lock = 10  # seconds the account's lock stays held after a changing request the plugin refused
+        self.locked_until: float | None = None  # held until then: a changing request is "Request Too Fast!"
         self.removed: list[int] = []  # the challenges whose containers a start or a stop removed, in order
         self._changed: int | None = None
         self._next = 0
@@ -335,6 +342,9 @@ class FakeWhale:
                 "remaining_time": int(self.seconds - (self.clock() - self.container["started"]))}})
         if method not in ("POST", "PATCH", "DELETE"):
             return _reply(405, {"message": "The method is not allowed for the requested URL."})
+        if self.locked_until is not None and self.clock() < self.locked_until:
+            return self._abort("Request Too Fast!")  # before the route does anything; the lock stays as it is
+        self.locked_until = self.clock() + self.lock  # taken: given back only by an answer that is no refusal (_done)
         if self._limited():
             return self._abort("Frequency limit, You should wait at least 1 min.")
         if method == "POST":
@@ -344,14 +354,14 @@ class FakeWhale:
             if self.launch_fails or self.site.challenges[number].type != WHALE_TYPE:
                 return self._abort("Container creation failed")
             self.boot(number)
-            done = _reply(200, {"success": True, "message": "Container created"})
+            done = self._done({"success": True, "message": "Container created"})
             done.hold = self.slow
             return done
         if method == "DELETE":
             if self.container is None:
                 return self._abort("No such container")
             self._remove()
-            return _reply(200, {"success": True, "message": "Container destroyed"})
+            return self._done({"success": True, "message": "Container destroyed"})
         if self.container is None:
             return self._abort("Instance not found.")
         if self.container["challenge"] != number:
@@ -360,7 +370,7 @@ class FakeWhale:
             return self._abort("Max renewal count exceed.")
         self.container["started"] = self.clock()
         self.container["renews"] += 1
-        return _reply(200, {"success": True, "message": "Container Renewed"})
+        return self._done({"success": True, "message": "Container Renewed"})
 
     def access(self, box: dict) -> str:
         """user_access as the site's router writes it (frp.py's and trp.py's access())."""
@@ -378,6 +388,10 @@ class FakeWhale:
         if kind == "http":
             return f"https://{domain}" + (f":{self.trp_port}" if self.trp_port != 443 else "")
         return f"[ssl] {domain} {self.trp_port}"
+
+    def _done(self, body: dict) -> Reply:
+        self.locked_until = None  # the route answered well: the plugin gives its lock back
+        return _reply(200, body)
 
     def _remove(self) -> None:
         if self.container is not None:

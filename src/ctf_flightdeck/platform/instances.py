@@ -61,7 +61,8 @@ hold {game}, filled with the http table's game (Wire.game); on a wire with no ga
 route is refused before anything is sent.
 
 The ctfd_owl, chall_manager and ctfd_whale shapes were built from the plugins' public source
-against fakes of it (tests/fake_instance_plugins.py) and have not met a real site.
+against fakes of it (tests/fake_instance_plugins.py). ctfd_whale has since been run against a
+real CTFd with the plugin (2026-11-17, its frp router); the other two have not met a real site.
 
 InstanceClient is the wire: start(), status(), renew(), stop() for one challenge, by the
 board's id. What it guarantees:
@@ -71,7 +72,9 @@ board's id. What it guarantees:
   percent-encoded whole, so it stays one path segment; "." and ".." are refused.
   Any other id is refused before a request is made, so nothing here can touch another
   team's container, an unreleased challenge, the scoreboard or a hint.
-- A request is sent once, never again: a second "start" could take a second slot. Each
+- A request is sent once, never again: a second "start" could take a second slot. (One
+  exception: a change refused in words that say the plugin did nothing, Shape.again, is sent
+  once more after the wait they ask for: ctfd-whale's "Request Too Fast!".) Each
   request takes at most `timeout` seconds in all (the same worker-thread deadline as a
   flag's submit). Two calls ask more than once, and only the status, which changes nothing:
   a start whose answer names no address asks the status, up to STATUS_TRIES times
@@ -265,6 +268,9 @@ class Shape:
     gap: float = 0.0  # seconds the plugin wants between two requests that change something; the client waits them
     replaces: bool = False  # a start first removes whatever the account runs: the client asks the status before it sends one
     busy: re.Pattern[str] | None = None  # a refusal in these words: the account's one container is another challenge's
+    # (words, seconds): a change refused in these words was refused before the plugin did anything, so it is sent once
+    # more after that wait (ctfd-whale's lock)
+    again: tuple[re.Pattern[str], float] | None = None
     platform: str = "ctfd"  # the event.platform it is for
 
 
@@ -299,15 +305,19 @@ PLUGINS: dict[str, Shape] = {
         Answers(address=("connectionInfo",), port=(), expires=("until",), loose=True),
     ),
     # ctfd-whale (github.com/frankli0324/ctfd-whale at 2cc84a9: api.py, decorators.py, utils/control.py, utils/routers/),
-    # read from its source, not met. One container per user account. Its POST removes that container, of any challenge,
+    # read from its source, and run on 2026-11-17 against a real CTFd 3.7.7 with it and its frp router (the trp router's
+    # forms are from its source only). One container per user account. Its POST removes that container, of any challenge,
     # before it starts one, and answers no address; its GET for another challenge's container is a 403, "Container already
     # started but not from this challenge"; data.user_access is the router's line (an nc line, a link's HTML, a pwntools
     # snippet, an https URL, "[ssl] host port"), data.remaining_time the seconds left. Its changing routes refuse a second
-    # request within 60 s (decorators.frequency_limited).
+    # request within 60 s of the same session (decorators.frequency_limited), and take a 10 s lock of the account's that a
+    # refused one leaves held: any change of the account's in those seconds, from any session, is "Request Too Fast!",
+    # refused before the route runs (after a 2 s wait for the lock). Such a change is sent once more after 12 s.
     "ctfd_whale": Shape(
         Routes(start=("POST", _WHALE), stop=("DELETE", _WHALE), renew=("PATCH", _WHALE), status=("GET", _WHALE), api=True),
         Answers(address=("user_access",), port=(), expires=("remaining_time",), loose=True),
         single=True, gap=60.0, replaces=True, busy=re.compile(r"\bnot from this challenge\b", re.I),
+        again=(re.compile(r"Request Too Fast!?"), 12.0),
     ),
     # rCTF v2's own instancer (github.com/otter-sec/rctf: apps/docs .../api/integrations/instance-*.md and
     # packages/types goodInstanceStatus), read from its documentation and types, not met. One route, four methods;
@@ -358,6 +368,7 @@ class InstancesConfig:
     replaces: bool = False  # Shape.replaces
     busy: re.Pattern[str] | None = None  # Shape.busy
     platform: str | None = None  # Shape.platform: the event.platform the named shape is for; None: routes of the profile's own
+    again: tuple[re.Pattern[str], float] | None = None  # Shape.again
 
 
 _ANSWER_KEYS = {"address_key": "address", "port_key": "port", "expires_key": "expires", "endpoints_key": "endpoints",
@@ -431,7 +442,7 @@ def parse_config(table: object) -> InstancesConfig:
         raise ValueError("instances needs address_key or endpoints_key: an answer with no address is no instance")
     return InstancesConfig(routes, tuple(types), most, plugin, answers, single, shape.gap if shape is not None else 0.0,
                            shape.replaces if shape is not None else False, shape.busy if shape is not None else None,
-                           shape.platform if shape is not None else None)
+                           shape.platform if shape is not None else None, shape.again if shape is not None else None)
 
 
 def _words(name: str, value: object) -> tuple[str, ...]:
@@ -663,7 +674,9 @@ class InstanceClient:
 
     # ------------------------------------------------------------------ the wire
 
-    def _ask(self, action: str, challenge_id: str, *, refusal_is_none: bool = False) -> dict | None:
+    def _ask(self, action: str, challenge_id: str, *, refusal_is_none: bool = False, again: bool = True) -> dict | None:
+        """One request, sent once; and once more only for a change the plugin refused in the
+        words that say it did nothing (config.again), after the wait those words ask for."""
         number = self.ids.get(challenge_id)
         if number is None:
             raise InstanceError(f"{_show(challenge_id)} is not a challenge of this board, so flightdeck asks the platform nothing about it")
@@ -696,6 +709,7 @@ class InstanceClient:
             headers = {**headers, "Content-Type": "application/json"}
         if self.config.routes.language is not None:
             headers = {**headers, "Accept-Language": self.config.routes.language}
+        before = self._changed_at
         if changes and self.config.gap > 0 and self._changed_at is not None:
             waited = self._monotonic() - self._changed_at
             if waited < self.config.gap:  # the plugin refuses two changes this close together
@@ -733,6 +747,11 @@ class InstanceClient:
             if told is not None:
                 told()  # a session the platform no longer takes: the next request signs in again
         if status >= 400 or failed:
+            retry = self.config.again
+            if changes and again and retry is not None and said is not None and retry[0].fullmatch(said.strip()):
+                self._changed_at = before  # refused before the plugin did anything: its own clock did not start
+                self._sleep(retry[1])
+                return self._ask(action, challenge_id, refusal_is_none=refusal_is_none, again=False)
             if self.config.busy is not None and said is not None and self.config.busy.search(str(said)):
                 # the plugin's words name the other challenge in HTML: flightdeck says it in its own
                 raise InstanceBusy(f"the platform refused {what}: the account's one container runs another challenge, and "

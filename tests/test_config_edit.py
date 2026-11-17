@@ -364,3 +364,56 @@ def test_save_console_takes_only_a_layout_and_a_themes_name(tmp_path):
     assert read(path) == LADDER
     with pytest.raises(EditError, match="^there is no config at "):
         save_console(tmp_path / "none.toml", theme="nord")
+
+
+# ---------------------------------------------------------------------- save_lanes (#55)
+
+
+def test_save_lanes_writes_max_lanes_under_lanes_and_the_next_run_reads_it(tmp_path):
+    path = write(tmp_path, LADDER)
+    assert config_edit.save_lanes(path, 6) is True
+    assert read(path) == LADDER + "max_lanes = 6\n"
+    assert load_config(path).lanes.max_lanes == 6
+    assert config_edit.save_lanes(path, 2) is True and read(path) == LADDER + "max_lanes = 2\n"  # the same line, changed
+    stamp = os.stat(path).st_mtime_ns
+    assert config_edit.save_lanes(path, 2) is False and os.stat(path).st_mtime_ns == stamp  # said already: not written
+
+
+def test_save_lanes_writes_unlimited_as_the_word_a_config_takes(tmp_path):
+    from ctf_flightdeck.core.model import UNLIMITED_LANES
+
+    path = write(tmp_path, LADDER)
+    assert config_edit.save_lanes(path, UNLIMITED_LANES) is True
+    assert read(path) == LADDER + 'max_lanes = "unlimited"\n'
+    assert load_config(path).lanes.max_lanes == UNLIMITED_LANES
+
+
+def test_save_lanes_fills_the_example_config_where_its_line_is_and_adds_a_table_when_there_is_none(tmp_path):
+    example = write(tmp_path, example_config(), "example.toml")
+    assert config_edit.save_lanes(example, 7) is True
+    text = read(example)
+    assert "max_lanes = 7" in text and "max_lanes = 4" not in text and text.count("[lanes]") == 1
+    bare = write(tmp_path, '[models]\nladder = ["m"]\n', "bare.toml")
+    assert config_edit.save_lanes(bare, 3) is True
+    assert read(bare) == '[models]\nladder = ["m"]\n\n[lanes]\nmax_lanes = 3\n'
+
+
+@pytest.mark.parametrize("text, reason", [
+    (LADDER + "[console\n", "is not valid TOML, so it was left as it is: mend it, or write max_lanes = 5 under [lanes] yourself"),
+    ("lanes.max_lanes = 2\n" + '[models]\nladder = ["m"]\n',
+     "flightdeck could not place the line in {path}, which was left as it is: write max_lanes = 5 under [lanes] yourself"),
+], ids=["not TOML", "a table flightdeck cannot edit"])
+def test_save_lanes_refuses_a_config_it_cannot_edit_and_leaves_it_as_it_was(tmp_path, text, reason):
+    path = write(tmp_path, text)
+    with pytest.raises(EditError) as caught:
+        config_edit.save_lanes(path, 5)
+    assert reason.format(path=path) in str(caught.value)
+    assert read(path) == text
+
+
+@pytest.mark.parametrize("most", [0, -1, True, 2.5, "4"])
+def test_save_lanes_takes_only_a_whole_number_of_one_or_more(tmp_path, most):
+    path = write(tmp_path, LADDER)
+    with pytest.raises(ValueError):
+        config_edit.save_lanes(path, most)
+    assert read(path) == LADDER

@@ -3,6 +3,22 @@
 What is released, what comes next, what is still open, and how the first release was built.
 [CHANGELOG.md](../CHANGELOG.md) says what each release changed for players.
 
+## Released: 0.9.0, settings that stay, real integrations, a public benchmark (2026-11-17)
+
+The lines for players are under 0.9.0 in [CHANGELOG.md](../CHANGELOG.md).
+
+- **What the console sets is saved** (P104, #55): Enter in `/theme` and `/layout` saves, `r` keeps
+  a choice for the run only, and `/config lanes N` saves lanes at once. Auto approve never is.
+- **ctfd-whale against a real CTFd** (P80 note): CTFd 3.7.7 with the plugin and its frp router.
+  It worked as built, apart from the plugin's 10-second account lock after a refused change,
+  which flightdeck now waits out once.
+- **An ACP agent in Docker lanes** (P100 note): found in the lane image, not on this machine;
+  Claude Code's ACP adapter played the practice set in Docker lanes (12 of 14, $0.06).
+- **NYU CTF Bench as a board** (D25, #50): `scripts/nyuctf_board.py`. Its first runs found that
+  a refusal through OpenRouter read as an empty reply, and that a lane which gave up while its
+  flag waited aside held its slot for good; both are fixed. The numbers go on
+  [BENCHMARK.md](BENCHMARK.md).
+
 ## Released: 0.8.0, what the real runs found, fixed (2026-11-16)
 
 Three proposals (P101 to P103) from the practice-set runs of 0.7.0; the lines for players are
@@ -483,8 +499,10 @@ console in a few minutes, without reading the architecture:
 
 Planned in a milestone and not built:
 
-- **ACP agents in docker, and other agents.** `--agent acp` (P100) has met one real agent, Claude
-  Code's ACP adapter, on the host. Not run yet: an ACP lane in docker, and any other agent.
+- **Other ACP agents.** `--agent acp` (P100) has met one real agent, Claude Code's ACP adapter: on
+  the host (2026-11-16) and in docker lanes behind the fenced network (2026-11-17: 12 of 14 solved,
+  the other two's flags found, $0.06), where the agent need only be in the lane image. Not run yet:
+  any other agent.
 - **A real capture of the `claude` and `codex` streams.** The driver is tested against a fake CLI
   built from their docs, and so is a coding-agent lane's fenced network (below). Claude Code's
   stream was compared with a real run on 2026-11-14 (P86: 2.1.325, a prompt with no tools), and
@@ -501,9 +519,12 @@ the guardrail Autopilot needs: nothing reached but a challenge's own instance.
 
 ## Later (not scheduled)
 
-- **ctfd-whale against a real CTFd.** Built against a fake of its source (P80); a run
-  against a local CTFd with the plugin (Redis, a Docker socket and an frp or trp router
-  beside it) is still to do before anyone relies on it.
+- **ctfd-whale against a real CTFd.** Done 2026-11-17 for the frp router: a local CTFd 3.7.7
+  with the plugin at 2cc84a9 (Redis, a one-node Docker swarm, frp 0.51.3), two made-up
+  challenges, a pull, every route, and a headless run that started, solved, stopped and
+  started again, all as built. It found one thing, fixed: a change refused as "Request Too
+  Fast!" (the plugin's 10 s lock) is sent once more (P80's later note). Left: the trp router
+  (its TLS forms are from its source only), and an event's own site.
 - **Phone control.** Today: run flightdeck in tmux and attach over SSH (the console has a compact
   layout from 64 columns down). Option: serve the same console in a browser (textual-serve);
   touches D4 and must be locked down. Best: push a notification when a lane needs you, with approve and decline from the

@@ -68,7 +68,7 @@ def test_settings_in_a_run_shows_the_runs_settings_the_setup_of_its_config_and_t
         assert isinstance(app.screen, screen.HealthScreen)
         text = body(app)
         assert "This run (/config changes these; c opens it)" in text
-        assert "Lanes     4 at once" in text and "for this run: /config lanes N, or the dialog" in text
+        assert "Lanes     4 at once" in text and "/config lanes N, or the dialog: saved in your config" in text
         assert "Flags     each waits for your yes" in text and "Layout    simple" in text
         assert "Your setup" in text and f"Config    {machine}" in text and "Theme     nord" in text  # the config's, read for the screen
         assert "2 lanes need you: esc goes back to the lanes." in text  # L02's flag and L03's alert

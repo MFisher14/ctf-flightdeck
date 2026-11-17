@@ -497,6 +497,36 @@ def test_missing_usage_counts_as_no_tokens_and_an_unknown_cost():
     assert second == Usage(10, 2, 0, None)
 
 
+@pytest.mark.parametrize("finish, native, says", [
+    ("content_filter", "refusal", "the model declined (finish_reason content_filter, native refusal)"),
+    ("content_filter", None, "the model declined (finish_reason content_filter)"),
+    ("refusal", None, "the model declined (finish_reason refusal)"),
+    ("stop", "refusal", "the model declined (finish_reason stop, native refusal)"),
+], ids=["OpenRouter's Anthropic refusal", "a provider's filter", "an API that says refusal", "only the native word"])
+def test_a_refusal_is_a_declined_error_never_retried_and_its_usage_kept(finish, native, says):
+    """OpenRouter hands Anthropic's stop_reason "refusal" on as finish_reason content_filter
+    with an empty message: before, a lane read that as an empty reply and gave up after
+    three of them, and nobody was told a model had declined."""
+    body = text_reply("", prompt_tokens=900, completion_tokens=0, cost=0.0042)
+    body["choices"][0]["finish_reason"] = finish
+    if native is not None:
+        body["choices"][0]["native_finish_reason"] = native
+    with FakeModelServer([body, text_reply("never asked for")]) as server:
+        err = fails(server.base_url)
+        assert len(server.requests) == 1  # a refusal is the model's answer: never sent again
+    assert str(err) == says
+    assert err.declined and not err.retryable and err.status == 200
+    assert err.usage == Usage(prompt_tokens=900, completion_tokens=0, cached_tokens=0, cost=0.0042)  # it is paid for
+
+
+def test_a_reply_that_calls_a_tool_is_no_refusal_whatever_its_finish_reason():
+    body = tool_calls_reply([("shell", {"command": "ls"})])
+    body["choices"][0]["finish_reason"] = "content_filter"
+    with FakeModelServer([body]) as server:
+        reply = call(server.base_url, tools=[SHELL])
+    assert [c.name for c in reply.tool_calls] == ["shell"] and reply.finish_reason == "content_filter"
+
+
 def test_the_history_message_keeps_what_the_api_sent_but_always_as_the_assistant():
     sent = {
         "role": "system",  # a server must not be able to plant a system message in the history

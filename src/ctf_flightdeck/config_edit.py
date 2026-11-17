@@ -3,7 +3,8 @@
 `flightdeck init` writes a whole config (setup.py). Afterwards flightdeck changes the file only
 through rewrite(), here: `pack install` sets `[l1] pack` (pack.write_config), `plugin add`
 appends `[plugins.NAME]` (plugins.manifest.enable), and the console keeps the theme and the
-layout the player picked (save_console). The shape is the same for all three:
+layout the player picked (save_console) and lanes at once (save_lanes). The shape is the same
+for all of them:
 
 1. read the file as it is, byte for byte (its line endings too);
 2. make the new text, and put it in place of the old one in one step (_write): a reader or a
@@ -238,3 +239,45 @@ def save_console(path: Path, *, theme: str | None = None, layout: str | None = N
                 raise ConfigError(f"{path}: [console] did not take {key}")
 
     return rewrite(path, change, check, what=" and ".join(f"the {key}" for key in wanted))
+
+
+# ---------------------------------------------------------------------- the config's [lanes] max_lanes
+
+def save_lanes(path: Path, most: int) -> bool:
+    """Keep lanes at once in the config at `path`: `max_lanes = N` under `[lanes]`, or
+    `max_lanes = "unlimited"` for UNLIMITED_LANES or more, every other line as it was (#55).
+    False when the file says so already. EditError when it could not be done, with the file
+    as it was. Checked as save_console is: the new text must parse to the old one with that
+    key set and nothing else changed, and after the write the [lanes] table must load
+    (config's own check of it) and hold the number."""
+    from .config import _lanes  # the table's own check, so a saved number is one a run loads
+    from .core.model import UNLIMITED_LANES
+
+    if isinstance(most, bool) or not isinstance(most, int) or most < 1:
+        raise ValueError("lanes at once must be a whole number, 1 or more")
+    value: int | str = "unlimited" if most >= UNLIMITED_LANES else most
+    line = f'max_lanes = {value}' if isinstance(value, int) else 'max_lanes = "unlimited"'
+    by_hand = f"write {line} under [lanes] yourself"
+
+    def change(before: str) -> str:
+        try:
+            doc = tomllib.loads(before)
+        except (ValueError, RecursionError):
+            raise EditError(f"{path} is not valid TOML, so it was left as it is: mend it, or {by_hand}") from None
+        after = set_keys(before, "lanes", {"max_lanes": line})
+        table = doc.get("lanes", {})
+        try:
+            got = tomllib.loads(after)
+        except (ValueError, RecursionError):
+            got = None
+        if not isinstance(table, dict) or got != {**doc, "lanes": {**table, "max_lanes": value}}:
+            raise EditError(f"flightdeck could not place the line in {path}, which was left as it is: {by_hand}")
+        return after
+
+    def check() -> None:
+        with path.open("rb") as handle:
+            table = tomllib.load(handle).get("lanes", {})
+        if not isinstance(table, dict) or _lanes(path, table).max_lanes != min(most, UNLIMITED_LANES):
+            raise ConfigError(f"{path}: [lanes] did not take max_lanes")
+
+    return rewrite(path, change, check, what="lanes at once")

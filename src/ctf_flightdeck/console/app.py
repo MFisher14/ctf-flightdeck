@@ -1298,8 +1298,9 @@ class FlightdeckApp(App[None]):
     def configure(self, arg: str) -> None:
         """/config: open the settings dialog (config_dialog); /config file: where the
         config file is. /config lanes N (or
-        unlimited): how many lanes run at once. /config submit auto|confirm: auto approve on
-        or off. Each change is for the rest of this run; the config file keeps its own."""
+        unlimited): how many lanes run at once, saved in the config file too (#55). /config
+        submit auto|confirm: auto approve on or off, for this run only: a run never starts
+        submitting by itself because of a choice made in an earlier one."""
         words = arg.split()
         deck = self.deck
         if not words:
@@ -1315,16 +1316,38 @@ class FlightdeckApp(App[None]):
         key, value = words[0].lower(), words[1].lower()
         if key == "lanes":
             if value in ("unlimited", "max", "∞"):
-                outcome = deck.set_max_lanes(UNLIMITED_LANES)
+                most = UNLIMITED_LANES
             elif value.isascii() and value.isdigit():
-                outcome = deck.set_max_lanes(int(value))
+                most = int(value)
             else:
                 self.warn("/config lanes takes a whole number, 1 or more, or 'unlimited'")
                 return
+            outcome = deck.set_max_lanes(most)
+            text, ok = outcome.message, outcome.ok
+            if ok:
+                text, ok = self.lanes_said(text, most)
+            self.say(text, "information" if ok else "warning")
         else:
             outcome = deck.set_submit({"on": "auto", "off": "confirm"}.get(value, value))
-        self.say(outcome.message, "information" if outcome.ok else "warning")
+            self.say(outcome.message, "information" if outcome.ok else "warning")
         self.refresh_view()
+
+    def lanes_said(self, said: str, most: int) -> tuple[str, bool]:
+        """`said` (the deck's line for lanes at once just set to `most`) with whether it was
+        saved in the config file too (#55), and whether that went well. The mock's lanes are
+        its scenario's, so it saves none; a console with no config file has nowhere to."""
+        from ..config_edit import EditError, save_lanes
+
+        said = said.removesuffix(" already").replace(" for the rest of this run", "")
+        if self.mock:
+            return f"{said} (the mock's lanes are its scenario's: not saved)", True
+        if not self.config_path:
+            return f"{said} for this run (this console has no config file)", True
+        try:
+            save_lanes(Path(self.config_path), most)
+        except EditError as exc:
+            return f"{said} for this run; it was not saved: {exc}", False
+        return f"{said}, saved in your config file: {self.config_path}", True
 
     def set_layout(self, name: str) -> None:
         """Draw in the layout `name` from now on (config.LAYOUTS): both views, as they are now,
@@ -1337,8 +1360,8 @@ class FlightdeckApp(App[None]):
                 screen.relayout()
 
     def switch_layout(self, arg: str) -> None:
-        """/layout simple|deck: the console's layout for the rest of this run (the config file
-        keeps its own); /layout alone: the picker (layout_picker). Any other word is a warning,
+        """/layout simple|deck: the console's layout from now on, saved in the config file when
+        there is one (#55); /layout alone: the picker (layout_picker). Any other word is a warning,
         and the layout stays."""
         word = arg.strip().lower()
         if not word:
@@ -1348,12 +1371,12 @@ class FlightdeckApp(App[None]):
             self.warn(f"/layout takes {' or '.join(LAYOUTS)}")
             return
         self.set_layout(word)
-        self.keep_look(layout=word)
+        self.keep_look(save=True, layout=word)
 
     def layout_picker(self) -> None:
         """/layout alone: the two layouts in a list (screens.Picker). The console is drawn in
-        the one the cursor is on; Enter keeps it for this run, s keeps and saves it, and esc
-        puts back the layout there was."""
+        the one the cursor is on; Enter keeps and saves it, r keeps it for this run only, and
+        esc puts back the layout there was."""
         from .commands import LAYOUT_HELP
         from .screens import Choice, Picker
 
@@ -1395,7 +1418,7 @@ class FlightdeckApp(App[None]):
             return f"{said} for this run (this console has no config file){narrow}", True
         if not save:
             command = " or ".join(f"/{key}" for key in CONSOLE_KEYS if chosen[key] is not None)
-            return f"{said} for this run{f'. To keep it: {command}, then s' if hint else ''}{narrow}", True
+            return f"{said} for this run only{f'. To keep it: {command}, then enter' if hint else ''}{narrow}", True
         try:
             save_console(Path(self.config_path), theme=theme, layout=layout)
         except EditError as exc:
@@ -1412,8 +1435,8 @@ class FlightdeckApp(App[None]):
         focus.action_details()
 
     def set_theme(self, arg: str) -> None:
-        """/theme alone: the picker (theme_picker); /theme NAME: the console's colours for the
-        rest of this run (the config file keeps its own). A name that is no theme, or a theme
+        """/theme alone: the picker (theme_picker); /theme NAME: the console's colours from now
+        on, saved in the config file when there is one (#55). A name that is no theme, or a theme
         file that cannot be used, is a warning, and the theme in use stays."""
         name = arg.strip()
         if not name:
@@ -1431,7 +1454,7 @@ class FlightdeckApp(App[None]):
             self.warn(str(exc))
             return
         self.set_palette(palette)
-        self.keep_look(theme=name)
+        self.keep_look(save=True, theme=name)
 
     def themes_listed(self) -> tuple[dict[str, themes.Palette], dict[str, str], list[tuple[str, str]]]:
         """The themes a list offers, each read now: (the palettes that load by name, why each
@@ -1452,7 +1475,7 @@ class FlightdeckApp(App[None]):
     def theme_picker(self) -> None:
         """/theme alone: the themes in a list (screens.Picker), the built-in ones and the
         player's own. The console is drawn in the one the cursor is on, a transcript's lines
-        included; Enter keeps it for this run, s keeps and saves it, and esc puts back the
+        included; Enter keeps and saves it, r keeps it for this run only, and esc puts back the
         palette there was. A theme file that cannot be used is listed with its reason and
         cannot be chosen."""
         from .screens import Choice, Picker
@@ -1499,10 +1522,11 @@ class FlightdeckApp(App[None]):
         cfg = self.deck.config
         lanes = "unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes)
         flags = {"auto": "submitted as soon as found (auto approve)", "confirm": "each waits for your yes"}.get(cfg.submit, cfg.submit)
-        rows = [Row("Lanes", f"{lanes} at once", "for this run: /config lanes N, or the dialog"),
-                Row("Flags", flags, "for this run: /config submit auto|confirm, or the dialog"),
-                Row("Layout", self.layout, "for this run: /layout; s there saves it in your config"),
-                Row("Theme", theme.active().name, "for this run: /theme; s there saves it in your config")]
+        kept = "saved in your config" if self.config_path else "for this run (no config file)"
+        rows = [Row("Lanes", f"{lanes} at once", f"/config lanes N, or the dialog: {'for this run (the scenario’s)' if self.mock else kept}"),
+                Row("Flags", flags, "for this run only: /config submit auto|confirm, or the dialog"),
+                Row("Layout", self.layout, f"/layout: {kept}" + ("; r there for this run only" if self.config_path else "")),
+                Row("Theme", theme.active().name, f"/theme: {kept}" + ("; r there for this run only" if self.config_path else ""))]
         if not self.config_path:
             rows.append(Row("Config", "none", "the mock reads none: below is the one flightdeck reads"))
         return rows
@@ -1511,13 +1535,15 @@ class FlightdeckApp(App[None]):
         """/config alone: the settings dialog (ConfigPrompt). What it changes for the run goes
         through the same deck calls as /config lanes and /config submit, so the event's rules
         hold, and through set_layout and set_palette as /layout and /theme; asked to, it
-        saves the layout and the theme as the list's s does (look_said). Everything asked for
+        saves lanes at once (lanes_said), the layout and the theme (look_said), unless told
+        this run only (#55). Everything asked for
         is checked before anything changes: lanes that are no number, or a theme that cannot
         be used, is a warning and nothing was changed."""
         from .screens import ConfigPrompt, Settings
 
         deck, cfg = self.deck, self.deck.config
-        before = Settings("unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes), cfg.submit, self.layout, theme.active().name)
+        before = Settings("unlimited" if cfg.max_lanes >= UNLIMITED_LANES else str(cfg.max_lanes), cfg.submit, self.layout, theme.active().name,
+                          save=bool(self.config_path))  # saved unless the player says this run only (#55)
 
         def done(answer: Settings | None) -> None:
             if answer is None or answer == before:
@@ -1542,8 +1568,11 @@ class FlightdeckApp(App[None]):
             said, ok = [], True
             if most is not None:
                 outcome = deck.set_max_lanes(most)
-                said.append(outcome.message)
-                ok = ok and outcome.ok
+                text, fine = outcome.message, outcome.ok
+                if fine and answer.save:
+                    text, fine = self.lanes_said(text, most)
+                said.append(text)
+                ok = ok and fine
             if answer.submit != before.submit:
                 outcome = deck.set_submit(answer.submit)
                 said.append(outcome.message)
