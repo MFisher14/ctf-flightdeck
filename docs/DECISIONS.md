@@ -115,6 +115,12 @@ answer kept its slot until the player was back; since P83 it gives the slot up.)
 |---|---|---|
 | D24 | The solver pack (changes D1) | The repository holds the author's solver pack, in `packs/solvers/`: one repository, and the pack an optional install (`flightdeck pack install`), never part of the PyPI package. D1's "private solver packs never go in it" no longer covers this pack: its author made it public. The rest of D1 stands: no secrets, no player or team names, no real flags, no organizer evidence; the commit guard scans the pack like everything else, and what the export leaves out stays private. The pack names the past events its engines were first written for. It has a top-level `ctf` package of its own, which D2 forbids only for flightdeck's distribution: nothing under `src/` imports the pack, and the pack is never installed into flightdeck's environment. Its engines run as their own processes with the pack's own Python (D3). |
 
+## 2026-11-17: decisions
+
+| # | Topic | Decision |
+|---|---|---|
+| D25 | A public benchmark is run, and only its numbers are published (the maintainer's rulings on issue #50; an exception to rules 1 and 4 for this alone) | **Rule 4.** For a run on a public benchmark (NYU CTF Bench first), the benchmark's own challenge images are started in Docker on this machine, and lanes may run the benchmark's handout binaries inside their own containers, as a CTF player would. Never on the host: a `--host` run is not a benchmark run, and no challenge gets the host's Docker socket (the converter starts such a service without it). Development work and tests still never execute a challenge binary. **Rule 1.** The tasks are past challenges: they run from the benchmark's own checkout, cloned outside this repository, and nothing of them (text, files, flags, transcripts) is committed. What is published is numbers: solved of N, the model and its price date, dollars per solve, the per-lane cap, wall time, the lane image, and in a steered column the interventions. The converter (`scripts/nyuctf_board.py`) is in the repository and reads the checkout at run time; the page is `docs/BENCHMARK.md`. |
+
 ## Proposed with the solver pack (built; accepted by the maintainer 2026-11-16)
 
 | # | Topic | Proposal |
