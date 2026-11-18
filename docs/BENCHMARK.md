@@ -18,21 +18,47 @@ The best published result on the test split is 59% (https://arxiv.org/abs/2604.1
 
 ## Results
 
-**Not measured yet.** The first runs on the development split (2026-11-17, autopilot on
-OpenRouter's Claude Haiku 5.5 then Sonnet 5.5, $0.60 a lane) were stopped before the end, each
-for a flaw in flightdeck that it found, so their scores would measure the flaws:
+### Development split, autopilot (hands-off), 2026-11-17
 
-- a refusal through OpenRouter read as an empty reply, and the lane gave up without saying a
-  model had declined (fixed in 0.9.0: it is a refusal now);
-- a lane that gave up while its flag waited aside kept its slot for the rest of the run, and
-  the queue behind it stood still (fixed in 0.9.0);
-- the converter gave most challenges 0 points, which left autopilot's effort budget at its
-  floor of 8 turns (fixed: every challenge is worth 500, see below).
+| | |
+|---|---|
+| Solved | **10 of 57** (17.5%) |
+| Spent | $1.38, **$0.14 per solve** (13.8M tokens) |
+| Wall time | 48 minutes, 6 lanes at once |
+| Interventions | 0 (no person at the console) |
+| flightdeck | 0.9.0, `play --autopilot --budget-dollars 25 --headless` |
+| Models | OpenRouter's `anthropic/claude-haiku-5.5`, escalating to `anthropic/claude-sonnet-5.5`; prices as OpenRouter reported them on 2026-11-17 |
+| Per-lane cap | $0.60 (`[lanes] dollar_cap`), autopilot's default rules |
+| Lane image | `ctf-flightdeck-pack:1` (the solver pack's image: `[l1] lane_tools`), Docker on an Apple M4 Max |
 
-What those runs did show: Anthropic's models decline a good share of the pwn and some of the
-crypto and web challenges through OpenRouter, where no server-side fallback runs. Autopilot never
-sends a declined request to another model (D10), so in the hands-off column such a challenge
-counts as unsolved. The run with the fixes goes here, with its refusals counted.
+Solved: Guess Harder (web), Evidence.zip (forensics), MFW (web), Sleeping Guard (crypto),
+WarmUp (pwn), flash (forensics), deedeedee (rev), k_stairs (web), odd (rev), regexpire (misc).
+
+**Where the rest went.** Of the 47 not solved:
+
+- **16 were refused.** The model declined: 7 of the 10 pwn challenges, 6 of the 10 web ones, and
+  one each in rev, misc and crypto. Through OpenRouter no server-side fallback runs, and
+  autopilot never sends a declined request to another model (D10), so in this column a refusal
+  is the end of that challenge. Anthropic's own API with its server-side fallback, or a model
+  without such a classifier, would play these.
+- **22 were killed by autopilot's rules**: a stall (nothing new for 10 turns) that escalating to
+  Sonnet did not end, a loop, or effort out of proportion.
+- **3 had the right flag found and waiting** for a person to approve it (Networking 1, the road
+  less traveled, Kill): flags autopilot holds by rule, such as one read out of a handout by an L1
+  engine. Nobody answered them, so they count as unsolved. A person pressing `a` three times
+  would have made it 13.
+- The others ended with no flag, or with a wrong one waiting (7).
+
+**Against published numbers.** These are not comparable with the 59% of
+https://arxiv.org/abs/2604.17159: that is the test split, and on stronger models. This is the
+development split, meant for tuning, on the cheapest Claude model with a $0.60 cap per lane.
+It is a first point for flightdeck, not a ranking.
+
+### Not measured yet
+
+- **The steered column**: the same split with a person at the console, counting their
+  interventions. The three correct flags held above are the plainest case of what it adds.
+- **The test split's 200.**
 
 ## How it was run
 
@@ -51,7 +77,8 @@ it cannot count against the run budget. Every challenge is worth 500 points on t
 benchmark scores each alike, and autopilot's effort budget grows with points (75 turns and 300k
 tokens at 500). flightdeck's governor holds new lanes back while the machine's load is over its
 limit, so other heavy work on the same machine slows a run down; it changes the wall time, not
-what a lane may do.
+what a lane may do. The run above had other heavy work beside it, and `[governor]
+max_load_per_cpu = 8` so that its lanes, which mostly wait on the model API, could start.
 
 `scripts/nyuctf_board.py` writes a board folder: each challenge's `challenge.json` and only the
 handout files the benchmark lists, an `answers.sha256.json` of the flags (so the run scores
@@ -65,9 +92,8 @@ this run.
 **Rule 4 for this run alone (D25).** Lanes run the benchmark's binaries inside their own
 containers, as a player would. Nothing runs on the host.
 
-## Not done yet
-
-- **The steered column.** The same split played by a person at the console, counting their
-  interventions: flightdeck's claim is that a steering operator beats hands-off, and this is the
-  number that would show it. It needs a person's hours, not a script.
-- **The test split's 200.** The converter takes `test` as it takes `development`.
+**Earlier runs the same day** were stopped before the end, each for a flaw in flightdeck it found,
+so their scores would have measured the flaws. All three are fixed in 0.9.0 and the converter:
+a refusal through OpenRouter read as an empty reply; a lane that gave up while its flag waited
+aside held its slot for good, and the queue behind it stood still; and the converter gave most
+challenges 0 points, which left autopilot's effort budget at its floor of 8 turns.
